@@ -1,0 +1,6 @@
+(assume a0 (! (= x true) :named @p_2))
+(assume a1 (! (not x) :named @p_1))
+(step t1 (cl (not (! (= @p_2 x) :named @p_3)) (not @p_2) x) :rule equiv_pos2)
+(step t2 (cl @p_3) :rule equiv_simplify)
+(step t3 (cl x) :rule resolution :premises (t1 t2 a0))
+(step t4 (cl) :rule resolution :premises (a1 t3))

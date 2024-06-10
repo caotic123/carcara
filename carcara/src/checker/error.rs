@@ -135,6 +135,9 @@ pub enum CheckerError {
     #[error("expected assign style '(:= ...)' argument, got term style argument: '{0}'")]
     ExpectedAssignStyleArg(Rc<Term>),
 
+    #[error("expected {0} style argument, got assign {1} argument: {2}")]
+    ExpectedStyleArg(String, String, String),
+
     #[error("expected term {0} to be a prefix of {1}")]
     ExpectedToBePrefix(Rc<Term>, Rc<Term>),
 

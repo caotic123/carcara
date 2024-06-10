@@ -173,15 +173,31 @@ pub enum ProofArg {
 
     /// An argument of the form `(:= <symbol> <term>)`.
     Assign(String, Rc<Term>),
+
+    //An argument of the form of clause (cl <term>*)
+    Clause(Vec<Rc<Term>>)
 }
 
 impl ProofArg {
     /// If this argument is a "term style" argument, extracts that term from it. Otherwise, returns
     /// an error.
+    #[inline(always)]
+    pub fn proof_arg_name(&self) -> String {
+        match self {
+            ProofArg::Term(_) => String::from("term"),
+            ProofArg::Assign(_, _) => String::from("assign"),
+            ProofArg::Clause(_) => String::from("clause")
+        }
+    }
+
     pub fn as_term(&self) -> Result<&Rc<Term>, CheckerError> {
         match self {
             ProofArg::Term(t) => Ok(t),
-            ProofArg::Assign(s, t) => Err(CheckerError::ExpectedTermStyleArg(s.clone(), t.clone())),
+            ProofArg::Assign(s, t) => Err(CheckerError::ExpectedStyleArg(String::from("term"), self.proof_arg_name(), format!(":= {0} {1})", s,t.clone().to_string()))),
+            ProofArg::Clause(c) => 
+                Err(CheckerError::ExpectedStyleArg(String::from("term"),
+                self.proof_arg_name(),
+                format!("(cl {0})", c.clone().iter().map(|x| x.to_string()).collect::<Vec<String>>().join(" ")))),
         }
     }
 
@@ -190,9 +206,23 @@ impl ProofArg {
     pub fn as_assign(&self) -> Result<(&String, &Rc<Term>), CheckerError> {
         match self {
             ProofArg::Assign(s, t) => Ok((s, t)),
-            ProofArg::Term(t) => Err(CheckerError::ExpectedAssignStyleArg(t.clone())),
+            ProofArg::Term(t) => Err(CheckerError::ExpectedStyleArg(String::from("assign"), self.proof_arg_name(), t.clone().to_string())),
+            ProofArg::Clause(c) => 
+                Err(CheckerError::ExpectedStyleArg(
+                    String::from("assign"),
+                    self.proof_arg_name(),
+                    format!("(cl {0})", c.clone().iter().map(|x| x.to_string()).collect::<Vec<String>>().join(" ")))),
+            }
+    }
+
+    pub fn as_clause(&self) -> Result<&Vec<Rc<Term>>, CheckerError> {
+        match self {
+            ProofArg::Assign(s, t) => Err(CheckerError::ExpectedStyleArg(String::from("clause"), self.proof_arg_name(), format!(":= {0} {1})", s,t.clone().to_string()))),
+            ProofArg::Term(t) => Err(CheckerError::ExpectedStyleArg(String::from("clause"), self.proof_arg_name(), t.clone().to_string())),
+            ProofArg::Clause(c) => Ok(c)
         }
     }
+
 }
 
 /// An argument for an `anchor` command.

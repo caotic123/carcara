@@ -288,6 +288,13 @@ impl<'a> AlethePrinter<'a> {
     fn write_proof_arg(&mut self, arg: &ProofArg) -> io::Result<()> {
         match arg {
             ProofArg::Term(t) => t.print_with_sharing(self),
+            ProofArg::Clause(c) => {
+                write!(self.inner, "(cl ")?;
+                for clause in c {
+                    clause.print_with_sharing(self)?;
+                }
+                write!(self.inner, ")")
+            }
             ProofArg::Assign(name, value) => {
                 write!(self.inner, "(:= {} ", name)?;
                 value.print_with_sharing(self)?;

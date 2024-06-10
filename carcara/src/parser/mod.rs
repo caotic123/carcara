@@ -1180,12 +1180,21 @@ impl<'a, R: BufRead> Parser<'a, R> {
         self.expect_token(Token::ReservedWord(Reserved::Cl))?;
         self.parse_sequence(|p| p.parse_term_expecting_sort(&Sort::Bool), false)
     }
+    
+    /// Parses a clause of the form `(cl <term>*)`.
+    fn parse_drat_args(&mut self) -> CarcaraResult<Vec<Rc<Term>>> {
+        let parsed_clauses = self.parse_sequence(|p| p.parse_clause(), false)?;
+        let mut clauses : Vec<Rc<Term>> = vec![];
+        for clause in parsed_clauses {
+            clauses.extend(clause)
+        }
+        Ok(clauses)
+    }
 
     /// Parses an argument for a `step` command.
     fn parse_proof_arg(&mut self) -> CarcaraResult<ProofArg> {
         if self.current_token == Token::OpenParen {
             self.next_token()?; // Consume `(` token
-
             // If we encounter a `(` token, this could be an assignment argument of the form
             // `(:= <symbol> <term>)`, or a regular term that starts with `(`. Note that the
             // lexer reads `:=` as a keyword with contents `=`.
@@ -1196,9 +1205,6 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 self.expect_token(Token::CloseParen)?;
                 Ok(ProofArg::Assign(name, value))
             } else {
-                // If the first token is not `:=`, this argument is just a regular term. Since
-                // we already consumed the `(` token, we have to call `parse_application`
-                // instead of `parse_term`.
                 let term = self.parse_application()?;
                 Ok(ProofArg::Term(term))
             }
