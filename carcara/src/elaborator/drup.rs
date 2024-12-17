@@ -3,6 +3,7 @@ use super::*;
 use crate::ast::*;
 use crate::drup::*;
 use indexmap::IndexSet;
+use std::borrow::Borrow;
 use std::collections::HashMap;
 
 pub fn elaborate_drup(
@@ -13,26 +14,26 @@ pub fn elaborate_drup(
     #[derive(Debug)]
     enum ResolutionStep<'a> {
         Resolvent(
-            &'a(bool, Rc<Term>),
+            &'a (bool, Rc<Term>),
             u64,
             u64,
-            (Vec<Rc<Term>>, IndexSet<(bool, &'a Rc<Term>)>, u64),
+            (Vec<Rc<Term>>, IndexSet<(bool, Rc<Term>)>, u64),
         ),
-        UnChanged(IndexSet<(bool, &'a Rc<Term>)>, u64),
+        UnChanged(IndexSet<(bool, Rc<Term>)>, u64),
     }
 
-    fn resolve<'a>(
-        clause1: &IndexSet<(bool, &'a Rc<Term>)>,
-        clause2: &IndexSet<(bool, &'a Rc<Term>)>,
-        pivot: (bool, &Rc<Term>),
-    ) -> IndexSet<(bool, &'a Rc<Term>)> {
+    fn resolve(
+        clause1: &IndexSet<(bool, Rc<Term>)>,
+        clause2: &IndexSet<(bool, Rc<Term>)>,
+        pivot: (bool, Rc<Term>),
+    ) -> IndexSet<(bool, Rc<Term>)> {
         let mut resolvent = IndexSet::new();
         for literal in clause1.union(clause2) {
             if literal.1 == pivot.1 {
                 continue;
             }
 
-            resolvent.insert(*literal);
+            resolvent.insert(literal.clone());
         }
 
         return resolvent;
@@ -47,6 +48,7 @@ pub fn elaborate_drup(
             .collect::<Vec<_>>()
             .as_slice(),
         step.args.as_slice(),
+        false,
     );
 
     if let Err(err) = trace {
@@ -69,7 +71,7 @@ pub fn elaborate_drup(
     for (arg_index, rup_story) in trace.iter().enumerate() {
         match rup_story {
             DRupProofAction::RupStory(rup_clause, rup_history) => {
-                let mut rup: Vec<(IndexSet<(bool, &Rc<Term>)>, u64)> = rup_history
+                let mut rup: Vec<(IndexSet<(bool, Rc<Term>)>, u64)> = rup_history
                     .iter()
                     .map(|(vec, _, key)| (vec.clone(), *key))
                     .collect();
@@ -79,9 +81,9 @@ pub fn elaborate_drup(
                 for i in (0..rup_history.len() - 1).rev() {
                     let pivot = pivots[i].as_ref().unwrap();
 
-                    if rup[i + 1].0.contains(&(!pivot.0, &pivot.1)) {
-                        let resolvent_indexset: IndexSet<(bool, &Rc<Term>)> =
-                            resolve(&rup[i].0, &rup[i + 1].0, (pivot.0, &pivot.1));
+                    if rup[i + 1].0.contains(&(!pivot.0, pivot.1.clone())) {
+                        let resolvent_indexset: IndexSet<(bool, Rc<Term>)> =
+                            resolve(rup[i].0.borrow(), rup[i + 1].0.borrow(), (pivot.0, pivot.1.clone()));
                         let resolvent: Vec<Rc<Term>> = resolvent_indexset
                             .iter()
                             .map(|(polarity, term)| {
@@ -158,8 +160,12 @@ pub fn elaborate_drup(
                                 previous_step: None,
                             }));
 
+                            let rup_clause: IndexSet<(bool, Rc<Term>)> =
+                                rup_clause.iter().map(|(k, v)| (*k, (*v).clone())).collect();
+
                             if i == resolutions.len() - 1
-                                && resolvent_indexset.is_subset(rup_clause) && resolvent_indexset != rup_clause
+                                && resolvent_indexset.is_subset(&rup_clause)
+                                && resolvent_indexset != &rup_clause
                             {
                                 clause = rup_clause
                                     .iter()

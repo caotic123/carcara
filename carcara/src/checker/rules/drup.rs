@@ -3,6 +3,7 @@ use crate::ast::*;
 use crate::drup::*;
 
 pub fn drup(
+    check_drat: bool,
     RuleArgs { pool, conclusion, premises, args, .. }: RuleArgs,
 ) -> RuleResult {
     let premises: Vec<&[Rc<Term>]> = premises
@@ -12,7 +13,7 @@ pub fn drup(
         .collect();
 
 
-    match check_drup(pool, conclusion, premises.as_slice(), args) {
+    match check_drup(pool, conclusion, premises.as_slice(), args, check_drat) {
         Ok(_) => Ok(()),
         Err(err) => Err(CheckerError::DrupFormatError(err))
     }

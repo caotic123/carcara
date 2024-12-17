@@ -13,14 +13,14 @@ pub enum Implied<T, X> {
     NotUnsat(),
 }
 
-pub type RupAdition<'a> = Vec<(
-    IndexSet<(bool, &'a Rc<Term>)>,
+pub type RupAdition = Vec<(
+    IndexSet<(bool, Rc<Term>)>,
     Option<(bool, Rc<Term>)>,
     u64,
 )>;
 
 pub enum DRupProofAction<'a> {
-    RupStory(IndexSet<(bool, &'a Rc<Term>)>, RupAdition<'a>),
+    RupStory(IndexSet<(bool, &'a Rc<Term>)>, RupAdition),
     Delete(&'a [Rc<Term>]),
 }
 
@@ -36,6 +36,10 @@ pub enum DrupFormatError {
     NoFinalBottomInDrup,
     #[error("couldn't elaborate drup because the argument might not be in RUP")]
     PotentialNoDrupFormat,
+    #[error("a clause in RAT should be non-empty")]
+    CheckingRatInEmptyClause,
+    #[error("the clause isn't in RAT format")]
+    NotInRatFormat,
 }
 
 pub fn hash_term<T: Borrow<Rc<Term>>>(pool: &mut dyn TermPool, term: &[T]) -> u64 {
@@ -47,7 +51,7 @@ pub fn hash_term<T: Borrow<Rc<Term>>>(pool: &mut dyn TermPool, term: &[T]) -> u6
             if p {
                 return regular_term.clone();
             } else {
-                return build_term!(pool, (not { (*regular_term).clone() }))
+                return build_term!(pool, (not { (*regular_term).clone() }));
             };
         })
         .collect::<Vec<_>>();
@@ -70,13 +74,13 @@ pub fn hash_term<T: Borrow<Rc<Term>>>(pool: &mut dyn TermPool, term: &[T]) -> u6
     return hash;
 }
 
-fn get_implied_clause<'a>(
+fn get_implied_clause(
     clauses: &mut Vec<(
         (Option<(bool, Rc<Term>)>, Option<(bool, Rc<Term>)>),
-        (IndexSet<(bool, &'a Rc<Term>)>, u64),
+        (IndexSet<(bool, Rc<Term>)>, u64),
     )>,
     env: &HashMap<(bool, Rc<Term>), bool>,
-) -> Implied<(bool, Rc<Term>), (IndexSet<(bool, &'a Rc<Term>)>, u64)> {
+) -> Implied<(bool, Rc<Term>), (IndexSet<(bool, Rc<Term>)>, u64)> {
     if clauses.is_empty() {
         return Implied::NotUnsat();
     }
@@ -163,24 +167,24 @@ fn get_implied_clause<'a>(
     Implied::NotUnsat()
 }
 
-fn rup<'a>(
+fn rup<'a, 'b>(
     pool: &mut dyn TermPool,
     drup_clauses: &HashMap<u64, IndexSet<(bool, &'a Rc<Term>)>>,
-    goal: &'a [Rc<Term>],
-) -> Option<RupAdition<'a>> {
-    let mut unit_story: RupAdition<'a> = vec![];
+    goal: &'b [Rc<Term>],
+) -> Option<RupAdition> {
+    let mut unit_story: RupAdition = vec![];
 
     let mut clauses: Vec<(
         (Option<(bool, Rc<Term>)>, Option<(bool, Rc<Term>)>),
-        (IndexSet<(bool, &'a Rc<Term>)>, u64),
+        (IndexSet<(bool, Rc<Term>)>, u64),
     )> = vec![];
 
     let mut env: HashMap<(bool, Rc<Term>), bool> = HashMap::new();
 
     for term in goal {
         let (p, regular_term) = term.remove_all_negations_with_polarity();
-        let mut clause: IndexSet<(bool, &Rc<Term>)> = IndexSet::new();
-        clause.insert((!p, regular_term));
+        let mut clause: IndexSet<(bool, Rc<Term>)> = IndexSet::new();
+        clause.insert((!p, regular_term.clone()));
         clauses.push((
             (Some((!p, regular_term.clone())), None),
             (clause, hash_term(pool, vec![term].as_slice())),
@@ -194,7 +198,7 @@ fn rup<'a>(
                 watched_literals.next().map(|v| (v.0, (*v.1).clone())),
                 watched_literals.next().map(|v| (v.0, (*v.1).clone())),
             ),
-            (clause.clone(), *key),
+            (clause.iter().map(|(k, v)| (*k, (*v).clone())).collect(), *key),
         ));
     }
 
@@ -218,9 +222,10 @@ fn rup<'a>(
 
 pub fn check_drup<'a>(
     pool: &mut dyn TermPool,
-    conclusion: &'a[Rc<Term>],
+    conclusion: &'a [Rc<Term>],
     premises: &[&'a [Rc<Term>]],
-    args: &'a[Rc<Term>],
+    args: &'a [Rc<Term>],
+    check_rat: bool,
 ) -> Result<DRupStory<'a>, DrupFormatError> {
     let mut premises: HashMap<u64, _> = premises
         .iter()
@@ -249,10 +254,18 @@ pub fn check_drup<'a>(
             Some(terms) => terms,
             None => panic!("Invalid clause term"),
         };
-        let unit_history = rup(pool, premises.borrow(), terms);
+
+        let mut unit_history = rup(pool, premises.borrow(), terms);
+        if unit_history == None && check_rat {
+            unit_history = check_drat(pool, premises.borrow(), terms);
+        }
 
         if unit_history == None {
-            return Err(DrupFormatError::NoFinalBottomInDrup);
+            return if check_rat {
+                Err(DrupFormatError::NotInRatFormat)
+            } else {
+                Err(DrupFormatError::NoFinalBottomInDrup)
+            };
         }
 
         let terms_indexed_set = terms
@@ -273,4 +286,41 @@ pub fn check_drup<'a>(
     }
 
     Ok(drup_history)
+}
+
+pub fn check_drat<'a>(
+    pool: &mut dyn TermPool,
+    drup_clauses: &HashMap<u64, IndexSet<(bool, &'a Rc<Term>)>>,
+    goal: &'a [Rc<Term>],
+) -> Option<RupAdition> {
+    let pivot = &goal[0];
+    let mut unit_history = vec![];
+    for (_, clause) in drup_clauses {
+        let (p, regular_term) = pivot.remove_all_negations_with_polarity();
+        let negated_pivot = (!p, regular_term);
+
+        if clause.contains(&negated_pivot) {
+            let mut resolvent = clause.clone();
+            resolvent.remove(&negated_pivot);
+            let mut resolvent = resolvent
+                .iter()
+                .map(|(p, literal)| {
+                    if *p {
+                        return (*literal).clone();
+                    } else {
+                        return build_term!(pool, (not { (*literal).clone() }));
+                    };
+                })
+                .collect::<Vec<_>>();
+
+            resolvent.append(&mut goal[1..].to_vec());
+            if let Some(history) = rup(pool, drup_clauses, resolvent.borrow()) {
+                unit_history.extend_from_slice(&history);
+                continue;
+            }
+            return None;
+        }
+    }
+
+    return Some(unit_history);
 }
