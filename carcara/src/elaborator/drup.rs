@@ -39,27 +39,43 @@ pub fn elaborate_drup(
         return resolvent;
     }
 
+    let conclusion = step.clause.to_vec();
+    let conclusion = if conclusion.len() > 0 {
+        build_term!(pool, (cl[conclusion]))
+    } else {
+        conclusion[0].clone()
+    };
+
+    let premises = step
+        .premises
+        .iter()
+        .map(|p| {
+            let clause = p.clause().to_vec();
+            let clause = if clause.len() > 0 {
+                build_term!(pool, (cl[clause]))
+            } else {
+                clause[0].clone()
+            };
+            (clause.clone(), hash_term(pool, clause), p.clone())
+        })
+        .collect::<Vec<_>>();
+
     let trace = check_drup(
         pool,
-        step.clause.as_slice(),
-        step.premises
-            .iter()
-            .map(|x| x.clause())
-            .collect::<Vec<_>>()
-            .as_slice(),
+        conclusion,
+        &premises.iter().map(|x| x.0.clone()).collect::<Vec<_>>(),
         step.args.as_slice(),
         false,
     );
 
+    let mut context = premises
+        .iter()
+        .map(|x| (x.1, x.2.clone()))
+        .collect::<HashMap<_, _>>();
+
     if let Err(err) = trace {
         return Err(CheckerError::DrupFormatError(err));
     }
-
-    let premises: &mut HashMap<u64, _> = &mut step
-        .premises
-        .iter()
-        .map(|p| (hash_term(pool, p.clause()), p.clone()))
-        .collect();
 
     let mut ids = IdHelper::new(&step.id);
     let mut trace = trace.unwrap();
@@ -82,8 +98,11 @@ pub fn elaborate_drup(
                     let pivot = pivots[i].as_ref().unwrap();
 
                     if rup[i + 1].0.contains(&(!pivot.0, pivot.1.clone())) {
-                        let resolvent_indexset: IndexSet<(bool, Rc<Term>)> =
-                            resolve(rup[i].0.borrow(), rup[i + 1].0.borrow(), (pivot.0, pivot.1.clone()));
+                        let resolvent_indexset: IndexSet<(bool, Rc<Term>)> = resolve(
+                            rup[i].0.borrow(),
+                            rup[i + 1].0.borrow(),
+                            (pivot.0, pivot.1.clone()),
+                        );
                         let resolvent: Vec<Rc<Term>> = resolvent_indexset
                             .iter()
                             .map(|(polarity, term)| {
@@ -95,8 +114,13 @@ pub fn elaborate_drup(
                             })
                             .collect();
 
-                        let resolvent_hash = hash_term(pool, resolvent.as_slice());
+                        let resolvent_cl_term = if resolvent.len() > 0 {
+                            build_term!(pool, (cl[resolvent.to_vec()]))
+                        } else {
+                            resolvent[0].clone()
+                        };
 
+                        let resolvent_hash = hash_term(pool, resolvent_cl_term);
                         resolutions.push(ResolutionStep::Resolvent(
                             pivot,
                             rup[i].1,
@@ -152,8 +176,8 @@ pub fn elaborate_drup(
                                 clause: clause,
                                 rule: "resolution".to_owned(),
                                 premises: vec![
-                                    (*premises.get(c).unwrap()).clone(),
-                                    (*premises.get(d).unwrap()).clone(),
+                                    (*context.get(c).unwrap()).clone(),
+                                    (*context.get(d).unwrap()).clone(),
                                 ],
                                 discharge: Vec::new(),
                                 args: vec![pivot.1.clone(), pool.bool_constant(pivot.0)],
@@ -177,8 +201,14 @@ pub fn elaborate_drup(
                                         }
                                     })
                                     .collect();
-                                hash = hash_term(pool, clause.as_slice());
 
+                                let cl_clause = if clause.len() > 0 {
+                                    build_term!(pool, (cl[clause.clone()]))
+                                } else {
+                                    clause[0].clone()
+                                };
+                                
+                                hash = hash_term(pool, cl_clause);
                                 proof_step = Rc::new(ProofNode::Step(StepNode {
                                     id: ids.next_id(),
                                     depth: step.depth,
@@ -197,7 +227,7 @@ pub fn elaborate_drup(
                                 }
                             }
 
-                            premises.insert(hash, proof_step);
+                            context.insert(hash, proof_step);
                         }
 
                         ResolutionStep::UnChanged(_, _) => unreachable!(),

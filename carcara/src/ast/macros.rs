@@ -237,6 +237,13 @@ macro_rules! build_term {
         };
         $pool.add(term)
     }};
+    ($pool:expr, ($op:tt [$arg:expr])) => {{
+        let term = $crate::ast::Term::Op(
+            match_term!(@GET_VARIANT $op),
+            $arg,
+        );
+        $pool.add(term)
+    }};
     ($pool:expr, ($op:tt $($args:tt)+)) => {{
         let term = $crate::ast::Term::Op(
             match_term!(@GET_VARIANT $op),
