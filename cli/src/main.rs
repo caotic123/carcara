@@ -90,6 +90,9 @@ struct Input {
     /// The original problem file. If this argument is not present, it will be inferred from the
     /// proof file.
     problem_file: Option<String>,
+
+    #[clap(long)]
+    rare_file: Option<String>,
 }
 
 #[derive(Args)]
@@ -491,43 +494,66 @@ fn main() {
     }
 }
 
-fn get_instance(options: &Input) -> CliResult<(Box<dyn BufRead>, Box<dyn BufRead>)> {
+fn get_instance(options: &Input) -> CliResult<(Box<dyn BufRead>, Box<dyn BufRead>, Option<Box<dyn BufRead>>)> {
     fn reader_from_path<P: AsRef<Path>>(path: P) -> CliResult<Box<dyn BufRead>> {
         Ok(Box::new(io::BufReader::new(File::open(path)?)))
     }
 
+    let read_rare_file = ||
+        match &options.rare_file {
+            Some(file) => Ok::<Option<Box<dyn BufRead>>, CliError>(Some(reader_from_path(file)?)),
+            None => Ok(None)
+        };
+
     match (options.problem_file.as_deref(), options.proof_file.as_str()) {
         (Some("-"), "-") | (None, "-") => Err(CliError::BothFilesStdin),
-        (Some(problem), "-") => Ok((reader_from_path(problem)?, Box::new(io::stdin().lock()))),
-        (Some("-"), proof) => Ok((Box::new(io::stdin().lock()), reader_from_path(proof)?)),
-        (Some(problem), proof) => Ok((reader_from_path(problem)?, reader_from_path(proof)?)),
-        (None, proof) => Ok((
+        (Some(problem), "-") => {
+            let rare_file = read_rare_file()?;
+            Ok((reader_from_path(problem)?, Box::new(io::stdin().lock()), rare_file))
+        }
+        (Some("-"), proof) => {
+            let rare_file = read_rare_file()?;
+            Ok((Box::new(io::stdin().lock()), reader_from_path(proof)?, rare_file))
+        }
+        (Some(problem), proof) => {
+            let rare_file = read_rare_file()?;
+            Ok((reader_from_path(problem)?, reader_from_path(proof)?, rare_file))
+        }
+        (None, proof) => {
+            let rare_file = read_rare_file()?;
+            Ok((
             reader_from_path(infer_problem_path(proof)?)?,
             reader_from_path(proof)?,
-        )),
+            rare_file,
+        ))
+    }
+        
     }
 }
 
 fn parse_command(
     options: ParseCommandOptions,
 ) -> CliResult<(ast::Problem, ast::Proof, ast::PrimitivePool)> {
-    let (problem, proof) = get_instance(&options.input)?;
-    let result = parser::parse_instance(problem, proof, options.parsing.into())
+    let (problem, proof, rules) = get_instance(&options.input)?;
+    let result = parser::parse_instance(problem, proof, rules, options.parsing.into())
         .map_err(carcara::Error::from)?;
+
     Ok(result)
 }
 
 fn check_command(options: CheckCommandOptions) -> CliResult<bool> {
-    let (problem, proof) = get_instance(&options.input)?;
+    let (problem, proof, rules) = get_instance(&options.input)?;
     let parser_config = options.parsing.into();
     let checker_config = options.checking.into();
+
     let collect_stats = options.stats.stats;
     if options.num_threads == 1 {
-        check(problem, proof, parser_config, checker_config, collect_stats)
+        check(problem, proof, rules, parser_config, checker_config, collect_stats)
     } else {
         check_parallel(
             problem,
             proof,
+            rules,
             parser_config,
             checker_config,
             collect_stats,
@@ -541,12 +567,13 @@ fn check_command(options: CheckCommandOptions) -> CliResult<bool> {
 fn elaborate_command(
     options: ElaborateCommandOptions,
 ) -> CliResult<(bool, ast::Problem, ast::Proof, ast::PrimitivePool)> {
-    let (problem, proof) = get_instance(&options.input)?;
+    let (problem, proof, rules) = get_instance(&options.input)?;
 
     let (elab_config, pipeline) = options.elaboration.into();
     check_and_elaborate(
         problem,
         proof,
+        rules,
         options.parsing.into(),
         options.checking.into(),
         elab_config,
@@ -610,8 +637,8 @@ fn bench_command(options: BenchCommandOptions) -> CliResult<()> {
 fn slice_command(
     options: SliceCommandOptions,
 ) -> CliResult<(ast::Problem, ast::Proof, ast::PrimitivePool)> {
-    let (problem, proof) = get_instance(&options.input)?;
-    let (problem, proof, pool) = parser::parse_instance(problem, proof, options.parsing.into())
+    let (problem, proof, rules) = get_instance(&options.input)?;
+    let (problem, proof, pool) = parser::parse_instance(problem, proof, rules,options.parsing.into())
         .map_err(carcara::Error::from)?;
 
     let node = ast::ProofNode::from_commands_with_root_id(proof.commands, &options.from)
@@ -628,10 +655,10 @@ fn generate_lia_problems_command(options: ParseCommandOptions, use_sharing: bool
     use std::io::Write;
 
     let root_file_name = options.input.proof_file.clone();
-    let (problem, proof) = get_instance(&options.input)?;
+    let (problem, proof, rules) = get_instance(&options.input)?;
 
     let instances =
-        generate_lia_smt_instances(problem, proof, options.parsing.into(), use_sharing)?;
+        generate_lia_smt_instances(problem, proof, rules, options.parsing.into(), use_sharing)?;
     for (id, content) in instances {
         let file_name = format!("{}.{}.lia_smt2", root_file_name, id);
         let mut f = File::create(file_name)?;

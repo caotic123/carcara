@@ -2,6 +2,7 @@
 
 mod error;
 mod lexer;
+mod rare;
 pub(crate) mod tests;
 
 use std::iter::Iterator;
@@ -10,7 +11,7 @@ pub use error::{ParserError, SortError};
 pub use lexer::{Lexer, Position, Reserved, Token};
 
 use crate::{
-    ast::*,
+    ast::{rules::Rules, *},
     utils::{HashCache, HashMapStack},
     CarcaraResult, Error,
 };
@@ -65,24 +66,31 @@ impl Config {
 pub fn parse_instance<T: BufRead>(
     problem: T,
     proof: T,
+    rules: Option<T>,
     config: Config,
 ) -> CarcaraResult<(Problem, Proof, PrimitivePool)> {
     let mut pool = PrimitivePool::new();
-    parse_instance_with_pool(problem, proof, config, &mut pool)
-        .map(|(prelude, proof)| (prelude, proof, pool))
+    parse_instance_with_pool(problem, proof, rules, config, &mut pool)
+        .map(|(prelude, proof, rules)| (prelude, proof, pool))
 }
 
 pub fn parse_instance_with_pool<T: BufRead>(
     problem: T,
     proof: T,
+    rules: Option<T>,
     config: Config,
     pool: &mut PrimitivePool,
-) -> CarcaraResult<(Problem, Proof)> {
+) -> CarcaraResult<(Problem, Proof, Option<Rules>)> {
     let mut parser = Parser::new(pool, config, problem)?;
     let problem = parser.parse_problem()?;
     parser.reset(proof)?;
     let proof = parser.parse_proof()?;
-    Ok((problem, proof))
+    if let Some(rules) = rules {
+        parser.reset(rules)?;
+        let rules = parser.parse_rare()?;
+        return Ok((problem, proof, Some(rules)))
+    }
+    Ok((problem, proof, None))
 }
 
 /// A function definition, from a `define-fun` command.
@@ -879,6 +887,9 @@ impl<'a, R: BufRead> Parser<'a, R> {
         Ok(Proof { constant_definitions, commands })
     }
 
+    fn parse_rare(&mut self) -> CarcaraResult<Rules> {
+        return rare::parse_rare(self);
+    }
     /// Parses an `assume` proof command. This method assumes that the `(` and `assume` tokens were
     /// already consumed.
     fn parse_assume_command(&mut self) -> CarcaraResult<(String, Rc<Term>)> {
