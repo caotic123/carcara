@@ -124,6 +124,14 @@ pub enum ParserError {
     /// The parser encountered an unknown qualified operator.
     #[error("not a valid qualified operator: '{0}'")]
     InvalidQualifiedOp(String),
+
+    /// The parser encountered an unknown qualified operator.
+    #[error("not a valid format for the argument: '{0}'")]
+    InvalidRareArgFormat(String),
+
+    /// The parser encountered an unknown qualified operator.
+    #[error("not a valid qualified argument: '{0}'")]
+    InvalidRareArgAttribute(String),
 }
 
 /// Returns an error if the length of `sequence` is not in the `expected` range.

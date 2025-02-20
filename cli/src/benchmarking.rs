@@ -41,6 +41,7 @@ fn run_job<T: CollectResults + Default + Send>(
     let (problem, proof, mut pool) = parser::parse_instance(
         BufReader::new(File::open(job.problem_file)?),
         BufReader::new(File::open(job.proof_file)?),
+        None,
         parser_config,
     )?;
     let parsing = parsing.elapsed();

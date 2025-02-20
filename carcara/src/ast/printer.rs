@@ -603,7 +603,7 @@ mod tests {
             (step t6 (cl) :rule hole)\n\
         ";
         let (problem, proof, mut pool) =
-            parser::parse_instance(definitions, proof, parser::Config::new()).unwrap();
+            parser::parse_instance(definitions, proof, None, parser::Config::new()).unwrap();
 
         let mut buf = Vec::new();
         AlethePrinter::new(&mut pool, &problem.prelude, true, &mut buf)
