@@ -1,26 +1,33 @@
-use super::{Constant, Operator, Rc, Sort};
+use std::rc::Rc;
+
+use super::{Constant, Operator};
+
+#[derive(Debug, Clone)]
+pub enum RuleArg {
+    TypeArg(String, String),
+    UnitArg(String, String),
+    ListArg(String, String),
+}
 
 #[derive(Debug, Clone)]
 pub enum RareTerm {
     Const(Constant),
 
     /// A variable, consisting of an identifier and a sort.
-    Var(String, Rc<RareTerm>),
+    Var(String),
+
+    /// An application of a bulit-in operator to one or more terms.
+    Op(Operator),
 
     /// An application of a function to one or more terms.
     App(Rc<RareTerm>, Vec<Rc<RareTerm>>),
-
-    /// An application of a bulit-in operator to one or more terms.
-    Op(Operator, Vec<Rc<RareTerm>>),
-
-    /// A sort.
-    Sort(Sort)
 }
 
 #[derive(Debug, Clone)]
 pub struct RuleDefinition {
     name: String,
-    body: RareTerm 
+    parameters: Vec<RuleArg>,
+    conclusion: RareTerm 
 }
 
 pub type Rules = Vec<RuleDefinition>;
