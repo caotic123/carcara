@@ -2,12 +2,6 @@ use std::rc::Rc;
 
 use super::{Constant, Operator};
 
-#[derive(Debug, Clone)]
-pub enum RuleArg {
-    TypeArg(String, String),
-    UnitArg(String, String),
-    ListArg(String, String),
-}
 
 #[derive(Debug, Clone)]
 pub enum RareTerm {
@@ -21,13 +15,27 @@ pub enum RareTerm {
 
     /// An application of a function to one or more terms.
     App(Rc<RareTerm>, Vec<Rc<RareTerm>>),
+
+}
+#[derive(Debug, Clone)]
+pub enum AttributeParameters {
+    List,
+    None
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeParameter {
+    pub term: Rc<RareTerm>,
+    pub attribute: AttributeParameters
 }
 
 #[derive(Debug, Clone)]
 pub struct RuleDefinition {
-    name: String,
-    parameters: Vec<RuleArg>,
-    conclusion: RareTerm 
+    pub name: String,
+    pub parameters: Vec<TypeParameter>,
+    pub arguments: Vec<String>,
+    pub premises: Vec<Rc<RareTerm>>,
+    pub conclusion: Rc<RareTerm> 
 }
 
 pub type Rules = Vec<RuleDefinition>;

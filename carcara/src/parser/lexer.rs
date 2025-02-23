@@ -8,7 +8,7 @@ use std::{
 };
 
 /// A token in the SMT-LIB and Alethe formats.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Token {
     /// The `(` token.
     OpenParen,
