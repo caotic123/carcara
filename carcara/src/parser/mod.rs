@@ -88,6 +88,7 @@ pub fn parse_instance_with_pool<T: BufRead>(
     if let Some(rules) = rules {
         parser.reset(rules)?;
         let rules = parser.parse_rare()?;
+        print!("{:?}", rules);
         return Ok((problem, proof, Some(rules)))
     }
     Ok((problem, proof, None))

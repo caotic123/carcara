@@ -13,10 +13,14 @@ use super::{Parser, ParserError, Reserved, Token};
 enum Body {
     Args(Vec<String>),
     Conclusion(Rc<RareTerm>),
-    Blah(),
+    Premise(Vec<Rc<RareTerm>>),
 }
 
-fn parse_rewrite_term<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Rc<RareTerm>> {
+// Parser a rare term until the closing outermost parenthesis, you may need to consume the outermost parenthesis after.
+fn parse_rewrite_term<'a, R: BufRead, F>(
+    parser: &mut Parser<'a, R>,
+    stop_with: &[F],
+) -> CarcaraResult<Rc<RareTerm>> where F : Fn(Token) -> bool {
     fn consume_head<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Rc<RareTerm>> {
         let current = parser.next_token()?;
         match current {
@@ -33,12 +37,12 @@ fn parse_rewrite_term<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResu
             (Token::Decimal(r), _) => return Ok(Rc::new(RareTerm::Const(Constant::Real(r)))),
             (Token::String(s), _) => return Ok(Rc::new(RareTerm::Const(Constant::String(s)))),
             _ => {
-                if let (symbol, _) = current {
-                    if let Ok(op) = Operator::from_str(&symbol.to_string()) {
+                if let (Token::Symbol(s), _) = current {
+                    if let Ok(op) = Operator::from_str(&s) {
                         return Ok(Rc::new(RareTerm::Op(op)));
                     }
 
-                    return Ok(Rc::new(RareTerm::Var(symbol.to_string())));
+                    return Ok(Rc::new(RareTerm::Var(s)));
                 }
 
                 return Err(Error::Parser(
@@ -49,76 +53,104 @@ fn parse_rewrite_term<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResu
         }
     }
 
-    fn consume_continuation<'a, R: BufRead>(
-        parser: &mut Parser<'a, R>,
-    ) -> CarcaraResult<Rc<RareTerm>> {
-        let current = &parser.current_token;
-        return Ok(match current {
-            Token::OpenParen => {
-                let res: Rc<RareTerm> = parse_rewrite_term(parser)?;
-                return Ok(res);
-            }
-            _ => consume_head(parser)?
-        });
-    }
-
     parser.expect_token(Token::OpenParen)?;
     let applicant = consume_head(parser)?;
-    let mut args = parser.parse_sequence(consume_continuation, false)?;
-    while true {
-        let current = &parser.current_token;
-        if let current = Token::OpenParen {
-            args.push(parse_rewrite_term(parser)?);
+    let mut args = vec![];
+    let mut current = parser.current_token.clone();
+    loop {
+        match current {
+            Token::OpenParen => {
+                args.push(parse_rewrite_term(parser, stop_with)?);
+                parser.expect_token(Token::CloseParen)?;
+            }
+            Token::CloseParen => break,
+            token => {
+                if Option::is_some(&stop_with.iter().find(|x| (**x)(token.clone()))) {
+                    break;
+                } else {
+                    args.push(consume_head(parser)?)
+                }
+            }
         }
+        current = parser.current_token.clone();
     }
-    
-    parser.expect_token(Token::CloseParen)?;
+
     return Ok(Rc::new(RareTerm::App(applicant, args)));
 }
 
-fn parse_parameters<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<RuleArg> {
-    parser.expect_token(Token::OpenParen)?;
-    match &parser.current_token {
-        Token::Symbol(s) if s.starts_with("@") => {
-            let arg_type = parser.expect_symbol()?;
-            let arg_name = parser.expect_symbol()?;
+fn parse_parameters<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<TypeParameter> {
+    let term = parse_rewrite_term(parser, vec![|x| return if let Token::Keyword(_) = x {true} else {false}].as_slice())?;
+    let current_token = &parser.current_token;
+    match current_token {
+        Token::CloseParen => {
             parser.expect_token(Token::CloseParen)?;
-            Ok(RuleArg::TypeArg(
-                arg_name,
-                arg_type.strip_prefix("@").unwrap().to_string(),
-            ))
+            return Ok(TypeParameter {
+                term: term,
+                attribute: AttributeParameters::None,
+            });
         }
-        _ => {
-            let arg_name: String = parser.expect_symbol()?;
-            let arg_type = parser.expect_symbol()?;
-            match arg_type.strip_prefix("@") {
-                Some(arg_type) => {
-                    let arg_type = arg_type.to_string();
-                    let current_token = &parser.current_token;
-                    if let current_token = Token::Keyword("list".into()) {
-                        let kind_of_arg = parser.expect_keyword()?;
-                        parser.expect_token(Token::CloseParen)?;
-                        if kind_of_arg != "list" {
-                            return Err(Error::Parser(
-                                ParserError::InvalidRareArgAttribute(kind_of_arg),
-                                parser.current_position,
-                            ));
-                        }
-                        return Ok(RuleArg::ListArg(arg_name, arg_type));
-                    }
-                    parser.expect_token(Token::CloseParen)?;
-                    return Ok(RuleArg::UnitArg(arg_name, arg_type));
-                }
-                None => {
-                    return Err(Error::Parser(
-                        ParserError::InvalidRareArgFormat(arg_type),
-                        parser.current_position,
-                    ));
-                }
+        Token::Keyword(_) => {
+            let kind_of_arg = parser.expect_keyword()?;
+            parser.expect_token(Token::CloseParen)?;
+            if kind_of_arg == "list" {
+                return Ok(TypeParameter {
+                    term: term,
+                    attribute: AttributeParameters::List,
+                });
             }
+            return Err(Error::Parser(
+                ParserError::InvalidRareArgAttribute(kind_of_arg),
+                parser.current_position,
+            ));
         }
+        _ => Err(Error::Parser(
+            ParserError::UnexpectedToken(current_token.clone()),
+            parser.current_position,
+        )),
     }
 }
+
+// fn parse_parameters<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<RuleArg> {
+//     parser.expect_token(Token::OpenParen)?;
+//     match &parser.current_token {
+//         Token::Symbol(s) if s.starts_with("@") => {
+//             let arg_type = parser.expect_symbol()?;
+//             let arg_name = parser.expect_symbol()?;
+//             parser.expect_token(Token::CloseParen)?;
+//             Ok(RuleArg::TypeArg(
+//                 arg_name,
+//                 arg_type.strip_prefix("@").unwrap().to_string(),
+//             ))
+//         }
+//         _ => {
+//             let arg_name: String = parser.expect_symbol()?;
+//             let arg_type = parser.expect_symbol()?;
+//             match arg_type.strip_prefix("@") {
+//                 Some(arg_type) => {
+//                     let arg_type = arg_type.to_string();
+//                     let current_token = &parser.current_token;
+//                     if let Token::Keyword(_) = current_token  {
+//                         let kind_of_arg = parser.expect_keyword()?;
+//                         parser.expect_token(Token::CloseParen)?;
+//                         if kind_of_arg != "list" {
+//                             return Err(Error::Parser(
+//                                 ParserError::InvalidRareArgAttribute(kind_of_arg),
+//                                 parser.current_position,
+//                             ));
+//                         }
+//                         return Ok(RuleArg::ListArg(arg_name, arg_type, true));
+//                     }
+//                     parser.expect_token(Token::CloseParen)?;
+//                     return Ok(RuleArg::UnitArg(arg_name, arg_type, true));
+//                 }
+//                 None => {
+//                     parser.expect_token(Token::CloseParen)?;
+//                     return Ok(RuleArg::UnitArg(arg_name, arg_type, false));
+//                 }
+//             }
+//         }
+//     }
+// }
 
 fn parse_args<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Vec<String>> {
     parser.expect_token(Token::OpenParen)?;
@@ -132,33 +164,85 @@ fn parse_body<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Body>
             return Ok(Body::Args(parse_args(parser)?));
         }
         ['c', 'o', 'n', 'c', 'l', 'u', 's', 'i', 'o', 'n', ..] => {
-            let term = parse_rewrite_term(parser)?;
-            parser.expect_token(Token::CloseParen)?;
-            let rewrite_term = parse_rewrite_term(parser)?;
-            print!("{:?}\n", rewrite_term);
+            let vec: Vec<fn(Token) -> bool> = vec![];
+            let rewrite_term = parse_rewrite_term(parser, vec.as_slice())?;
             return Ok(Body::Conclusion(rewrite_term));
         }
-        _ => {
+        ['p', 'r', 'e', 'm', 'i', 's', 'e', 's', ..] => {
             parser.expect_token(Token::OpenParen)?;
-            print!("moto moto");
-            return Ok(Body::Blah());
+            let terms = parser.parse_sequence(
+                |parser| {
+                    let vec: Vec<fn(Token) -> bool> = vec![];
+                    let term = parse_rewrite_term(parser, vec.as_slice())?;
+                    parser.expect_token(Token::CloseParen)?;
+                    return Ok(term);
+                },
+                false,
+            )?;
+            print!("{:?}", parser.current_token);
+            return Ok(Body::Premise(terms));
+        }
+        attribute => {
+            return Err(Error::Parser(
+                ParserError::InvalidRareFunctionAttribute(attribute.iter().collect()),
+                parser.current_position,
+            ));
         }
     }
 }
 
-pub fn parse_rule<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<()> {
+pub fn parse_rule<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<RuleDefinition> {
     parser.expect_token(Token::OpenParen)?;
     parser.expect_token(Token::ReservedWord(Reserved::DeclareRareRule))?;
     let name = parser.expect_symbol()?;
     parser.expect_token(Token::OpenParen)?;
-    let args = parser.parse_sequence(parse_parameters, false)?;
+    let parameters = parser.parse_sequence(parse_parameters, false)?;
     let body = parser.parse_sequence(parse_body, false)?;
-    print!("{:?}", body);
-    return Ok(());
+    pub struct BodyDefinition<'a> {
+        args: &'a Vec<String>,
+        premises: &'a Vec<Rc<RareTerm>>,
+        conclusion: Option<&'a Rc<RareTerm>>,
+    }
+
+    let mut body_definitions = BodyDefinition {
+        args: &vec![],
+        premises: &vec![],
+        conclusion: None,
+    };
+
+    let body = body.iter().fold(&mut body_definitions, |body, x| {
+        match x {
+            Body::Args(args) => body.args = args,
+            Body::Conclusion(term) => body.conclusion = Some(term),
+            Body::Premise(term) => body.premises = term,
+        }
+        return body;
+    });
+
+    if Option::is_none(&body.conclusion) {
+        return Err(Error::Parser(
+            ParserError::UndefinedRareConclusion(name),
+            parser.current_position,
+        ));
+    }
+
+    parser.expect_token(Token::CloseParen)?;
+    return Ok(RuleDefinition {
+        name,
+        parameters,
+        arguments: body.args.clone(),
+        premises: body.premises.clone(),
+        conclusion: body.conclusion.map(|x| x.clone()).unwrap(),
+    });
 }
 
 pub fn parse_rare<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Rules> {
-    parse_rule(parser)?;
+    let mut rules = vec![];
+    let mut current = &parser.current_token;
+    while *current != Token::Eof {
+        rules.push(parse_rule(parser)?);
+        current = &parser.current_token;
+    }
 
-    return Ok(vec![]);
+    return Ok(rules);
 }

@@ -132,6 +132,14 @@ pub enum ParserError {
     /// The parser encountered an unknown qualified operator.
     #[error("not a valid qualified argument: '{0}'")]
     InvalidRareArgAttribute(String),
+
+    /// The parser encountered an unknown rare rule attribute.
+    #[error("not a valid rule attribute: '{0}'")]
+    InvalidRareFunctionAttribute(String),
+
+    /// The parser encountered an unknown rare rule attribute.
+    #[error("the rule '{0}' has no conclusion")]
+    UndefinedRareConclusion(String),
 }
 
 /// Returns an error if the length of `sequence` is not in the `expected` range.
