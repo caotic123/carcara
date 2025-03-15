@@ -63,35 +63,41 @@ impl Config {
 ///
 /// This returns the parsed proof, as well as the `TermPool` used in parsing. Can take any type that
 /// implements `BufRead`.
-pub fn parse_instance<T: BufRead>(
+pub fn parse_instance<'a, T: BufRead>(
     problem: T,
     proof: T,
     rules: Option<T>,
     config: Config,
-) -> CarcaraResult<(Problem, Proof, PrimitivePool)> {
+) -> CarcaraResult<(Problem, Proof, Rules, PrimitivePool)> {
     let mut pool = PrimitivePool::new();
     parse_instance_with_pool(problem, proof, rules, config, &mut pool)
-        .map(|(prelude, proof, rules)| (prelude, proof, pool))
+        .map(|(prelude, proof, rules)| (prelude, proof, rules, pool))
 }
 
-pub fn parse_instance_with_pool<T: BufRead>(
+pub fn parse_instance_with_pool<'a, T: BufRead>(
     problem: T,
     proof: T,
     rules: Option<T>,
     config: Config,
     pool: &mut PrimitivePool,
-) -> CarcaraResult<(Problem, Proof, Option<Rules>)> {
+) -> CarcaraResult<(Problem, Proof, Rules)> {
     let mut parser = Parser::new(pool, config, problem)?;
     let problem = parser.parse_problem()?;
     parser.reset(proof)?;
     let proof = parser.parse_proof()?;
     if let Some(rules) = rules {
         parser.reset(rules)?;
-        let rules = parser.parse_rare()?;
-        print!("{:?}", rules);
-        return Ok((problem, proof, Some(rules)))
+        let rules = parser.parse_rare();
+        let rules = match rules {
+            Ok(t) => Ok(t),
+            Err(v) => {
+                println!("\x1b[1;31m[UNEXPECTED]\x1b[0m At \x1b[34m.rare\x1b[0m file");
+                Err(v)
+            }
+        }?;
+        return Ok((problem, proof, rules));
     }
-    Ok((problem, proof, None))
+    Ok((problem, proof, IndexMap::new()))
 }
 
 /// A function definition, from a `define-fun` command.

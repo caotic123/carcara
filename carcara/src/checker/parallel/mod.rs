@@ -5,13 +5,16 @@ use super::{
     rules::{Premise, RuleArgs, RuleResult},
     Config, ProofChecker,
 };
-use crate::benchmarking::{CollectResults, OnlineBenchmarkResults};
 use crate::checker::CheckerStatistics;
+use crate::{
+    ast::rules::Rules,
+    benchmarking::{CollectResults, OnlineBenchmarkResults},
+};
 use crate::{
     ast::{pool::advanced::*, *},
     CarcaraResult, Error,
 };
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 pub use scheduler::{Schedule, ScheduleIter, Scheduler};
 use std::{
     ops::ControlFlow,
@@ -421,6 +424,7 @@ impl<'c> ParallelProofChecker<'c> {
             return Err(CheckerError::Subproof(SubproofError::DischargeInWrongRule));
         }
 
+        /// TODO Implement paralell rare rules
         let rule = match ProofChecker::get_rule(&step.rule, self.config.elaborated) {
             Some(r) => r,
             None if self.config.ignore_unknown_rules => {
@@ -457,6 +461,7 @@ impl<'c> ParallelProofChecker<'c> {
             previous_command,
             discharge: &discharge,
             polyeq_time: &mut polyeq_time,
+            rare_rules: &IndexMap::new(),
         };
 
         rule(rule_args)?;

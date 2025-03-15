@@ -184,6 +184,9 @@ macro_rules! match_term {
 
     (@GET_VARIANT strinre)    => { $crate::ast::Operator::StrInRe };
     (@GET_VARIANT reinter)    => { $crate::ast::Operator::ReIntersection };
+
+    (@GET_VARIANT rarelist)    => { $crate::ast::Operator::RareList };
+
 }
 
 /// A variant of `match_term` that returns a `Result<_, CheckerError>` instead of an `Option`.

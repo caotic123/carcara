@@ -1,17 +1,18 @@
+use std::cell::{Ref, RefCell, RefMut};
 use std::io::BufRead;
-use std::rc::Rc;
 use std::str::FromStr;
 
-use crate::ast::{Constant, Operator};
+use indexmap::IndexMap;
+
+use crate::ast::{Constant, Operator, Rc, Term};
 use crate::{ast::rules::*, Error};
 
-use crate::CarcaraResult;
+use crate::{match_rareterm, CarcaraResult};
 
 use super::{Parser, ParserError, Reserved, Token};
 
 #[derive(Debug, Clone)]
 enum Body {
-    Args(Vec<String>),
     Conclusion(Rc<RareTerm>),
     Premise(Vec<Rc<RareTerm>>),
 }
@@ -19,9 +20,16 @@ enum Body {
 // Parser a rare term until the closing outermost parenthesis, you may need to consume the outermost parenthesis after.
 fn parse_rewrite_term<'a, R: BufRead, F>(
     parser: &mut Parser<'a, R>,
+    holes: &mut Holes,
     stop_with: &[F],
-) -> CarcaraResult<Rc<RareTerm>> where F : Fn(Token) -> bool {
-    fn consume_head<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Rc<RareTerm>> {
+) -> CarcaraResult<Rc<RareTerm>>
+where
+    F: Fn(Token) -> bool,
+{
+    fn consume_head<'a, R: BufRead>(
+        parser: &mut Parser<'a, R>,
+        holes: &mut Holes,
+    ) -> CarcaraResult<Rc<RareTerm>> {
         let current = parser.next_token()?;
         match current {
             (Token::Bitvector { value, width }, _) => {
@@ -42,6 +50,10 @@ fn parse_rewrite_term<'a, R: BufRead, F>(
                         return Ok(Rc::new(RareTerm::Op(op)));
                     }
 
+                    if let Some(hole) = holes.get(&s) {
+                        return Ok(Rc::new(RareTerm::Hole(hole.clone())));
+                    }
+
                     return Ok(Rc::new(RareTerm::Var(s)));
                 }
 
@@ -54,13 +66,13 @@ fn parse_rewrite_term<'a, R: BufRead, F>(
     }
 
     parser.expect_token(Token::OpenParen)?;
-    let applicant = consume_head(parser)?;
+    let applicant = consume_head(parser, holes)?;
     let mut args = vec![];
     let mut current = parser.current_token.clone();
     loop {
         match current {
             Token::OpenParen => {
-                args.push(parse_rewrite_term(parser, stop_with)?);
+                args.push(parse_rewrite_term(parser, holes, stop_with)?);
                 parser.expect_token(Token::CloseParen)?;
             }
             Token::CloseParen => break,
@@ -68,7 +80,7 @@ fn parse_rewrite_term<'a, R: BufRead, F>(
                 if Option::is_some(&stop_with.iter().find(|x| (**x)(token.clone()))) {
                     break;
                 } else {
-                    args.push(consume_head(parser)?)
+                    args.push(consume_head(parser, holes)?)
                 }
             }
         }
@@ -78,25 +90,63 @@ fn parse_rewrite_term<'a, R: BufRead, F>(
     return Ok(Rc::new(RareTerm::App(applicant, args)));
 }
 
-fn parse_parameters<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<TypeParameter> {
-    let term = parse_rewrite_term(parser, vec![|x| return if let Token::Keyword(_) = x {true} else {false}].as_slice())?;
+fn parse_parameters<'a, R: BufRead>(
+    parser: &mut Parser<'a, R>,
+    holes: &mut Holes,
+) -> CarcaraResult<(String, TypeParameter)> {
+    let term = parse_rewrite_term(
+        parser,
+        holes,
+        vec![|x| {
+            return if let Token::Keyword(_) = x {
+                true
+            } else {
+                false
+            };
+        }]
+        .as_slice(),
+    )?;
+
+    fn get_app_name(term: Rc<RareTerm>) -> String {
+        if let RareTerm::App(func, _) = &*term {
+            if let RareTerm::Var(name) = &**func {
+                return name.clone();
+            }
+        }
+        panic!("Malformed parameter")
+    }
+
+    let name = get_app_name(term.clone());
+
+    if let Some(s) = match_rareterm!(Type(?v), term) {
+        if s == "Type" {
+            holes.insert(name.clone(), Rc::new(RefCell::new(None)));
+        }
+    }
+
     let current_token = &parser.current_token;
     match current_token {
         Token::CloseParen => {
             parser.expect_token(Token::CloseParen)?;
-            return Ok(TypeParameter {
-                term: term,
-                attribute: AttributeParameters::None,
-            });
+            return Ok((
+                name,
+                TypeParameter {
+                    term,
+                    attribute: AttributeParameters::None,
+                },
+            ));
         }
         Token::Keyword(_) => {
             let kind_of_arg = parser.expect_keyword()?;
             parser.expect_token(Token::CloseParen)?;
             if kind_of_arg == "list" {
-                return Ok(TypeParameter {
-                    term: term,
-                    attribute: AttributeParameters::List,
-                });
+                return Ok((
+                    name,
+                    TypeParameter {
+                        term: term,
+                        attribute: AttributeParameters::List,
+                    },
+                ));
             }
             return Err(Error::Parser(
                 ParserError::InvalidRareArgAttribute(kind_of_arg),
@@ -110,62 +160,40 @@ fn parse_parameters<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult
     }
 }
 
-// fn parse_parameters<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<RuleArg> {
-//     parser.expect_token(Token::OpenParen)?;
-//     match &parser.current_token {
-//         Token::Symbol(s) if s.starts_with("@") => {
-//             let arg_type = parser.expect_symbol()?;
-//             let arg_name = parser.expect_symbol()?;
-//             parser.expect_token(Token::CloseParen)?;
-//             Ok(RuleArg::TypeArg(
-//                 arg_name,
-//                 arg_type.strip_prefix("@").unwrap().to_string(),
-//             ))
-//         }
-//         _ => {
-//             let arg_name: String = parser.expect_symbol()?;
-//             let arg_type = parser.expect_symbol()?;
-//             match arg_type.strip_prefix("@") {
-//                 Some(arg_type) => {
-//                     let arg_type = arg_type.to_string();
-//                     let current_token = &parser.current_token;
-//                     if let Token::Keyword(_) = current_token  {
-//                         let kind_of_arg = parser.expect_keyword()?;
-//                         parser.expect_token(Token::CloseParen)?;
-//                         if kind_of_arg != "list" {
-//                             return Err(Error::Parser(
-//                                 ParserError::InvalidRareArgAttribute(kind_of_arg),
-//                                 parser.current_position,
-//                             ));
-//                         }
-//                         return Ok(RuleArg::ListArg(arg_name, arg_type, true));
-//                     }
-//                     parser.expect_token(Token::CloseParen)?;
-//                     return Ok(RuleArg::UnitArg(arg_name, arg_type, true));
-//                 }
-//                 None => {
-//                     parser.expect_token(Token::CloseParen)?;
-//                     return Ok(RuleArg::UnitArg(arg_name, arg_type, false));
-//                 }
-//             }
-//         }
-//     }
-// }
+fn parse_args<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<(Vec<String>, Holes)> {
+    fn parse_args<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Vec<String>> {
+        parser.expect_token(Token::OpenParen)?;
+        return parser.parse_sequence(|parser| parser.expect_symbol(), false);
+    }
 
-fn parse_args<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Vec<String>> {
-    parser.expect_token(Token::OpenParen)?;
-    return parser.parse_sequence(|parser| parser.expect_symbol(), false);
-}
-
-fn parse_body<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Body> {
     let qualified_arg: Vec<char> = parser.expect_keyword()?.chars().collect();
     match qualified_arg.as_slice() {
         ['a', 'r', 'g', 's', ..] => {
-            return Ok(Body::Args(parse_args(parser)?));
+            let mut holes = IndexMap::new();
+            let args = parse_args(parser)?;
+            for arg in &args {
+                holes.insert(arg.clone(), Rc::new(RefCell::new(None)));
+            }
+            return Ok((args, holes));
         }
+        attribute => {
+            return Err(Error::Parser(
+                ParserError::ExpectArgsFirst(attribute.iter().collect()),
+                parser.current_position,
+            ));
+        }
+    }
+}
+
+fn parse_body<'a, R: BufRead>(
+    parser: &mut Parser<'a, R>,
+    holes: &mut Holes,
+) -> CarcaraResult<Body> {
+    let qualified_arg: Vec<char> = parser.expect_keyword()?.chars().collect();
+    match qualified_arg.as_slice() {
         ['c', 'o', 'n', 'c', 'l', 'u', 's', 'i', 'o', 'n', ..] => {
             let vec: Vec<fn(Token) -> bool> = vec![];
-            let rewrite_term = parse_rewrite_term(parser, vec.as_slice())?;
+            let rewrite_term = parse_rewrite_term(parser, holes, vec.as_slice())?;
             return Ok(Body::Conclusion(rewrite_term));
         }
         ['p', 'r', 'e', 'm', 'i', 's', 'e', 's', ..] => {
@@ -173,13 +201,12 @@ fn parse_body<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Body>
             let terms = parser.parse_sequence(
                 |parser| {
                     let vec: Vec<fn(Token) -> bool> = vec![];
-                    let term = parse_rewrite_term(parser, vec.as_slice())?;
+                    let term = parse_rewrite_term(parser, holes, vec.as_slice())?;
                     parser.expect_token(Token::CloseParen)?;
                     return Ok(term);
                 },
                 false,
             )?;
-            print!("{:?}", parser.current_token);
             return Ok(Body::Premise(terms));
         }
         attribute => {
@@ -196,24 +223,31 @@ pub fn parse_rule<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<R
     parser.expect_token(Token::ReservedWord(Reserved::DeclareRareRule))?;
     let name = parser.expect_symbol()?;
     parser.expect_token(Token::OpenParen)?;
-    let parameters = parser.parse_sequence(parse_parameters, false)?;
-    let body = parser.parse_sequence(parse_body, false)?;
+    let mut parameters_hole = IndexMap::new();
+    let parameters = parser.parse_sequence(
+        |parser| parse_parameters(parser, &mut parameters_hole),
+        false,
+    )?;
     pub struct BodyDefinition<'a> {
-        args: &'a Vec<String>,
+        args: (Vec<String>, Holes),
         premises: &'a Vec<Rc<RareTerm>>,
-        conclusion: Option<&'a Rc<RareTerm>>,
+        conclusion: Option<Rc<RareTerm>>,
     }
 
     let mut body_definitions = BodyDefinition {
-        args: &vec![],
+        args: parse_args(parser)?,
         premises: &vec![],
         conclusion: None,
     };
 
-    let body = body.iter().fold(&mut body_definitions, |body, x| {
+    let body = parser.parse_sequence(
+        |parser| parse_body(parser, &mut body_definitions.args.1),
+        false,
+    )?;
+
+    let body = body.iter().fold(body_definitions, |mut body, x| {
         match x {
-            Body::Args(args) => body.args = args,
-            Body::Conclusion(term) => body.conclusion = Some(term),
+            Body::Conclusion(term) => body.conclusion = Some((*term).clone()),
             Body::Premise(term) => body.premises = term,
         }
         return body;
@@ -229,14 +263,20 @@ pub fn parse_rule<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<R
     parser.expect_token(Token::CloseParen)?;
     return Ok(RuleDefinition {
         name,
-        parameters,
+        parameters: (
+            parameters.iter().map(|x| x.clone()).collect(),
+            parameters_hole,
+        ),
         arguments: body.args.clone(),
         premises: body.premises.clone(),
-        conclusion: body.conclusion.map(|x| x.clone()).unwrap(),
+        conclusion: body.conclusion.map(|x| x).unwrap(),
     });
 }
 
-pub fn parse_rare<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Rules> {
+pub fn parse_rare<'a, 'b, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Rules>
+where
+    'a: 'b,
+{
     let mut rules = vec![];
     let mut current = &parser.current_token;
     while *current != Token::Eof {
@@ -244,5 +284,8 @@ pub fn parse_rare<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<R
         current = &parser.current_token;
     }
 
-    return Ok(rules);
+    return Ok(rules
+        .iter()
+        .map(|x| (x.name.clone(), (*x).clone()))
+        .collect());
 }

@@ -40,6 +40,7 @@ pub mod benchmarking;
 pub mod checker;
 pub mod elaborator;
 pub mod parser;
+pub mod rare;
 mod resolution;
 mod utils;
 
@@ -94,12 +95,13 @@ pub fn check<T: io::BufRead>(
 
     // Parsing
     let total = Instant::now();
-    let (problem, proof, mut pool) = parser::parse_instance(problem, proof, rules, parser_config)?;
+    let (problem, proof, mut rules, mut pool) =
+        parser::parse_instance(problem, proof, rules, parser_config)?;
     run_measures.parsing = total.elapsed();
 
     // Checking
     let checking = Instant::now();
-    let mut checker = checker::ProofChecker::new(&mut pool, checker_config);
+    let mut checker = checker::ProofChecker::new(&mut pool, &rules, checker_config);
     if collect_stats {
         let mut checker_stats = CheckerStatistics {
             file_name: "this",
@@ -150,9 +152,10 @@ pub fn check_parallel<T: io::BufRead>(
     use std::sync::Arc;
     let mut run_measures: RunMeasurement = RunMeasurement::default();
 
-    // Parsing
+    // Parsing (TODO : Complete rare rules)
     let total = Instant::now();
-    let (problem, proof, pool) = parser::parse_instance(problem, proof, rules, parser_config)?;
+    let (problem, proof, rules, pool) =
+        parser::parse_instance(problem, proof, rules, parser_config)?;
     run_measures.parsing = total.elapsed();
 
     // Checking
@@ -215,16 +218,17 @@ pub fn check_and_elaborate<T: io::BufRead>(
 ) -> Result<(bool, ast::Problem, ast::Proof, ast::PrimitivePool), Error> {
     let mut run: RunMeasurement = RunMeasurement::default();
 
-    // Parsing
+    // Parsing (Complete rare rules)
     let total = Instant::now();
-    let (problem, proof, mut pool) = parser::parse_instance(problem, proof, rules, parser_config)?;
+    let (problem, proof, rules, mut pool) =
+        parser::parse_instance(problem, proof, rules, parser_config)?;
     run.parsing = total.elapsed();
 
     let mut stats = OnlineBenchmarkResults::new();
 
     // Checking
     let checking = Instant::now();
-    let mut checker = checker::ProofChecker::new(&mut pool, checker_config);
+    let mut checker = checker::ProofChecker::new(&mut pool, &rules, checker_config);
     let checking_result = if collect_stats {
         let mut checker_stats = CheckerStatistics {
             file_name: "this",
@@ -279,7 +283,7 @@ pub fn generate_lia_smt_instances<T: io::BufRead>(
     use_sharing: bool,
 ) -> Result<Vec<(String, String)>, Error> {
     use std::fmt::Write;
-    let (problem, proof, mut pool) = parser::parse_instance(problem, proof, rules, config)?;
+    let (problem, proof, _, mut pool) = parser::parse_instance(problem, proof, rules, config)?;
 
     let mut iter = proof.iter();
     let mut result = Vec::new();

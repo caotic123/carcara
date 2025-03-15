@@ -3,7 +3,7 @@ use super::{
     ContextStack,
 };
 use crate::{
-    ast::*,
+    ast::{rules::Rules, *},
     utils::{Range, TypeName},
 };
 use std::time::Duration;
@@ -18,6 +18,7 @@ pub struct RuleArgs<'a> {
     pub(super) args: &'a [Rc<Term>],
     pub(super) pool: &'a mut dyn TermPool,
     pub(super) context: &'a mut ContextStack,
+    pub(super) rare_rules: &'a Rules,
 
     // For rules that end a subproof, we need to pass the previous command in the subproof that it
     // is closing, because it may be implicitly referenced, and it is not given as premises. If a
@@ -162,7 +163,7 @@ fn run_tests(test_name: &str, definitions: &str, cases: &[(&str, bool)]) {
 
     for (i, (proof, expected)) in cases.iter().enumerate() {
         // This parses the definitions again for every case, which is not ideal
-        let (mut problem, mut proof, mut pool) = parser::parse_instance(
+        let (mut problem, mut proof, rules, mut pool) = parser::parse_instance(
             Cursor::new(definitions),
             Cursor::new(proof),
             None,
@@ -193,7 +194,7 @@ fn run_tests(test_name: &str, definitions: &str, cases: &[(&str, bool)]) {
             discharge: Vec::new(),
         }));
 
-        let mut checker = checker::ProofChecker::new(&mut pool, checker::Config::new());
+        let mut checker = checker::ProofChecker::new(&mut pool, &rules, checker::Config::new());
         let got = checker.check(&problem, &proof).is_ok();
         assert_eq!(
             *expected, got,
@@ -226,6 +227,7 @@ pub(super) mod congruence;
 pub(super) mod extras;
 pub(super) mod linear_arithmetic;
 pub(super) mod quantifier;
+pub(super) mod rare;
 pub(super) mod reflexivity;
 pub(super) mod resolution;
 pub(super) mod simplification;

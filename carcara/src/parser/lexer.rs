@@ -118,7 +118,7 @@ pub enum Reserved {
     SetLogic,
 
     // From rare Rules
-    DeclareRareRule
+    DeclareRareRule,
 }
 
 impl_str_conversion_traits!(Reserved {

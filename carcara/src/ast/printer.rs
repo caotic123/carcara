@@ -522,7 +522,7 @@ impl fmt::Display for Sort {
             Sort::RegLan => write!(f, "RegLan"),
             Sort::Array(x, y) => write_s_expr(f, "Array", &[x, y]),
             Sort::BitVec(w) => write!(f, "(_ BitVec {})", w),
-            Sort::RareList => unreachable!("RARE list sort should never be displayed"),
+            Sort::RareList => write!(f, "rare-list"),
             Sort::Type => write!(f, "Type"),
         }
     }
@@ -602,7 +602,7 @@ mod tests {
             (step t6.t1 (cl (= (+ x 2) (+ x 2))) :rule hole)\n\
             (step t6 (cl) :rule hole)\n\
         ";
-        let (problem, proof, mut pool) =
+        let (problem, proof, _, mut pool) =
             parser::parse_instance(definitions, proof, None, parser::Config::new()).unwrap();
 
         let mut buf = Vec::new();
