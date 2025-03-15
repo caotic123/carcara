@@ -3,14 +3,14 @@ mod parallel;
 mod rules;
 
 use crate::{
-    ast::*,
+    ast::{rules::Rules, *},
     benchmarking::{CollectResults, OnlineBenchmarkResults},
     CarcaraResult, Error,
 };
 use error::{CheckerError, SubproofError};
 use indexmap::IndexSet;
 pub use parallel::{scheduler::Scheduler, ParallelProofChecker};
-use rules::{Premise, Rule, RuleArgs, RuleResult};
+use rules::{rare::check_rare, Premise, Rule, RuleArgs, RuleResult};
 use std::{
     collections::HashSet,
     fmt,
@@ -80,16 +80,18 @@ pub struct ProofChecker<'c> {
     pool: &'c mut PrimitivePool,
     config: Config,
     context: ContextStack,
+    rare_rules: &'c Rules,
     reached_empty_clause: bool,
     is_holey: bool,
 }
 
 impl<'c> ProofChecker<'c> {
-    pub fn new(pool: &'c mut PrimitivePool, config: Config) -> Self {
+    pub fn new(pool: &'c mut PrimitivePool, rare_rules: &'c Rules, config: Config) -> Self {
         ProofChecker {
             pool,
             config,
             context: ContextStack::new(),
+            rare_rules,
             reached_empty_clause: false,
             is_holey: false,
         }
@@ -277,16 +279,20 @@ impl<'c> ProofChecker<'c> {
             return Err(CheckerError::Subproof(SubproofError::DischargeInWrongRule));
         }
 
-        let rule = match Self::get_rule(&step.rule, self.config.elaborated) {
-            Some(r) => r,
-            None if self.config.ignore_unknown_rules
-                || self.config.allowed_rules.contains(&step.rule) =>
-            {
-                self.is_holey = true;
-                return Ok(());
-            }
-            None => return Err(CheckerError::UnknownRule),
-        };
+        let rule: Box<dyn Fn(RuleArgs) -> RuleResult> =
+            match Self::get_rule(&step.rule, self.config.elaborated) {
+                Some(r) => Box::new(r),
+                None if self.rare_rules.get(&step.rule).is_some() => Box::new(|rule_args| {
+                    check_rare(self.rare_rules.get(&step.rule).unwrap(), rule_args)
+                }),
+                None if self.config.ignore_unknown_rules
+                    || self.config.allowed_rules.contains(&step.rule) =>
+                {
+                    self.is_holey = true;
+                    return Ok(());
+                }
+                None => return Err(CheckerError::UnknownRule),
+            };
 
         if step.rule == "hole" || step.rule == "lia_generic" {
             self.is_holey = true;
@@ -312,6 +318,7 @@ impl<'c> ProofChecker<'c> {
             args: &step.args,
             pool: self.pool,
             context: &mut self.context,
+            rare_rules: self.rare_rules,
             previous_command,
             discharge: &discharge,
             polyeq_time: &mut polyeq_time,

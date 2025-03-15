@@ -4,8 +4,10 @@ mod logger;
 mod path_args;
 
 use carcara::{
-    ast, benchmarking::OnlineBenchmarkResults, check, check_and_elaborate, check_parallel, checker,
-    elaborator, generate_lia_smt_instances, parser,
+    ast::{self, rules::Rules},
+    benchmarking::OnlineBenchmarkResults,
+    check, check_and_elaborate, check_parallel, checker, elaborator, generate_lia_smt_instances,
+    parser,
 };
 use clap::{AppSettings, ArgEnum, Args, Parser, Subcommand};
 use const_format::{formatcp, str_index};
@@ -452,7 +454,7 @@ fn main() {
     }
 
     let result = match cli.command {
-        Command::Parse(options) => parse_command(options).and_then(|(pb, pf, mut pool)| {
+        Command::Parse(options) => parse_command(options).and_then(|(pb, pf, rules, mut pool)| {
             ast::print_proof(&mut pool, &pb.prelude, &pf, !cli.no_print_with_sharing)?;
             Ok(())
         }),
@@ -494,46 +496,58 @@ fn main() {
     }
 }
 
-fn get_instance(options: &Input) -> CliResult<(Box<dyn BufRead>, Box<dyn BufRead>, Option<Box<dyn BufRead>>)> {
+fn get_instance(
+    options: &Input,
+) -> CliResult<(Box<dyn BufRead>, Box<dyn BufRead>, Option<Box<dyn BufRead>>)> {
     fn reader_from_path<P: AsRef<Path>>(path: P) -> CliResult<Box<dyn BufRead>> {
         Ok(Box::new(io::BufReader::new(File::open(path)?)))
     }
 
-    let read_rare_file = ||
-        match &options.rare_file {
-            Some(file) => Ok::<Option<Box<dyn BufRead>>, CliError>(Some(reader_from_path(file)?)),
-            None => Ok(None)
-        };
+    let read_rare_file = || match &options.rare_file {
+        Some(file) => Ok::<Option<Box<dyn BufRead>>, CliError>(Some(reader_from_path(file)?)),
+        None => Ok(None),
+    };
 
     match (options.problem_file.as_deref(), options.proof_file.as_str()) {
         (Some("-"), "-") | (None, "-") => Err(CliError::BothFilesStdin),
         (Some(problem), "-") => {
             let rare_file = read_rare_file()?;
-            Ok((reader_from_path(problem)?, Box::new(io::stdin().lock()), rare_file))
+            Ok((
+                reader_from_path(problem)?,
+                Box::new(io::stdin().lock()),
+                rare_file,
+            ))
         }
         (Some("-"), proof) => {
             let rare_file = read_rare_file()?;
-            Ok((Box::new(io::stdin().lock()), reader_from_path(proof)?, rare_file))
+            Ok((
+                Box::new(io::stdin().lock()),
+                reader_from_path(proof)?,
+                rare_file,
+            ))
         }
         (Some(problem), proof) => {
             let rare_file = read_rare_file()?;
-            Ok((reader_from_path(problem)?, reader_from_path(proof)?, rare_file))
+            Ok((
+                reader_from_path(problem)?,
+                reader_from_path(proof)?,
+                rare_file,
+            ))
         }
         (None, proof) => {
             let rare_file = read_rare_file()?;
             Ok((
-            reader_from_path(infer_problem_path(proof)?)?,
-            reader_from_path(proof)?,
-            rare_file,
-        ))
-    }
-        
+                reader_from_path(infer_problem_path(proof)?)?,
+                reader_from_path(proof)?,
+                rare_file,
+            ))
+        }
     }
 }
 
 fn parse_command(
     options: ParseCommandOptions,
-) -> CliResult<(ast::Problem, ast::Proof, ast::PrimitivePool)> {
+) -> CliResult<(ast::Problem, ast::Proof, Rules, ast::PrimitivePool)> {
     let (problem, proof, rules) = get_instance(&options.input)?;
     let result = parser::parse_instance(problem, proof, rules, options.parsing.into())
         .map_err(carcara::Error::from)?;
@@ -548,7 +562,14 @@ fn check_command(options: CheckCommandOptions) -> CliResult<bool> {
 
     let collect_stats = options.stats.stats;
     if options.num_threads == 1 {
-        check(problem, proof, rules, parser_config, checker_config, collect_stats)
+        check(
+            problem,
+            proof,
+            rules,
+            parser_config,
+            checker_config,
+            collect_stats,
+        )
     } else {
         check_parallel(
             problem,
@@ -638,8 +659,9 @@ fn slice_command(
     options: SliceCommandOptions,
 ) -> CliResult<(ast::Problem, ast::Proof, ast::PrimitivePool)> {
     let (problem, proof, rules) = get_instance(&options.input)?;
-    let (problem, proof, pool) = parser::parse_instance(problem, proof, rules,options.parsing.into())
-        .map_err(carcara::Error::from)?;
+    let (problem, proof, rules, pool) =
+        parser::parse_instance(problem, proof, rules, options.parsing.into())
+            .map_err(carcara::Error::from)?;
 
     let node = ast::ProofNode::from_commands_with_root_id(proof.commands, &options.from)
         .ok_or_else(|| CliError::InvalidSliceId(options.from))?;

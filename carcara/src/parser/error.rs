@@ -140,6 +140,10 @@ pub enum ParserError {
     /// The parser encountered an unknown rare rule attribute.
     #[error("the rule '{0}' has no conclusion")]
     UndefinedRareConclusion(String),
+
+    /// The parser encountered an unknown rare rule attribute.
+    #[error("the rule '{0}' has to start with the arguments first")]
+    ExpectArgsFirst(String),
 }
 
 /// Returns an error if the length of `sequence` is not in the `expected` range.

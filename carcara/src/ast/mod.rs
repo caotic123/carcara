@@ -13,9 +13,9 @@ pub(crate) mod printer;
 mod problem;
 mod proof;
 mod rc;
+pub mod rules;
 mod substitution;
 mod term;
-pub mod rules;
 #[cfg(test)]
 mod tests;
 

@@ -1,4 +1,6 @@
 (assume a1 (= b false))
 (assume a2 (= b true))
+(assume a3 (or b true false))
 (step t1 (cl (= true false)) :rule trans :premises (a1 a2))
 (step t2 (cl (not true) false) :rule equiv1 :premises (t1))
+(step t3 (cl (= (or true b false) true)) :rule or_true_bool :premises (a2) :args (b (rare-list false)))
