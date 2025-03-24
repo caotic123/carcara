@@ -158,6 +158,15 @@ pub enum CheckerError {
     UnknownRule,
 
     // Rare Rules Error
+    #[error("expected a rare rule specified in the arguments")]
+    RareNotSpecifiedRule,
+
+    #[error("expected a rare rule specified in the arguments, but found {0}")]
+    RareRuleExpectedLiteral(Rc<Term>),
+
+    #[error("the rule {0} wasn`t found")]
+    RareRuleNotFound(String),
+
     #[error("expected {0} number of premises, maybe you applied more arguments than needed")]
     RareNumberOfPremisesWrong(usize),
 

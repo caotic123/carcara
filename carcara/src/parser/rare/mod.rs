@@ -15,6 +15,7 @@ use super::{Parser, ParserError, Reserved, Token};
 enum Body {
     Conclusion(Rc<RareTerm>),
     Premise(Vec<Rc<RareTerm>>),
+    Args(Vec<String>),
 }
 
 // Parser a rare term until the closing outermost parenthesis, you may need to consume the outermost parenthesis after.
@@ -118,11 +119,7 @@ fn parse_parameters<'a, R: BufRead>(
 
     let name = get_app_name(term.clone());
 
-    if let Some(s) = match_rareterm!(Type(?v), term) {
-        if s == "Type" {
-            holes.insert(name.clone(), Rc::new(RefCell::new(None)));
-        }
-    }
+    holes.insert(name.clone(), Rc::new(RefCell::new(None)));
 
     let current_token = &parser.current_token;
     match current_token {
@@ -160,31 +157,6 @@ fn parse_parameters<'a, R: BufRead>(
     }
 }
 
-fn parse_args<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<(Vec<String>, Holes)> {
-    fn parse_args<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Vec<String>> {
-        parser.expect_token(Token::OpenParen)?;
-        return parser.parse_sequence(|parser| parser.expect_symbol(), false);
-    }
-
-    let qualified_arg: Vec<char> = parser.expect_keyword()?.chars().collect();
-    match qualified_arg.as_slice() {
-        ['a', 'r', 'g', 's', ..] => {
-            let mut holes = IndexMap::new();
-            let args = parse_args(parser)?;
-            for arg in &args {
-                holes.insert(arg.clone(), Rc::new(RefCell::new(None)));
-            }
-            return Ok((args, holes));
-        }
-        attribute => {
-            return Err(Error::Parser(
-                ParserError::ExpectArgsFirst(attribute.iter().collect()),
-                parser.current_position,
-            ));
-        }
-    }
-}
-
 fn parse_body<'a, R: BufRead>(
     parser: &mut Parser<'a, R>,
     holes: &mut Holes,
@@ -195,6 +167,16 @@ fn parse_body<'a, R: BufRead>(
             let vec: Vec<fn(Token) -> bool> = vec![];
             let rewrite_term = parse_rewrite_term(parser, holes, vec.as_slice())?;
             return Ok(Body::Conclusion(rewrite_term));
+        }
+        ['a', 'r', 'g', 's', ..] => {
+            fn parse_args<'a, R: BufRead>(
+                parser: &mut Parser<'a, R>,
+            ) -> CarcaraResult<Vec<String>> {
+                parser.expect_token(Token::OpenParen)?;
+                return parser.parse_sequence(|parser| parser.expect_symbol(), false);
+            }
+            let args = parse_args(parser)?;
+            return Ok(Body::Args(args));
         }
         ['p', 'r', 'e', 'm', 'i', 's', 'e', 's', ..] => {
             parser.expect_token(Token::OpenParen)?;
@@ -229,26 +211,24 @@ pub fn parse_rule<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<R
         false,
     )?;
     pub struct BodyDefinition<'a> {
-        args: (Vec<String>, Holes),
+        args: &'a Vec<String>,
         premises: &'a Vec<Rc<RareTerm>>,
         conclusion: Option<Rc<RareTerm>>,
     }
 
     let mut body_definitions = BodyDefinition {
-        args: parse_args(parser)?,
+        args: &vec![],
         premises: &vec![],
         conclusion: None,
     };
 
-    let body = parser.parse_sequence(
-        |parser| parse_body(parser, &mut body_definitions.args.1),
-        false,
-    )?;
+    let body = parser.parse_sequence(|parser| parse_body(parser, &mut parameters_hole), false)?;
 
     let body = body.iter().fold(body_definitions, |mut body, x| {
         match x {
             Body::Conclusion(term) => body.conclusion = Some((*term).clone()),
             Body::Premise(term) => body.premises = term,
+            Body::Args(args) => body.args = args,
         }
         return body;
     });
