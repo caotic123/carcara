@@ -279,20 +279,16 @@ impl<'c> ProofChecker<'c> {
             return Err(CheckerError::Subproof(SubproofError::DischargeInWrongRule));
         }
 
-        let rule: Box<dyn Fn(RuleArgs) -> RuleResult> =
-            match Self::get_rule(&step.rule, self.config.elaborated) {
-                Some(r) => Box::new(r),
-                None if self.rare_rules.get(&step.rule).is_some() => Box::new(|rule_args| {
-                    check_rare(self.rare_rules.get(&step.rule).unwrap(), rule_args)
-                }),
-                None if self.config.ignore_unknown_rules
-                    || self.config.allowed_rules.contains(&step.rule) =>
-                {
-                    self.is_holey = true;
-                    return Ok(());
-                }
-                None => return Err(CheckerError::UnknownRule),
-            };
+        let rule = match Self::get_rule(&step.rule, self.config.elaborated) {
+            Some(r) => r,
+            None if self.config.ignore_unknown_rules
+                || self.config.allowed_rules.contains(&step.rule) =>
+            {
+                self.is_holey = true;
+                return Ok(());
+            }
+            None => return Err(CheckerError::UnknownRule),
+        };
 
         if step.rule == "hole" || step.rule == "lia_generic" {
             self.is_holey = true;
@@ -502,7 +498,7 @@ impl<'c> ProofChecker<'c> {
             // resolution rule will be called. Until that is decided and added to the specification,
             // we define a new specialized rule that calls it
             "strict_resolution" => resolution::strict_resolution,
-
+            "rare_rewrite" => check_rare,
             _ => return None,
         })
     }

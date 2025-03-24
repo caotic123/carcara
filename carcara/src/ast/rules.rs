@@ -35,7 +35,7 @@ pub struct TypeParameter {
 pub struct RuleDefinition {
     pub name: String,
     pub parameters: (IndexMap<String, TypeParameter>, Holes),
-    pub arguments: (Vec<String>, Holes),
+    pub arguments: Vec<String>,
     pub premises: Vec<Rc<RareTerm>>,
     pub conclusion: Rc<RareTerm>,
 }
