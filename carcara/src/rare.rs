@@ -1,10 +1,11 @@
 use indexmap::IndexMap;
-use std::collections::{HashMap, VecDeque};
+use std::
+    collections::{HashMap, VecDeque};
 
 use crate::{
     ast::{
         rules::{RareTerm, RuleDefinition, TypeParameter},
-        Constant, Operator, Rc, Term, TermPool,
+        Rc, Term, TermPool,
     },
     checker::error::CheckerError,
 };
@@ -92,7 +93,6 @@ pub fn convert_rare_term_to_term(
                 let term = pool.add(Term::Op(operator.clone(), Vec::new()));
                 term_map.insert(current, term);
             }
-
             RareTerm::App(func, args) => {
                 // Check if all dependencies are processed
                 let func_processed = term_map.contains_key(func);

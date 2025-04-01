@@ -1,13 +1,14 @@
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::RefCell;
 use std::io::BufRead;
+use std::ops::Index;
 use std::str::FromStr;
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 
-use crate::ast::{Constant, Operator, Rc, Term};
+use crate::ast::{Constant, Operator, Rc};
 use crate::{ast::rules::*, Error};
 
-use crate::{match_rareterm, CarcaraResult};
+use crate::CarcaraResult;
 
 use super::{Parser, ParserError, Reserved, Token};
 
@@ -22,15 +23,21 @@ enum Body {
 fn parse_rewrite_term<'a, R: BufRead, F>(
     parser: &mut Parser<'a, R>,
     holes: &mut Holes,
+    substituions: &IndexMap<String, Rc<RareTerm>>,
     stop_with: &[F],
 ) -> CarcaraResult<Rc<RareTerm>>
 where
     F: Fn(Token) -> bool,
 {
-    fn consume_head<'a, R: BufRead>(
+    fn consume_head<'a, R: BufRead, F>(
         parser: &mut Parser<'a, R>,
         holes: &mut Holes,
-    ) -> CarcaraResult<Rc<RareTerm>> {
+        substituions: &IndexMap<String, Rc<RareTerm>>,
+        stop_with: &[F],
+    ) -> CarcaraResult<Rc<RareTerm>>
+    where
+        F: Fn(Token) -> bool,
+    {
         let current = parser.next_token()?;
         match current {
             (Token::Bitvector { value, width }, _) => {
@@ -55,6 +62,9 @@ where
                         return Ok(Rc::new(RareTerm::Hole(hole.clone())));
                     }
 
+                    if let Some(subs) = substituions.get(&s) {
+                        return Ok(subs.clone());
+                    }
                     return Ok(Rc::new(RareTerm::Var(s)));
                 }
 
@@ -67,13 +77,46 @@ where
     }
 
     parser.expect_token(Token::OpenParen)?;
-    let applicant = consume_head(parser, holes)?;
+    let next = &parser.current_token;
+    if *next == Token::Symbol("eo".to_string()) {
+        // "Let" constructions unfold
+        parser.expect_token(Token::Symbol("eo".to_string()))?;
+        parser.expect_keyword()?;
+        parser.expect_token(Token::Keyword("define".to_string()))?;
+        parser.expect_token(Token::OpenParen)?;
+        let mut args = parser.parse_sequence(
+            |parser| {
+                parser.expect_token(Token::OpenParen)?;
+                let let_arg = parser.expect_symbol()?;
+                let body = parse_rewrite_term::<_, fn(Token) -> bool>(
+                    parser,
+                    holes,
+                    substituions,
+                    &vec![],
+                )?;
+                parser.expect_token(Token::CloseParen)?;
+                return Ok((let_arg, body));
+            },
+            true,
+        )?.iter().map(|x| (x.0.clone(), x.1.clone())).collect::<IndexMap<_, _>>();
+        args.extend(substituions.clone());
+        parser.expect_token(Token::CloseParen)?;
+        let current = &parser.current_token;
+        let innerterm = match current {
+            Token::OpenParen => parse_rewrite_term(parser, holes, &args, stop_with),
+            _ => consume_head(parser, holes, &args, stop_with)
+        }?;
+        parser.expect_token(Token::CloseParen)?;
+        return Ok(innerterm)
+    }
+
+    let applicant = consume_head(parser, holes, substituions, stop_with)?;
     let mut args = vec![];
     let mut current = parser.current_token.clone();
     loop {
         match current {
             Token::OpenParen => {
-                args.push(parse_rewrite_term(parser, holes, stop_with)?);
+                args.push(parse_rewrite_term(parser, holes, substituions, stop_with)?);
                 parser.expect_token(Token::CloseParen)?;
             }
             Token::CloseParen => break,
@@ -81,7 +124,7 @@ where
                 if Option::is_some(&stop_with.iter().find(|x| (**x)(token.clone()))) {
                     break;
                 } else {
-                    args.push(consume_head(parser, holes)?)
+                    args.push(consume_head(parser, holes, substituions, stop_with)?)
                 }
             }
         }
@@ -98,6 +141,7 @@ fn parse_parameters<'a, R: BufRead>(
     let term = parse_rewrite_term(
         parser,
         holes,
+        &IndexMap::default(),
         vec![|x| {
             return if let Token::Keyword(_) = x {
                 true
@@ -165,7 +209,7 @@ fn parse_body<'a, R: BufRead>(
     match qualified_arg.as_slice() {
         ['c', 'o', 'n', 'c', 'l', 'u', 's', 'i', 'o', 'n', ..] => {
             let vec: Vec<fn(Token) -> bool> = vec![];
-            let rewrite_term = parse_rewrite_term(parser, holes, vec.as_slice())?;
+            let rewrite_term = parse_rewrite_term(parser, holes,&IndexMap::default(), vec.as_slice())?;
             return Ok(Body::Conclusion(rewrite_term));
         }
         ['a', 'r', 'g', 's', ..] => {
@@ -183,7 +227,7 @@ fn parse_body<'a, R: BufRead>(
             let terms = parser.parse_sequence(
                 |parser| {
                     let vec: Vec<fn(Token) -> bool> = vec![];
-                    let term = parse_rewrite_term(parser, holes, vec.as_slice())?;
+                    let term = parse_rewrite_term(parser, holes, &IndexMap::default(),vec.as_slice())?;
                     parser.expect_token(Token::CloseParen)?;
                     return Ok(term);
                 },
@@ -216,7 +260,7 @@ pub fn parse_rule<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<R
         conclusion: Option<Rc<RareTerm>>,
     }
 
-    let mut body_definitions = BodyDefinition {
+    let body_definitions = BodyDefinition {
         args: &vec![],
         premises: &vec![],
         conclusion: None,
