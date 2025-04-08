@@ -89,6 +89,9 @@ pub enum Sort {
 
     /// The sort of sorts.
     Type,
+
+    // A polymorphic type
+    Var(String, Vec<Rc<Term>>),
 }
 
 /// A variable and an associated sort.

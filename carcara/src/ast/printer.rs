@@ -524,6 +524,10 @@ impl fmt::Display for Sort {
             Sort::BitVec(w) => write!(f, "(_ BitVec {})", w),
             Sort::RareList => write!(f, "rare-list"),
             Sort::Type => write!(f, "Type"),
+            Sort::Var(x, vs) => match vs.len() {
+                0 => write!(f, "{}", x),
+                _ => write_s_expr(f, x, vs),
+            },
         }
     }
 }

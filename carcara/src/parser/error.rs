@@ -206,6 +206,10 @@ impl SortError {
     pub(crate) fn assert_eq(expected: &Sort, got: &Sort) -> Result<(), Self> {
         if expected == got {
             Ok(())
+        } else if let Sort::Var(_, _) = expected {
+            return Ok(());
+        } else if let Sort::Var(_, _) = got {
+            return Ok(());
         } else {
             Err(Self {
                 expected: vec![expected.clone()],
@@ -226,6 +230,8 @@ impl SortError {
     pub(crate) fn assert_one_of(possibilities: &[Sort], got: &Sort) -> Result<(), Self> {
         if possibilities.contains(got) {
             Ok(())
+        } else if let Sort::Var(_, _) = got {
+            return Ok(());
         } else {
             Err(Self {
                 expected: possibilities.to_vec(),

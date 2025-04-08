@@ -136,6 +136,7 @@ impl FunctionDef {
 }
 
 /// A sort definition, from a `define-sort` command.
+#[derive(Debug)]
 struct SortDef {
     params: Vec<String>,
     body: Rc<Term>,
@@ -686,7 +687,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 }
                 Token::ReservedWord(Reserved::DeclareConst) => {
                     let name = self.expect_symbol()?;
-                    let sort = self.parse_sort()?;
+                    let sort = self.parse_sort(false)?;
                     self.expect_token(Token::CloseParen)?;
                     self.insert_sorted_var((name.clone(), sort.clone()));
                     self.prelude().function_declarations.push((name, sort));
@@ -1054,7 +1055,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
             AnchorArg::Assign((var, sort), value)
         } else {
             let symbol = self.expect_symbol()?;
-            let sort = self.parse_sort()?;
+            let sort = self.parse_sort(false)?;
             self.insert_sorted_var((symbol.clone(), sort.clone()));
             self.expect_token(Token::CloseParen)?;
             AnchorArg::Variable((symbol, sort))
@@ -1067,8 +1068,8 @@ impl<'a, R: BufRead> Parser<'a, R> {
         let name = self.expect_symbol()?;
         let sort = {
             self.expect_token(Token::OpenParen)?;
-            let mut sorts = self.parse_sequence(Self::parse_sort, false)?;
-            sorts.push(self.parse_sort()?);
+            let mut sorts = self.parse_sequence(|parser| parser.parse_sort(false), false)?;
+            sorts.push(self.parse_sort(false)?);
             if sorts.len() == 1 {
                 sorts.into_iter().next().unwrap()
             } else {
@@ -1105,7 +1106,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
         let name = self.expect_symbol()?;
         self.expect_token(Token::OpenParen)?;
         let params = self.parse_sequence(Self::parse_sorted_var, false)?;
-        let return_sort = self.parse_sort()?;
+        let return_sort = self.parse_sort(false)?;
         if consume_parens {
             self.expect_token(Token::CloseParen)?;
         }
@@ -1216,7 +1217,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
         for s in &params {
             self.state.sort_declarations.insert(s.clone(), 0);
         }
-        let body = self.parse_sort()?;
+        let body = self.parse_sort(false)?;
         self.state.sort_declarations.pop_scope();
 
         self.expect_token(Token::CloseParen)?;
@@ -1235,7 +1236,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
     fn parse_sorted_var(&mut self) -> CarcaraResult<SortedVar> {
         self.expect_token(Token::OpenParen)?;
         let symbol = self.expect_symbol()?;
-        let sort = self.parse_sort()?;
+        let sort = self.parse_sort(false)?;
         self.expect_token(Token::CloseParen)?;
         Ok((symbol, sort))
     }
@@ -1466,7 +1467,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 self.current_position,
             )
         })?;
-        let sort = self.parse_sort()?;
+        let sort = self.parse_sort(false)?;
         self.expect_token(Token::CloseParen)?;
         Ok((op, sort))
     }
@@ -1666,7 +1667,12 @@ impl<'a, R: BufRead> Parser<'a, R> {
         }
     }
 
-    fn make_sort(&mut self, name: String, args: Vec<Rc<Term>>) -> Result<Rc<Term>, ParserError> {
+    fn make_sort(
+        &mut self,
+        name: String,
+        args: Vec<Rc<Term>>,
+        polymorphic: bool,
+    ) -> Result<Rc<Term>, ParserError> {
         let sort = match name.as_str() {
             "Bool" | "Int" | "Real" | "String" | "RegLan" if !args.is_empty() => {
                 Err(ParserError::WrongNumberOfArgs(0.into(), args.len()))
@@ -1676,10 +1682,14 @@ impl<'a, R: BufRead> Parser<'a, R> {
             "Real" => Ok(Sort::Real),
             "String" => Ok(Sort::String),
             "RegLan" => Ok(Sort::RegLan),
+            "Type" => Ok(Sort::Type),
             "Array" => match args.as_slice() {
                 [x, y] => Ok(Sort::Array(x.clone(), y.clone())),
                 _ => Err(ParserError::WrongNumberOfArgs(2.into(), args.len())),
             },
+            other if polymorphic && other.starts_with('@') && self.state.sort_defs.get(other).is_some() => {
+                Ok(Sort::Var(other.to_string(), vec![]))
+            }
             other if self.state.sort_defs.get(other).is_some() => {
                 let def = self.state.sort_defs.get(other).unwrap();
                 return if def.params.len() != args.len() {
@@ -1729,12 +1739,12 @@ impl<'a, R: BufRead> Parser<'a, R> {
                     Err(ParserError::ExpectedIntegerConstant(args[0].clone()))
                 }
             }
-            _ => Err(ParserError::UndefinedSort(name)),
+            _ => Err(ParserError::UndefinedSort(name))
         }
     }
 
     /// Parses a sort.
-    fn parse_sort(&mut self) -> CarcaraResult<Rc<Term>> {
+    fn parse_sort(&mut self, polymorphic: bool) -> CarcaraResult<Rc<Term>> {
         let pos = self.current_position;
         let (name, args) = match self.next_token()?.0 {
             Token::Symbol(s) => (s, Vec::new()),
@@ -1745,17 +1755,26 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 return self
                     .make_indexed_sort(name, args)
                     .map_err(|e| Error::Parser(e, pos));
-            }
+            },
+            Token::OpenParen if polymorphic => {
+                let name = self.expect_symbol()?;
+                if ["BitVec".to_string()].contains(&name) || !self.state.sort_defs.contains_key(&name) {
+                    return Err(Error::Parser(ParserError::UndefinedSort(name), pos));                  
+                }
+                let args = self.parse_sequence(Self::parse_term, true)?;
+                return Ok(self.pool.add(Term::Sort(Sort::Var(name, args))))
+            },
             Token::OpenParen => {
                 let name = self.expect_symbol()?;
-                let args = self.parse_sequence(Parser::parse_sort, true)?;
+                let args =
+                    self.parse_sequence(|parser| Parser::parse_sort(parser, polymorphic), true)?;
                 (name, args)
             }
             other => {
                 return Err(Error::Parser(ParserError::UnexpectedToken(other), pos));
             }
         };
-        self.make_sort(name, args)
+        self.make_sort(name, args, polymorphic)
             .map_err(|e| Error::Parser(e, pos))
     }
 }
