@@ -27,17 +27,17 @@ pub enum AttributeParameters {
 
 #[derive(Debug, Clone)]
 pub struct TypeParameter {
-    pub term: Rc<RareTerm>,
+    pub term: Rc<Term>,
     pub attribute: AttributeParameters,
 }
 
 #[derive(Debug, Clone)]
 pub struct RuleDefinition {
     pub name: String,
-    pub parameters: (IndexMap<String, TypeParameter>, Holes),
+    pub parameters: IndexMap<String, TypeParameter>,
     pub arguments: Vec<String>,
-    pub premises: Vec<Rc<RareTerm>>,
-    pub conclusion: Rc<RareTerm>,
+    pub premises: Vec<Rc<Term>>,
+    pub conclusion: Rc<Term>,
 }
 
 pub type Rules = IndexMap<String, RuleDefinition>;
