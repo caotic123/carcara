@@ -204,12 +204,8 @@ impl fmt::Display for SortError {
 impl SortError {
     /// Returns a sort error if `got` does not equal `expected`.
     pub(crate) fn assert_eq(expected: &Sort, got: &Sort) -> Result<(), Self> {
-        if expected == got {
+        if expected == got || expected.is_polymorphic() || got.is_polymorphic() {
             Ok(())
-        } else if let Sort::Var(_, _) = expected {
-            return Ok(());
-        } else if let Sort::Var(_, _) = got {
-            return Ok(());
         } else {
             Err(Self {
                 expected: vec![expected.clone()],
@@ -228,10 +224,8 @@ impl SortError {
 
     /// Returns a sort error if `got` is not one of `possibilities`.
     pub(crate) fn assert_one_of(possibilities: &[Sort], got: &Sort) -> Result<(), Self> {
-        if possibilities.contains(got) {
+        if possibilities.contains(got) || got.is_polymorphic() {
             Ok(())
-        } else if let Sort::Var(_, _) = got {
-            return Ok(());
         } else {
             Err(Self {
                 expected: possibilities.to_vec(),

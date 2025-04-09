@@ -60,6 +60,9 @@ pub enum Sort {
     /// this sort.
     Atom(String, Vec<Rc<Term>>),
 
+    // A sort variable
+    Var(String),
+
     /// The `Bool` primitive sort.
     Bool,
 
@@ -84,14 +87,15 @@ pub enum Sort {
     /// The associated term is the BV width of this sort.
     BitVec(Integer),
 
+    // TODO delete this and incorporate it to function sort?
+    /// A parametric sort, with a set of sort variables that can appear in the second argument.
+    ParamSort(Vec<Rc<Term>>, Rc<Term>),
+
     /// The sort of RARE lists.
     RareList,
 
     /// The sort of sorts.
     Type,
-
-    // A polymorphic type
-    Var(String, Vec<Rc<Term>>),
 }
 
 /// A variable and an associated sort.
@@ -873,6 +877,16 @@ impl Constant {
         match self {
             Constant::Integer(i) => Some(i.clone()),
             _ => None,
+        }
+    }
+}
+
+impl Sort {
+    pub fn is_polymorphic(&self) -> bool {
+        match self {
+            Sort::Var(_) => true,
+            Sort::ParamSort(_, sort) if matches!(&**sort, Term::Sort(Sort::Var(_))) => true,
+            _ => false,
         }
     }
 }

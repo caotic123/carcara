@@ -26,7 +26,13 @@ fn parse_parameters<'a, R: BufRead>(
     let term = parser.parse_sort(true)?;
 
     parser.insert_sorted_var((name.clone(), term.clone()));
-    parser.state.sort_defs.insert(name.clone(), SortDef {body: term.clone(), params: Vec::default()});
+    parser.state.sort_defs.insert(
+        name.clone(),
+        SortDef {
+            body: term.clone(),
+            params: Vec::default(),
+        },
+    );
     let current_token = &parser.current_token;
     match current_token {
         Token::CloseParen => {

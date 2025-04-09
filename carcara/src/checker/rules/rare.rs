@@ -1,8 +1,9 @@
 use indexmap::IndexMap;
 
 use crate::{
-    ast::{rules::AttributeParameters, Constant, Polyeq, Rc, Term},
+    ast::{rules::AttributeParameters, Constant, Polyeq, Rc, Substitution, Term},
     checker::{error::CheckerError, rules::get_premise_term},
+    rare::{get_rules, rewrite_meta_terms},
     // rare::{apply_arg, convert_rare_term_to_term},
 };
 
@@ -23,7 +24,46 @@ pub fn check_rare(
         return Err(CheckerError::RareNotSpecifiedRule);
     }
 
-    Ok(())
+    if let Term::Const(Constant::String(v)) = &**rule_literal.unwrap() {
+        let rule = rare_rules.get(v);
+        if rule.is_none() {
+            return Err(CheckerError::RareRuleNotFound(v.clone()));
+        }
+
+        let rare_term = rule.unwrap();
+        if rare_term.arguments.len() + 1 != args.len() {
+            return Err(CheckerError::RareNumberOfPremisesWrong(
+                rare_term.arguments.len(),
+            ));
+        }
+
+        if conclusion.is_empty() || conclusion.len() > 1 {
+            return Err(CheckerError::RareConclusionNumberInvalid());
+        }
+
+        let mut arguments = args.iter().rev();
+        let mut map = IndexMap::new();
+
+        for arg in rare_term.arguments.iter() {
+            let arg_sort = rare_term.parameters.get(arg).unwrap();
+            map.insert(
+                pool.add(Term::Var(arg.clone(), arg_sort.term.clone())),
+                arguments.next().unwrap().clone(),
+            );
+        }
+
+        let got = Substitution::new(pool, map)
+            .unwrap()
+            .apply(pool, &rare_term.conclusion);
+
+        let term = rewrite_meta_terms(pool, got, &mut IndexMap::new(), &get_rules());
+        print!("{:?}", term);
+        return Ok(());
+    }
+
+    return Err(CheckerError::RareRuleExpectedLiteral(
+        rule_literal.unwrap().clone(),
+    ));
 
     // if let Term::Const(Constant::String(v)) = &**rule_literal.unwrap() {
     //     let rule = rare_rules.get(v);

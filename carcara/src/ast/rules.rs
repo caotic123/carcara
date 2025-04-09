@@ -1,23 +1,10 @@
-use std::{cell::RefCell, ops::Index};
+use std::cell::RefCell;
 
 use indexmap::IndexMap;
 
 use super::{Constant, Operator, Rc, Term};
 
 pub type Holes = IndexMap<String, Rc<RefCell<Option<Rc<Term>>>>>;
-
-#[derive(Debug, Clone, PartialEq, Hash, Eq)]
-pub enum RareTerm {
-    Hole(Rc<RefCell<Option<Rc<Term>>>>),
-
-    Const(Constant),
-
-    Var(String),
-
-    Op(Operator),
-
-    App(Rc<RareTerm>, Vec<Rc<RareTerm>>),
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AttributeParameters {
@@ -41,108 +28,34 @@ pub struct RuleDefinition {
 }
 
 pub type Rules = IndexMap<String, RuleDefinition>;
+#[derive(Debug, Clone)]
+pub enum RewriteTerm {
+    ManyEq(Operator, &'static str),
+    OperatorEq(Operator, Vec<RewriteTerm>),
+    VarEqual(&'static str),
+}
 
 #[macro_export]
-macro_rules! match_rareterm {
-    // Match App with wildcard function and extract first element from args vector
-    (App (*, [?$v:ident]), $term:expr) => {{
-        if let RareTerm::App(_, args) = &**$term {
-            if !args.is_empty() {
-                Some(args[0].clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+macro_rules! pseudo_term {
+    (true) => {$crate::rare::RewriteTerm::OperatorEq($crate::ast::Operator::True, vec![])};
+    (false) => {$crate::rare::RewriteTerm::OperatorEq($crate::ast::Operator::False, vec![])};
+    ($v:ident) => {$crate::rare::RewriteTerm::VarEqual(stringify!($v))};
+    (($op:tt ..$args:ident..)) => {{
+        $crate::rare::RewriteTerm::ManyEq($crate::ast::Operator::$op, stringify!($args))
     }};
-
-    // Match App with wildcard function and multiple captured args
-    (App (*, [?$v:ident, ?$w:ident]), $term:expr) => {{
-        if let RareTerm::App(_, args) = &**$term {
-            if args.len() >= 2 {
-                Some((args[0].clone(), args[1].clone()))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+    (($op:tt $($args:tt)+)) => {{
+        let v = vec![ $(pseudo_term!($args)),+ ];
+        $crate::rare::RewriteTerm::OperatorEq($crate::ast::Operator::$op, v)
     }};
-
-    // Match Hole with captured value
-    (Hole(?$v:ident), $term:expr) => {{
-        if let RareTerm::Hole(cell) = &**$term {
-            if let Some(term) = &*cell.borrow() {
-                Some(term.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+    (($op:tt)) => {{
+        let v = vec![];
+        $crate::rare::RewriteTerm::OperatorEq($crate::ast::Operator::$op, v)
     }};
+}
 
-    // Match Const with captured value
-    (Const(?$v:ident), $term:expr) => {{
-        if let RareTerm::Const(constant) = &**$term {
-            Some(constant.clone())
-        } else {
-            None
-        }
+#[macro_export]
+macro_rules! build_equation {
+    ($r:tt ~> $rr:tt) => {{
+        (pseudo_term!($r), pseudo_term!($rr))
     }};
-
-    // Match Const with captured value
-    (Const($v:tt), $term:expr) => {{
-        if let RareTerm::Const(Constant::String(name)) = &*$term {
-            if name == $v {
-                Some(Constant::String(name.clone()))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }};
-
-    // Match Var with captured value
-    (Var(?$v:ident), $term:expr) => {{
-        if let RareTerm::Var(string) = &*$term {
-            Some(string.clone())
-        } else {
-            None
-        }
-    }};
-
-    // Match Const with captured value
-    (Var($v:tt), $term:expr) => {{
-        if let RareTerm::Var(name) = &*$term {
-            if name == $v {
-                Some(RareTerm::Var(name.clone()))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }};
-
-    // Match Op with captured value
-    (Op(?$v:ident), $term:expr) => {{
-        if let RareTerm::Op(operator) = &**$term {
-            Some(operator.clone())
-        } else {
-            None
-        }
-    }}; // Add more variants as needed
-
-    (Type(?$v:ident), $term:expr) => {{
-        match &*$term {
-            RareTerm::App(_, args) if args.len() == 1 => match &*args[0] {
-                RareTerm::Var(name) => Some(name.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    };};
 }
