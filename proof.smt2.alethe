@@ -5,7 +5,7 @@
 (step t3 (cl (! (not @p_1) :named @p_11) (! (not b) :named @p_10) d) :rule equiv_pos2)
 (step t4 (cl d @p_10 @p_11) :rule reordering :premises (t3))
 (step t5 (cl (not (! (= @p_5 (! (not d) :named @p_9)) :named @p_12)) (not @p_5) @p_9) :rule equiv_pos2)
-(step t6 (cl (= @p_4 (! (and d c) :named @p_13))) :rule rare_rewrite :args ("ite-else-false" d c))
+(step t6 (cl (= @p_4 (! (and d c) :named @p_13))) :rule rare_rewrite :args ("ite-else-false" d (rare-list c)))
 (step t7 (cl (= @p_5 (! (not @p_13) :named @p_14))) :rule cong :premises (t6))
 (step t8 (cl (= d d)) :rule refl)
 (step t9 (cl @p_6) :rule and :premises (a0) :args (1))
@@ -26,4 +26,6 @@
 (step t24 (cl @p_2 @p_9) :rule or_neg :args (1))
 (step t25 (cl @p_2 @p_2) :rule resolution :premises (t20 t23 t24))
 (step t26 (cl @p_2) :rule contraction :premises (t25))
+(step t34 (cl true) :rule rare_rewrite :args ("test" rare-list))
+
 (step t27 (cl) :rule resolution :premises (t2 t22 t26))

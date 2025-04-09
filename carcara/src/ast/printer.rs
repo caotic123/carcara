@@ -520,14 +520,15 @@ impl fmt::Display for Sort {
             Sort::Real => write!(f, "Real"),
             Sort::String => write!(f, "String"),
             Sort::RegLan => write!(f, "RegLan"),
+            Sort::Var(name) => write!(f, "{}", name),
+            Sort::ParamSort(args, s) => {
+                let par = format!("(par {:?} {})", args, s);
+                write!(f, "{}", par)
+            }
             Sort::Array(x, y) => write_s_expr(f, "Array", &[x, y]),
             Sort::BitVec(w) => write!(f, "(_ BitVec {})", w),
             Sort::RareList => write!(f, "rare-list"),
             Sort::Type => write!(f, "Type"),
-            Sort::Var(x, vs) => match vs.len() {
-                0 => write!(f, "{}", x),
-                _ => write_s_expr(f, x, vs),
-            },
         }
     }
 }

@@ -1,162 +1,282 @@
-// use indexmap::IndexMap;
-// use std::collections::{HashMap, VecDeque};
+use indexmap::IndexMap;
 
-// use crate::{
-//     ast::{
-//         rules::{RareTerm, RuleDefinition, TypeParameter},
-//         Constant, Operator, Rc, Term, TermPool,
-//     },
-//     checker::error::CheckerError,
-// };
+use crate::{
+    ast::{rules::RewriteTerm, Rc, Term, TermPool},
+    build_equation, pseudo_term,
+};
 
-// pub fn apply_arg(
-//     argument: String,
-//     parameter: TypeParameter,
-//     rule: &mut RuleDefinition,
-//     term: Rc<Term>,
-//     sort: Rc<Term>,
-// ) -> Result<(), CheckerError> {
-//     if let Some(hole) = rule.parameters.1.get_mut(&argument) {
-//         hole.replace(Some(term.clone()));
-//     }
+pub fn get_rules() -> Vec<(RewriteTerm, RewriteTerm)> {
+    return vec![
+        build_equation!((RareList ..x..) ~> x),
+        build_equation!((Or true) ~> true),
+    ];
+}
 
-//     if let RareTerm::App(_, args) = &*parameter.term {
-//         match args.as_slice() {
-//             [value] => match &**value {
-//                 RareTerm::Hole(hole) => {
-//                     let mut hole = hole.borrow_mut();
-//                     if let Some(sort_against) = hole.clone() {
-//                         if sort_against != sort {
-//                             return Err(CheckerError::RareMisMatchTypes(
-//                                 argument.clone(),
-//                                 sort,
-//                                 sort_against,
-//                             ));
-//                         }
-//                     } else {
-//                         hole.replace(sort.clone());
-//                     }
-//                 }
-//                 _ => (),
-//             },
-//             _ => (),
-//         }
-//     }
+#[derive(Debug, Clone)]
+enum Trace<T1, T2> {
+    Term(T1),
+    ManyTerm(T2),
+}
 
-//     return Ok(());
-// }
+type TraceRef<'a> = Trace<&'a Rc<Term>, &'a Vec<Rc<Term>>>;
+type TraceOwned = Trace<Rc<Term>, Vec<Rc<Term>>>;
 
-// pub fn convert_rare_term_to_term(
-//     rare_term: Rc<RareTerm>,
-//     type_equations: &IndexMap<String, Rc<Term>>,
-//     pool: &mut dyn TermPool,
-// ) -> Rc<Term> {
-//     // Map to store processed terms
-//     let mut term_map: HashMap<Rc<RareTerm>, Rc<Term>> = HashMap::new();
+#[inline]
+fn match_meta_terms<'a, 'b>(
+    term: &'a Rc<Term>,
+    rule: &'b RewriteTerm,
+    traces: &'b mut IndexMap<String, TraceRef<'a>>,
+) -> Option<&'b mut IndexMap<String, TraceRef<'a>>>
+where
+    'a: 'b,
+{
+    match rule {
+        RewriteTerm::ManyEq(op, var) => match term.as_ref() {
+            Term::Op(op_, rest_) if op == op_ => {
+                traces.insert(var.to_string(), Trace::ManyTerm(rest_));
+                return Some(traces);
+            }
+            _ => None,
+        },
+        RewriteTerm::OperatorEq(op, rest) => match term.as_ref() {
+            Term::Op(op_, rest_) if op == op_ => {
+                if rest_.len() != rest.len() {
+                    return None;
+                }
 
-//     // Queue for processing
-//     let mut work_queue = VecDeque::new();
-//     work_queue.push_back(rare_term.clone());
+                let mut rest = rest.iter();
+                let mut traces = Some(traces);
+                for param in rest_ {
+                    let rule = rest.next().unwrap();
+                    traces = match_meta_terms(param, rule, traces.unwrap());
+                    if traces.is_none() {
+                        return None;
+                    }
+                }
+                return traces;
+            }
+            _ => None,
+        },
+        RewriteTerm::VarEqual(var) => {
+            traces.insert(var.to_string(), Trace::Term(term));
+            return Some(traces);
+        }
+    }
+}
 
-//     while let Some(current) = work_queue.pop_front() {
-//         // Skip if already processed
-//         if term_map.contains_key(&current) {
-//             continue;
-//         }
+#[inline]
+fn reconstruct_meta_terms<'a>(
+    pool: &mut dyn TermPool,
+    rule: &'a RewriteTerm,
+    traces: &IndexMap<String, TraceRef<'a>>,
+) -> TraceOwned {
+    match rule {
+        RewriteTerm::ManyEq(_, _) => unreachable!(),
+        RewriteTerm::OperatorEq(op, params) => {
+            let mut args = vec![];
+            for param in params {
+                let k = reconstruct_meta_terms(pool, param, traces);
+                if let Trace::Term(term) = k {
+                    args.push(term.clone());
+                }
+            }
+            return Trace::Term(pool.add(Term::Op(op.clone(), args)));
+        }
+        RewriteTerm::VarEqual(var) => {
+            let trace = traces.get(*var).unwrap();
+            match trace {
+                Trace::Term(t) => Trace::Term((*t).clone()),
+                Trace::ManyTerm(t) => Trace::ManyTerm((*t).clone()),
+            }
+        }
+    }
+}
 
-//         match &*current {
-//             RareTerm::Hole(hole) => {
-//                 // Process holes immediately
-//                 if let Some(term) = &*hole.borrow() {
-//                     term_map.insert(current.clone(), term.clone());
-//                 } else {
-//                     panic!("Encountered unfilled hole in RareTerm");
-//                 }
-//             }
+fn check_rewrites(
+    pool: &mut dyn TermPool,
+    term: &Rc<Term>,
+    rules: &[(RewriteTerm, RewriteTerm)],
+) -> Option<TraceOwned> {
+    for rule in rules {
+        let mut traces = IndexMap::new();
+        let lhs = &rule.0;
+        if let Some(traces) = match_meta_terms(term, &lhs, &mut traces) {
+            println!("{:?} = {:?}", term.clone(), lhs.clone());
+            return Some(reconstruct_meta_terms(pool, &rule.1, traces));
+        }
+    }
+    return None;
+}
 
-//             RareTerm::Const(constant) => {
-//                 // Process constants immediately
-//                 let term = pool.add(Term::Const(constant.clone()));
-//                 term_map.insert(current, term);
-//             }
+pub fn rewrite_meta_terms(
+    pool: &mut dyn TermPool,
+    term: Rc<Term>,
+    cache: &mut IndexMap<String, Rc<Term>>,
+    rules: &[(RewriteTerm, RewriteTerm)],
+) -> Rc<Term> {
+    match term.as_ref() {
+        // Variable: Use cache to avoid cloning
+        Term::Var(name, _) => {
+            if let Some(cached) = cache.get(name) {
+                // Return cached term directly, avoiding cloning
+                cached.clone()
+            } else {
+                // For now, variables are not rewritten; use the term itself
+                let rewritten = term.clone();
+                // Store in cache for future use
+                cache.insert(name.clone(), rewritten.clone());
+                rewritten
+            }
+        }
 
-//             RareTerm::Var(name) => {
-//                 // Process variables immediately
-//                 let sort = type_equations.get(name).unwrap().clone();
-//                 let term = pool.add(Term::Var(name.clone(), sort));
-//                 term_map.insert(current, term);
-//             }
+        // Atomic terms: No rewriting, return as-is
+        Term::Const(_) => term.clone(),
+        Term::Sort(_) => term.clone(),
 
-//             RareTerm::Op(operator) => {
-//                 // Process operators immediately
-//                 let term = pool.add(Term::Op(operator.clone(), Vec::new()));
-//                 term_map.insert(current, term);
-//             }
+        // Function application: Rewrite function and arguments
+        Term::App(f, args) => {
+            let f_prime = rewrite_meta_terms(pool, f.clone(), cache, rules);
+            let new_args = args
+                .iter()
+                .flat_map(|arg| {
+                    if let Some(trace) = check_rewrites(pool, arg, rules) {
+                        match trace {
+                            Trace::Term(t) => vec![t],
+                            Trace::ManyTerm(subs) => subs,
+                        }
+                    } else {
+                        vec![rewrite_meta_terms(pool, arg.clone(), cache, rules)]
+                    }
+                })
+                .collect::<Vec<_>>();
+            let new_term = pool.add(Term::App(f_prime, new_args));
+            if let Some(_) = check_rewrites(pool, &new_term, rules) {
+                return rewrite_meta_terms(pool, new_term, cache, rules)
+            }
+        
+            return new_term;
+        }
 
-//             RareTerm::App(func, args) => {
-//                 // Check if all dependencies are processed
-//                 let func_processed = term_map.contains_key(func);
-//                 let mut is_operator = false;
+        // Operator application: Rewrite arguments and apply rules if applicable
+        Term::Op(op, args) => {
+            if let Some(trace) = check_rewrites(pool, &term, rules) {
+                match trace {
+                    Trace::Term(t) => t,
+                    Trace::ManyTerm(_) => {
+                        let new_args = args
+                            .iter()
+                            .flat_map(|arg| {
+                                if let Some(trace) = check_rewrites(pool, arg, rules) {
+                                    match trace {
+                                        Trace::Term(t) => vec![t],
+                                        Trace::ManyTerm(subs) => subs,
+                                    }
+                                } else {
+                                    vec![rewrite_meta_terms(pool, arg.clone(), cache, rules)]
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        let new_term: Rc<Term> = pool.add(Term::Op(*op, new_args));
+                        if let Some(_) = check_rewrites(pool, &new_term, rules) {
+                            return rewrite_meta_terms(pool, new_term, cache, rules)
+                        }
+            
+                        return new_term;
+                    }
+                }
+            } else {
+                let new_args = args
+                    .iter()
+                    .flat_map(|arg| {
+                        if let Some(trace) = check_rewrites(pool, arg, rules) {
+                            match trace {
+                                Trace::Term(t) => vec![t],
+                                Trace::ManyTerm(subs) => subs,
+                            }
+                        } else {
+                            vec![rewrite_meta_terms(pool, arg.clone(), cache, rules)]
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let new_term = pool.add(Term::Op(*op, new_args));
+                if let Some(_) = check_rewrites(pool, &new_term, rules) {
+                    return rewrite_meta_terms(pool, new_term, cache, rules)
+                }
+    
+                return new_term;
+            }
+        }
 
-//                 if let RareTerm::Op(_) = &**func {
-//                     is_operator = true
-//                 }
+        // Binder: Rewrite the body
+        Term::Binder(binder, bindings, body) => {
+            let new_body = rewrite_meta_terms(pool, body.clone(), cache, rules);
+            pool.add(Term::Binder(*binder, bindings.clone(), new_body))
+        }
 
-//                 let all_args_processed = args.iter().all(|arg| term_map.contains_key(arg));
+        // Let: Rewrite the body (bindings unchanged)
+        Term::Let(bindings, body) => {
+            let new_body = rewrite_meta_terms(pool, body.clone(), cache, rules);
+            pool.add(Term::Let(bindings.clone(), new_body))
+        }
 
-//                 if (func_processed || is_operator) && all_args_processed {
-//                     // All dependencies processed, create the term
-//                     let converted_args = args
-//                         .iter()
-//                         .fold(vec![], |mut pred, arg| {
-//                             if let Some(list) =
-//                                 match_term!((rarelist ...) = term_map.get(arg).unwrap().clone())
-//                             {
-//                                 pred.push(list.to_vec());
-//                                 return pred;
-//                             }
+        // Parameterized operator: Rewrite op_args and args
+        Term::ParamOp { op, op_args, args } => {
+            let new_op_args = op_args
+                .iter()
+                .map(|op_arg| rewrite_meta_terms(pool, op_arg.clone(), cache, rules))
+                .collect::<Vec<_>>();
+            let new_args = args
+                .iter()
+                .map(|arg| rewrite_meta_terms(pool, arg.clone(), cache, rules))
+                .collect::<Vec<_>>();
+            pool.add(Term::ParamOp {
+                op: *op,
+                op_args: new_op_args,
+                args: new_args,
+            })
+        }
+    }
+}
 
-//                             let terms = vec![term_map.get(arg).unwrap().clone()];
-//                             pred.push(terms);
-//                             return pred;
-//                         })
-//                         .into_iter()
-//                         .flatten()
-//                         .collect::<Vec<_>>();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ast::PrimitivePool, parser::*};
 
-//                     let term = match &**func {
-//                         RareTerm::Op(op) => {
-//                             // Convert App(Op, args) to Op(op, args)
-//                             pool.add(Term::Op(op.clone(), converted_args))
-//                         }
-//                         _ => {
-//                             // Regular application
-//                             let converted_func = term_map.get(func).unwrap().clone();
-//                             pool.add(Term::App(converted_func, converted_args))
-//                         }
-//                     };
+    fn run_test(definitions: &str, original: &str, rule: (RewriteTerm, RewriteTerm), result: &str) {
+        let mut pool = PrimitivePool::new();
+        let mut parser = Parser::new(&mut pool, Config::new(), definitions.as_bytes()).unwrap();
+        parser.parse_problem().unwrap();
 
-//                     term_map.insert(current, term);
-//                 } else {
-//                     // Some dependencies not processed yet
-//                     // Add current back to queue to process later
-//                     work_queue.push_back(current.clone());
+        let [original, result] = [original, result].map(|s| {
+            parser.reset(s.as_bytes()).unwrap();
+            parser.parse_term().unwrap()
+        });
 
-//                     // Add unprocessed dependencies to queue
-//                     if !func_processed && !is_operator {
-//                         work_queue.push_back(func.clone());
-//                     }
+        let got = rewrite_meta_terms(&mut pool, original, &mut IndexMap::new(), &vec![rule]);
 
-//                     for arg in args {
-//                         if !term_map.contains_key(arg) {
-//                             work_queue.push_back(arg.clone());
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-//     }
+        assert_eq!(&result, &got);
+    }
 
-//     // Return the processed root term
-//     term_map.get(&rare_term).unwrap().clone()
-// }
+    macro_rules! run_tests {
+        (
+            definitions = $defs:literal,
+            $($original:literal [$rule:expr] => $result:literal,)*
+        ) => {{
+            let definitions = $defs;
+            $(run_test(definitions, $original, $rule, $result);)*
+        }};
+    }
+
+    #[test]
+    fn test_substitutions() {
+        run_tests! {
+            definitions = "
+            (declare-const v Bool)
+        ",
+            "(not (not (not true)))" [build_equation!((Not (Not x)) ~> x)] => "(not true)",
+            "(or true)" [build_equation!((Or true) ~> true)] => "true",
+
+        }
+    }
+}

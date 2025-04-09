@@ -433,7 +433,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
             Operator::BvNot | Operator::BvNeg => {
                 assert_num_args(&args, 1)?;
                 for s in sorts {
-                    if !matches!(s, Sort::BitVec(_)) {
+                    if !matches!(s, Sort::BitVec(_)) && !s.is_polymorphic() {
                         return Err(ParserError::ExpectedBvSort(s.clone()));
                     }
                 }
@@ -446,7 +446,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
             Operator::BvConcat => {
                 assert_num_args(&args, 2..)?;
                 for s in sorts {
-                    if !matches!(s, Sort::BitVec(_)) {
+                    if !matches!(s, Sort::BitVec(_)) && !s.is_polymorphic() {
                         return Err(ParserError::ExpectedBvSort(s.clone()));
                     }
                 }
@@ -457,7 +457,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
             | Operator::BvOr
             | Operator::BvXor => {
                 assert_num_args(&args, 2..)?;
-                if !matches!(sorts[0], Sort::BitVec(_)) {
+                if !matches!(sorts[0], Sort::BitVec(_)) && !sorts[0].is_polymorphic() {
                     return Err(ParserError::ExpectedBvSort(sorts[0].clone()));
                 }
                 SortError::assert_all_eq(&sorts)?;
@@ -484,7 +484,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
             | Operator::BvSGt
             | Operator::BvSGe => {
                 assert_num_args(&args, 2)?;
-                if !matches!(sorts[0], Sort::BitVec(_)) {
+                if !matches!(sorts[0], Sort::BitVec(_)) && !sorts[0].is_polymorphic() {
                     return Err(ParserError::ExpectedBvSort(sorts[0].clone()));
                 }
                 SortError::assert_all_eq(&sorts)?;
@@ -1687,8 +1687,12 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 [x, y] => Ok(Sort::Array(x.clone(), y.clone())),
                 _ => Err(ParserError::WrongNumberOfArgs(2.into(), args.len())),
             },
-            other if polymorphic && other.starts_with('@') && self.state.sort_defs.get(other).is_some() => {
-                Ok(Sort::Var(other.to_string(), vec![]))
+            other
+                if polymorphic
+                    && other.starts_with('@')
+                    && self.state.sort_defs.get(other).is_some() =>
+            {
+                Ok(Sort::Var(other.to_string()))
             }
             other if self.state.sort_defs.get(other).is_some() => {
                 let def = self.state.sort_defs.get(other).unwrap();
@@ -1739,7 +1743,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
                     Err(ParserError::ExpectedIntegerConstant(args[0].clone()))
                 }
             }
-            _ => Err(ParserError::UndefinedSort(name))
+            _ => Err(ParserError::UndefinedSort(name)),
         }
     }
 
@@ -1755,15 +1759,19 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 return self
                     .make_indexed_sort(name, args)
                     .map_err(|e| Error::Parser(e, pos));
-            },
+            }
             Token::OpenParen if polymorphic => {
                 let name = self.expect_symbol()?;
-                if ["BitVec".to_string()].contains(&name) || !self.state.sort_defs.contains_key(&name) {
-                    return Err(Error::Parser(ParserError::UndefinedSort(name), pos));                  
+                println!("{0}", name);
+                if !["BitVec".to_string()].contains(&name)
+                    && !self.state.sort_defs.contains_key(&name)
+                {
+                    return Err(Error::Parser(ParserError::UndefinedSort(name), pos));
                 }
                 let args = self.parse_sequence(Self::parse_term, true)?;
-                return Ok(self.pool.add(Term::Sort(Sort::Var(name, args))))
-            },
+                let head_term = self.pool.add(Term::Sort(Sort::Var(name)));
+                return Ok(self.pool.add(Term::Sort(Sort::ParamSort(args, head_term))));
+            }
             Token::OpenParen => {
                 let name = self.expect_symbol()?;
                 let args =
