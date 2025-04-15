@@ -95,7 +95,7 @@ pub fn check<T: io::BufRead>(
 
     // Parsing
     let total = Instant::now();
-    let (problem, proof, mut rules, mut pool) =
+    let (problem, proof, rules, mut pool) =
         parser::parse_instance(problem, proof, rules, parser_config)?;
     run_measures.parsing = total.elapsed();
 
@@ -168,6 +168,7 @@ pub fn check_parallel<T: io::BufRead>(
         &problem.prelude,
         &schedule_context_usage,
         stack_size,
+        rules
     );
 
     if collect_stats {

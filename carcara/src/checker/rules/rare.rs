@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 
 use crate::{
-    ast::{rules::AttributeParameters, Constant, Polyeq, Rc, Substitution, Term},
+    ast::{Constant, Substitution, Term},
     checker::{error::CheckerError, rules::get_premise_term},
     rare::{get_rules, rewrite_meta_terms},
     // rare::{apply_arg, convert_rare_term_to_term},
@@ -53,7 +53,9 @@ pub fn check_rare(
         }
 
         if rare_term.premises.len() != premises.len() {
-            return Err(CheckerError::RareNumberOfPremisesWrong(rare_term.premises.len()));
+            return Err(CheckerError::RareNumberOfPremisesWrong(
+                rare_term.premises.len(),
+            ));
         }
 
         let mut rare_premises = rare_term.premises.iter();
@@ -61,11 +63,17 @@ pub fn check_rare(
         for premise in premises {
             let premise = get_premise_term(premise)?;
             let rare_premise = rare_premises.next().unwrap();
-            let rare_premise = Substitution::new(pool, map.clone()).unwrap().apply(pool, rare_premise);
-            let rare_premise = rewrite_meta_terms(pool, rare_premise, &mut IndexMap::new(), &get_rules());
+            let rare_premise = Substitution::new(pool, map.clone())
+                .unwrap()
+                .apply(pool, rare_premise);
+            let rare_premise =
+                rewrite_meta_terms(pool, rare_premise, &mut IndexMap::new(), &get_rules());
 
             if *premise != rare_premise {
-                return Err(CheckerError::RarePremiseAreNotEqual(premise.clone(), rare_premise.clone()));
+                return Err(CheckerError::RarePremiseAreNotEqual(
+                    premise.clone(),
+                    rare_premise.clone(),
+                ));
             }
         }
 
@@ -75,13 +83,16 @@ pub fn check_rare(
 
         let term = rewrite_meta_terms(pool, got, &mut IndexMap::new(), &get_rules());
 
-        if conclusion.len() != 1  {
+        if conclusion.len() != 1 {
             return Err(CheckerError::RareConclusionNumberInvalid());
         }
 
         if term != conclusion[0] {
-            return Err(CheckerError::RareConclusionAreNotEqual(term, conclusion[0].clone()));
-        } 
+            return Err(CheckerError::RareConclusionAreNotEqual(
+                term,
+                conclusion[0].clone(),
+            ));
+        }
 
         return Ok(());
     }

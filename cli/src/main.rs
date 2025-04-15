@@ -454,7 +454,7 @@ fn main() {
     }
 
     let result = match cli.command {
-        Command::Parse(options) => parse_command(options).and_then(|(pb, pf, rules, mut pool)| {
+        Command::Parse(options) => parse_command(options).and_then(|(pb, pf, _rules, mut pool)| {
             ast::print_proof(&mut pool, &pb.prelude, &pf, !cli.no_print_with_sharing)?;
             Ok(())
         }),
@@ -659,7 +659,7 @@ fn slice_command(
     options: SliceCommandOptions,
 ) -> CliResult<(ast::Problem, ast::Proof, ast::PrimitivePool)> {
     let (problem, proof, rules) = get_instance(&options.input)?;
-    let (problem, proof, rules, pool) =
+    let (problem, proof, _rules, pool) =
         parser::parse_instance(problem, proof, rules, options.parsing.into())
             .map_err(carcara::Error::from)?;
 

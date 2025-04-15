@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use indexmap::IndexMap;
 
-use super::{Constant, Operator, Rc, Term};
+use super::{Operator, Rc, Term};
 
 pub type Holes = IndexMap<String, Rc<RefCell<Option<Rc<Term>>>>>;
 
