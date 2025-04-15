@@ -25,5 +25,6 @@
 )
 (declare-rare-rule bool-double-not-elim ((t1 Bool :list))
   :args (t1)
+  :premises ((= t1 true))
   :conclusion (= (eo::define ((_let_1 (not t1))) (not _let_1)) t1)
 )
