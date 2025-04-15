@@ -1,10 +1,6 @@
-use std::cell::{Ref, RefCell, RefMut};
 use std::io::BufRead;
-use std::str::FromStr;
 
-use indexmap::IndexMap;
-
-use crate::ast::{Constant, Operator, Rc, Sort, Term, TermPool};
+use crate::ast::{Rc, Term};
 use crate::{ast::rules::*, Error};
 
 use crate::CarcaraResult;

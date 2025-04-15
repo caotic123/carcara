@@ -144,9 +144,9 @@ pub fn rewrite_meta_terms(
                 .collect::<Vec<_>>();
             let new_term = pool.add(Term::App(f_prime, new_args));
             if let Some(_) = check_rewrites(pool, &new_term, rules) {
-                return rewrite_meta_terms(pool, new_term, cache, rules)
+                return rewrite_meta_terms(pool, new_term, cache, rules);
             }
-        
+
             return new_term;
         }
 
@@ -170,9 +170,9 @@ pub fn rewrite_meta_terms(
                             .collect::<Vec<_>>();
                         let new_term: Rc<Term> = pool.add(Term::Op(*op, new_args));
                         if let Some(_) = check_rewrites(pool, &new_term, rules) {
-                            return rewrite_meta_terms(pool, new_term, cache, rules)
+                            return rewrite_meta_terms(pool, new_term, cache, rules);
                         }
-            
+
                         return new_term;
                     }
                 }
@@ -192,9 +192,9 @@ pub fn rewrite_meta_terms(
                     .collect::<Vec<_>>();
                 let new_term = pool.add(Term::Op(*op, new_args));
                 if let Some(_) = check_rewrites(pool, &new_term, rules) {
-                    return rewrite_meta_terms(pool, new_term, cache, rules)
+                    return rewrite_meta_terms(pool, new_term, cache, rules);
                 }
-    
+
                 return new_term;
             }
         }

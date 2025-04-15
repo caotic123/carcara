@@ -1639,31 +1639,33 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 self.expect_keyword()?;
                 self.expect_token(Token::Keyword("define".to_string()))?;
                 self.expect_token(Token::OpenParen)?;
-                let substitution = self
-                    .parse_sequence(
-                        |parser| {
-                            parser.expect_token(Token::OpenParen)?;
-                            let let_arg = parser.expect_symbol()?;
-                            let body = parser.parse_term()?;
-                            parser.expect_token(Token::CloseParen)?;
-                            return Ok((let_arg, body));
-                        },
-                        true,
-                    )?;
+                let substitution = self.parse_sequence(
+                    |parser| {
+                        parser.expect_token(Token::OpenParen)?;
+                        let let_arg = parser.expect_symbol()?;
+                        let body = parser.parse_term()?;
+                        parser.expect_token(Token::CloseParen)?;
+                        return Ok((let_arg, body));
+                    },
+                    true,
+                )?;
 
                 self.state.symbol_table.push_scope();
                 for (name, value) in &substitution {
                     let sort = self.pool.sort(&value);
                     self.insert_sorted_var((name.clone(), sort));
                 }
-                
+
                 let innerterm = self.parse_term()?;
                 self.state.symbol_table.pop_scope();
                 self.expect_token(Token::CloseParen)?;
-                let subs = substitution.iter().map(|(ident, term)| {
-                    let ident = Term::Var(ident.clone(), self.pool.sort(term));
-                    return (self.pool.add(ident), term.clone())
-                }).collect::<IndexMap<_, _>>();
+                let subs = substitution
+                    .iter()
+                    .map(|(ident, term)| {
+                        let ident = Term::Var(ident.clone(), self.pool.sort(term));
+                        return (self.pool.add(ident), term.clone());
+                    })
+                    .collect::<IndexMap<_, _>>();
 
                 let innerterm = Substitution::new(self.pool, subs)
                     .unwrap()
@@ -1800,7 +1802,6 @@ impl<'a, R: BufRead> Parser<'a, R> {
             }
             Token::OpenParen if polymorphic => {
                 let name = self.expect_symbol()?;
-                println!("{0}", name);
                 if !["BitVec".to_string()].contains(&name)
                     && !self.state.sort_defs.contains_key(&name)
                 {
