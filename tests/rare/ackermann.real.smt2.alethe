@@ -16,7 +16,7 @@ unsat
 (step t8 (cl (! (= @p_23 @p_23) :named @p_62)) :rule refl)
 (step t9 (cl @p_59) :rule rare_rewrite :args ("bool-double-not-elim" @p_23))
 (step t10 (cl (= @p_61 @p_62)) :rule cong :premises (t8 t9))
-(step t11 (cl (= @p_62 true)) :rule rare_rewrite :args ("eq-refl" @p_23))
+(step t11 (cl (= @p_62 false)) :rule rare_rewrite :args ("eq-refl" @p_23))
 (step t12 (cl (= @p_61 true)) :rule trans :premises (t10 t11))
 (step t13 (cl @p_60) :rule trans :premises (t7 t12))
 (step t14 (cl @p_59) :rule resolution :premises (t6 t13))
