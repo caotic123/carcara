@@ -44,7 +44,7 @@ pub fn check_rare(
         let mut arguments = args.iter().rev();
         let mut map = IndexMap::new();
 
-        for arg in rare_term.arguments.iter() {
+        for arg in rare_term.arguments.iter().rev() {
             let arg_sort = rare_term.parameters.get(arg).unwrap();
             map.insert(
                 pool.add(Term::Var(arg.clone(), arg_sort.term.clone())),
@@ -52,12 +52,35 @@ pub fn check_rare(
             );
         }
 
+        if rare_term.premises.len() != premises.len() {
+            return Err(CheckerError::RareNumberOfPremisesWrong(rare_rules.len()));
+        }
+
+        let mut rare_premises = rare_term.premises.iter();
+
+        for premise in premises {
+            let premise = get_premise_term(premise)?;
+            let premise = Substitution::new(pool, map.clone()).unwrap().apply(pool, premise);
+            let rare_premise = rare_premises.next().unwrap();
+            if premise != *rare_premise {
+                return Err(CheckerError::RarePremiseAreNotEqual(premise, rare_premise.clone()));
+            }
+        }
+
         let got = Substitution::new(pool, map)
             .unwrap()
             .apply(pool, &rare_term.conclusion);
 
         let term = rewrite_meta_terms(pool, got, &mut IndexMap::new(), &get_rules());
-        print!("{:?}", term);
+
+        if conclusion.len() != 1  {
+            return Err(CheckerError::RareConclusionNumberInvalid());
+        }
+
+        if term != conclusion[0] {
+            return Err(CheckerError::RareConclusionAreNotEqual(term, conclusion[0].clone()));
+        } 
+
         return Ok(());
     }
 

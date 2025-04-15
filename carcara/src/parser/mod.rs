@@ -1633,6 +1633,44 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 func.apply(self.pool, args)
                     .map_err(|err| Error::Parser(err, head_pos))
             }
+            Token::Symbol(s) if s == "eo" => {
+                // "Let" constructions unfold
+                self.expect_token(Token::Symbol("eo".to_string()))?;
+                self.expect_keyword()?;
+                self.expect_token(Token::Keyword("define".to_string()))?;
+                self.expect_token(Token::OpenParen)?;
+                let substitution = self
+                    .parse_sequence(
+                        |parser| {
+                            parser.expect_token(Token::OpenParen)?;
+                            let let_arg = parser.expect_symbol()?;
+                            let body = parser.parse_term()?;
+                            parser.expect_token(Token::CloseParen)?;
+                            return Ok((let_arg, body));
+                        },
+                        true,
+                    )?;
+
+                self.state.symbol_table.push_scope();
+                for (name, value) in &substitution {
+                    let sort = self.pool.sort(&value);
+                    self.insert_sorted_var((name.clone(), sort));
+                }
+                
+                let innerterm = self.parse_term()?;
+                self.state.symbol_table.pop_scope();
+                self.expect_token(Token::CloseParen)?;
+                let subs = substitution.iter().map(|(ident, term)| {
+                    let ident = Term::Var(ident.clone(), self.pool.sort(term));
+                    return (self.pool.add(ident), term.clone())
+                }).collect::<IndexMap<_, _>>();
+
+                let innerterm = Substitution::new(self.pool, subs)
+                    .unwrap()
+                    .apply(self.pool, &innerterm);
+
+                return Ok(innerterm);
+            }
             Token::OpenParen => {
                 self.next_token()?;
                 match self.current_token {

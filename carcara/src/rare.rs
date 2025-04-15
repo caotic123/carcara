@@ -101,7 +101,6 @@ fn check_rewrites(
         let mut traces = IndexMap::new();
         let lhs = &rule.0;
         if let Some(traces) = match_meta_terms(term, &lhs, &mut traces) {
-            println!("{:?} = {:?}", term.clone(), lhs.clone());
             return Some(reconstruct_meta_terms(pool, &rule.1, traces));
         }
     }
@@ -115,25 +114,19 @@ pub fn rewrite_meta_terms(
     rules: &[(RewriteTerm, RewriteTerm)],
 ) -> Rc<Term> {
     match term.as_ref() {
-        // Variable: Use cache to avoid cloning
         Term::Var(name, _) => {
             if let Some(cached) = cache.get(name) {
-                // Return cached term directly, avoiding cloning
                 cached.clone()
             } else {
-                // For now, variables are not rewritten; use the term itself
                 let rewritten = term.clone();
-                // Store in cache for future use
                 cache.insert(name.clone(), rewritten.clone());
                 rewritten
             }
         }
 
-        // Atomic terms: No rewriting, return as-is
         Term::Const(_) => term.clone(),
         Term::Sort(_) => term.clone(),
 
-        // Function application: Rewrite function and arguments
         Term::App(f, args) => {
             let f_prime = rewrite_meta_terms(pool, f.clone(), cache, rules);
             let new_args = args
@@ -157,7 +150,6 @@ pub fn rewrite_meta_terms(
             return new_term;
         }
 
-        // Operator application: Rewrite arguments and apply rules if applicable
         Term::Op(op, args) => {
             if let Some(trace) = check_rewrites(pool, &term, rules) {
                 match trace {
@@ -207,19 +199,16 @@ pub fn rewrite_meta_terms(
             }
         }
 
-        // Binder: Rewrite the body
         Term::Binder(binder, bindings, body) => {
             let new_body = rewrite_meta_terms(pool, body.clone(), cache, rules);
             pool.add(Term::Binder(*binder, bindings.clone(), new_body))
         }
 
-        // Let: Rewrite the body (bindings unchanged)
         Term::Let(bindings, body) => {
             let new_body = rewrite_meta_terms(pool, body.clone(), cache, rules);
             pool.add(Term::Let(bindings.clone(), new_body))
         }
 
-        // Parameterized operator: Rewrite op_args and args
         Term::ParamOp { op, op_args, args } => {
             let new_op_args = op_args
                 .iter()
