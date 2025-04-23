@@ -6,6 +6,7 @@ mod reordering;
 mod resolution;
 mod transitivity;
 mod uncrowding;
+mod rare;
 
 use crate::{ast::*, CheckerError};
 use indexmap::IndexSet;
@@ -160,6 +161,7 @@ impl<'e> Elaborator<'e> {
                 "eq_transitive" => transitivity::eq_transitive,
                 "trans" => transitivity::trans,
                 "resolution" | "th_resolution" => resolution::resolution,
+                "rare_rewrite" => rare::elaborate_rule,
                 _ => return None,
             })
         }
