@@ -1,10 +1,7 @@
 use std::io::BufRead;
-
-use crate::ast::{Rc, Term};
+use crate::ast::*;
 use crate::{ast::rules::*, Error};
-
 use crate::CarcaraResult;
-
 use super::{Parser, ParserError, Reserved, SortDef, Token};
 
 #[derive(Debug, Clone)]

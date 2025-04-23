@@ -4,7 +4,6 @@ use crate::{
     ast::{Constant, Substitution, Term},
     checker::{error::CheckerError, rules::get_premise_term},
     rare::{get_rules, rewrite_meta_terms},
-    // rare::{apply_arg, convert_rare_term_to_term},
 };
 
 use super::{RuleArgs, RuleResult};
@@ -81,15 +80,22 @@ pub fn check_rare(
             .unwrap()
             .apply(pool, &rare_term.conclusion);
 
-        let term = rewrite_meta_terms(pool, got, &mut IndexMap::new(), &get_rules());
-
-        if conclusion.len() != 1 {
-            return Err(CheckerError::RareConclusionNumberInvalid());
+        for premise in premises {
+            let premise = get_premise_term(premise)?;
+            let premise_rare =
+                rewrite_meta_terms(pool, premise.clone(), &mut IndexMap::new(), &get_rules());
+            if *premise != premise_rare {
+                return Err(CheckerError::RarePremiseAreNotEqual(
+                    premise.clone(),
+                    premise_rare,
+                ));
+            }
         }
 
-        if term != conclusion[0] {
+        let rule_conclusion = rewrite_meta_terms(pool, got, &mut IndexMap::new(), &get_rules());
+        if rule_conclusion != conclusion[0] {
             return Err(CheckerError::RareConclusionAreNotEqual(
-                term,
+                rule_conclusion,
                 conclusion[0].clone(),
             ));
         }

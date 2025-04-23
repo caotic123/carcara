@@ -1624,6 +1624,47 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 self.make_op(operator, args)
                     .map_err(|err| Error::Parser(err, head_pos))
             }
+            Token::Symbol(s) if s == "eo" => {
+                // "Let" constructions unfold
+                self.expect_token(Token::Symbol("eo".to_string()))?;
+                self.expect_keyword()?;
+                self.expect_token(Token::Keyword("define".to_string()))?;
+                self.expect_token(Token::OpenParen)?;
+                let args = self.parse_sequence(
+                    |parser| {
+                        parser.expect_token(Token::OpenParen)?;
+                        let let_arg = parser.expect_symbol()?;
+                        let body = parser.parse_term()?;
+                        parser.expect_token(Token::CloseParen)?;
+                        return Ok((let_arg, body));
+                    },
+                    true,
+                )?;
+    
+                self.state.symbol_table.push_scope();
+                for (name, value) in &args {
+                    let sort = self.pool.sort(value);
+                    self.insert_sorted_var((name.clone(), sort));
+                }
+    
+                let inner = self.parse_term()?;
+                self.expect_token(Token::CloseParen)?;
+    
+                self.state.symbol_table.pop_scope();
+                let substitution = args
+                    .into_iter()
+                    .map(|(name, value)| {
+                        let var = Term::new_var(name, self.pool.sort(&value));
+                        (self.pool.add(var), value)
+                    })
+                    .collect();
+    
+                let result = Substitution::new(self.pool, substitution)
+                    .unwrap()
+                    .apply(self.pool, &inner);
+    
+                return Ok(result)
+            },
             Token::Symbol(s) if self.state.function_defs.get(s).is_some() => {
                 let head_pos = self.current_position;
                 let func_name = self.expect_symbol()?;
