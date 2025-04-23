@@ -35,3 +35,8 @@
   :args (t1)
   :conclusion (eo::define ((_let_1 (= t1 t1))) (= _let_1 true))
 )
+(declare-rare-rule explosion ((t1 Bool))
+  :args (t1)
+  :premises ((= t1 true) (= t1 false))
+  :conclusion (= true false)
+)

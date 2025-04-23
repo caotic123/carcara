@@ -2,5 +2,4 @@
 (declare-const b Bool)
 (assert (= b false))
 (assert (= b true))
-(assert (or b true false))
 (check-sat)
