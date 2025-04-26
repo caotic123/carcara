@@ -1,5 +1,8 @@
 use indexmap::IndexMap;
 
+pub mod engine;
+pub mod util;
+
 use crate::{
     ast::{rules::RewriteTerm, Rc, Term, TermPool},
     build_equation, pseudo_term,
@@ -226,6 +229,7 @@ pub fn rewrite_meta_terms(
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {

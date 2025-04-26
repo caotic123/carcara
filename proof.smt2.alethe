@@ -1,6 +1,6 @@
 (assume a1 (= b false))
 (assume a2 (= b true))
-(step a0 (cl (= true false)) :rule rare_rewrite :premises (a2 a1) :args ("explosion" b))
+(step a0 (cl (= true false)) :rule hole :premises (a2 a1) :args ("TRUST_THEORY_REWRITE" b))
 (step t0 (cl (not (= (= true false) false)) (not (= true false)) false) :rule equiv_pos2)
 (step t1 (cl (= (= true false) false)) :rule hole)
 (step t2 (cl false) :rule resolution :premises (t0 t1 a0))

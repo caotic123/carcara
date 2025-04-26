@@ -256,7 +256,7 @@ pub fn check_and_elaborate<T: io::BufRead>(
 
     let node = ast::ProofNode::from_commands(proof.commands);
     let (elaborated, pipeline_durations) =
-        elaborator::Elaborator::new(&mut pool, &problem, elaborator_config)
+        elaborator::Elaborator::new(&mut pool, &problem, &rules, elaborator_config)
             .elaborate_with_stats(&node, pipeline);
     let elaborated = ast::Proof {
         commands: elaborated.into_commands(),

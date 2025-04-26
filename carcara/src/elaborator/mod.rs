@@ -8,7 +8,7 @@ mod transitivity;
 mod uncrowding;
 mod rare;
 
-use crate::{ast::*, CheckerError};
+use crate::{ast::{rules::Rules, *}, CheckerError};
 use indexmap::IndexSet;
 use polyeq::PolyeqElaborator;
 use std::{
@@ -66,12 +66,13 @@ pub struct HoleOptions {
 pub struct Elaborator<'e> {
     pool: &'e mut PrimitivePool,
     problem: &'e Problem,
+    rules: &'e Rules,
     config: Config,
 }
 
 impl<'e> Elaborator<'e> {
-    pub fn new(pool: &'e mut PrimitivePool, problem: &'e Problem, config: Config) -> Self {
-        Self { pool, problem, config }
+    pub fn new(pool: &'e mut PrimitivePool, problem: &'e Problem, rules : &'e Rules, config: Config) -> Self {
+        Self { pool, problem, rules, config }
     }
 
     pub fn elaborate_with_default_pipeline(&mut self, root: &Rc<ProofNode>) -> Rc<ProofNode> {
@@ -128,6 +129,11 @@ impl<'e> Elaborator<'e> {
                                 if (s.rule == "all_simplify" || s.rule == "rare_rewrite") =>
                             {
                                 hole::hole(self, s).unwrap_or_else(|| node.clone())
+                            },
+                            ProofNode::Step(s)
+                                if s.rule == "hole" && s.args.len() > 0 && *s.args[0] == Term::new_string("TRUST_THEORY_REWRITE") =>
+                            {
+                                rare::elaborate_rule(self, root, s).unwrap_or_else(|| node.clone())
                             }
                             _ => node.clone(),
                         })
@@ -161,7 +167,6 @@ impl<'e> Elaborator<'e> {
                 "eq_transitive" => transitivity::eq_transitive,
                 "trans" => transitivity::trans,
                 "resolution" | "th_resolution" => resolution::resolution,
-                "rare_rewrite" => rare::elaborate_rule,
                 _ => return None,
             })
         }
