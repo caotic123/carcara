@@ -40,3 +40,7 @@
   :premises ((= t1 true) (= t1 false))
   :conclusion (= true false)
 )
+(declare-rare-rule symmetry ((t1 Bool) (t2 Bool))
+  :args (t1 t2)
+  :conclusion (= (= t1 t2) (= t2 t1))
+)

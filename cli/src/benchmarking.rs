@@ -57,7 +57,7 @@ fn run_job<T: CollectResults + Default + Send>(
         let elaboration = Instant::now();
         let node = ast::ProofNode::from_commands(proof.commands);
         let (elaborated, pipeline_durations) =
-            elaborator::Elaborator::new(&mut pool, &problem, config)
+            elaborator::Elaborator::new(&mut pool, &problem, &rules, config)
                 .elaborate_with_stats(&node, pipeline);
         elaborated.into_commands();
         (elaboration.elapsed(), pipeline_durations)
