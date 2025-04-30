@@ -17,8 +17,7 @@ enum KindContext {
 #[derive(Debug, Default, Clone)]
 struct AnalysisContext {
     proof_context: HashMap<Id, KindContext>,
-    premises: Vec<RecExpr<Rare>>,
-    goals_merged : Vec<(Id, Id)>,
+    premises: Vec<Rewrite<Rare, ()>>,
 }
 
 define_language! {
@@ -201,61 +200,70 @@ fn convert_to_egg_expr<L: FromTerm>(expr: L, term: &Rc<Term>) -> (Id, L) {
     }
 }
 
-fn construct_egg_rules_database(rules: &Rules) -> Vec<Rewrite<Rare, ()>> {
-    let static_rules : Vec<Rewrite<Rare, ()>> = vec![
-        rewrite!("reduction"; "(Func ⊤ ?x)" => "?x"),
-        rewrite!("func_const"; "(Func ⊤)" => "⊤"),
-        rewrite!("eq_refl_top"; "(App (Op =) ?x ?x)" => "⊤"),
-        multi_rewrite!("eq_sym"; "?v = (App (Op =) ?x ?x)" => "⊤"),
-
-    ];
-
+fn construct_egg_rules_database(rules: &Rules) -> (Vec<Rewrite<Rare, ()>>, Vec<RecExpr<Rare>>) {
     let mut top = RecExpr::default();
     top.add(ENodeOrVar::ENode(Rare::Symbol("⊤".to_string())));
 
-    fn create_function_egg_rule(vars: IndexMap<String, TypeParameter>, params: &[Rc<Term>]) -> RecExpr<ENodeOrVar<Rare>>  {
-        let mut func: RecExpr<ENodeOrVar<Rare>> = RecExpr::default();
-        let mut params = params.iter();
-        let (id, (_, _)) = convert_to_egg_expr((&mut func, &vars), &params.next().unwrap());
+    fn create_function_egg_rule(vars: &IndexMap<String, TypeParameter>, goal : &Rc<Term>, params: &[Rc<Term>]) -> RecExpr<ENodeOrVar<Rare>>  {
+        let mut func = RecExpr::default();
+        let (id, _) = convert_to_egg_expr((&mut func, vars), goal);
         let mut head = id;
     
         for param in params {
-            let mut term = RecExpr::default();
-            let (id, (_, _)) = convert_to_egg_expr((&mut term, &vars), param);
+            let (id, _) = convert_to_egg_expr((&mut func, vars), param);
             head = func.add(ENodeOrVar::ENode(Rare::Func([id, head])));
         }
-    
+
         return func;
     }
     
 
-    let mut db = vec![];
-    
+    let mut db = vec![
+        rewrite!("reduction1"; "(Func ⊤ ?x)" => "?x"),
+        rewrite!("reduction2"; "(Func ?x ⊤)" => "⊤"),
+//        rewrite!("eq_refl_top"; "(App (Op =) ?x ?x)" => "⊤"),
+    ];
+    let mut ground_terms = vec![];
+ 
     for (name, definition) in rules {
-        let mut concl_lhs = RecExpr::default();
-        let mut concl_rhs = RecExpr::default();
-        let terms= match_term!((= lhs rhs) =  &definition.conclusion);
-        if let Some((lhs, rhs)) = terms {
-            let (_, (lhs, _)) = convert_to_egg_expr((&mut concl_lhs, &definition.parameters), lhs);
-            let (_, (rhs, _)) = convert_to_egg_expr((&mut concl_rhs, &definition.parameters), rhs);
-            let rewritten_rule = Rewrite::new(name, Pattern::new(lhs.clone()), Pattern::new(rhs.clone()));
-            db.push(rewritten_rule.unwrap());
-        }
-        for (index, premise) in definition.premises.iter().enumerate() {
-            let mut concl_lhs = RecExpr::default();
-            let mut concl_rhs = RecExpr::default();
-            let terms= match_term!((= lhs rhs) = premise);
-            if let Some((lhs, rhs)) = terms {
-               let (_, (lhs, _)) = convert_to_egg_expr((&mut concl_lhs, &definition.parameters), lhs);
-               let (_, (rhs, _)) = convert_to_egg_expr((&mut concl_rhs, &definition.parameters), rhs);
-               println!("{:?}", &definition.parameters);
-               let rewritten_rule = Rewrite::new(format!("{0}-p{1}", name, index), Pattern::new(lhs.clone()), Pattern::new(rhs.clone()));
-               db.push(rewritten_rule.unwrap().clone());
-               println!("{:?}", db.last().unwrap().clone());
-            }
-        }
+       // let mut concl_lhs = RecExpr::default();
+       // let mut concl_rhs = RecExpr::default();
+     //   let terms= match_term!((= lhs rhs) =  &definition.conclusion);
+
+        // if let Some((lhs, rhs)) = terms {
+        //     let (_, (lhs, _)) = convert_to_egg_expr((&mut concl_lhs, &definition.parameters), lhs);
+        //     let (_, (rhs, _)) = convert_to_egg_expr((&mut concl_rhs, &definition.parameters), rhs);
+        //     let rewritten_rule = Rewrite::new(name, Pattern::new(lhs.clone()), Pattern::new(rhs.clone()));
+        //     db.push(rewritten_rule.unwrap());
+        // }
+        let params = &definition.premises;
+        //if params.len() == 0 {
+            let mut goal = RecExpr::default();
+            convert_to_egg_expr((&mut goal, &definition.parameters), &definition.conclusion);
+            let preposition = create_function_egg_rule(&definition.parameters, &definition.conclusion, params);
+
+            let top_rule = Rewrite::new(format!("{0}-ground", name),  Pattern::new(goal), Pattern::new(preposition));
+            
+            db.push(top_rule.unwrap());
+        // } else {
+        //     ground_terms.push(create_function_egg_rule(&definition.conclusion, &definition.premises));
+        // }
+
+        // for (index, premise) in definition.premises.iter().enumerate() {
+        //     let mut concl_lhs = RecExpr::default();
+        //     let mut concl_rhs = RecExpr::default();
+        //     let terms= match_term!((= lhs rhs) = premise);
+        //     if let Some((lhs, rhs)) = terms {
+        //        let (_, (lhs, _)) = convert_to_egg_expr((&mut concl_lhs, &definition.parameters), lhs);
+        //        let (_, (rhs, _)) = convert_to_egg_expr((&mut concl_rhs, &definition.parameters), rhs);
+        //        println!("{:?}", &definition.parameters);
+        //        let rewritten_rule = Rewrite::new(format!("{0}-p{1}", name, index), Pattern::new(lhs.clone()), Pattern::new(rhs.clone()));
+        //        db.push(rewritten_rule.unwrap().clone());
+        //        println!("{:?}", db.last().unwrap().clone());
+        //     }
+        // }
     }
-    return db
+    return (db, ground_terms)
 }
 
 // impl<'a> Analysis<Rare> for &mut AnalysisContext {
@@ -288,14 +296,18 @@ fn construct_egg_rules_database(rules: &Rules) -> Vec<Rewrite<Rare, ()>> {
 // }
 
 fn construct_analysis(pool : &mut PrimitivePool, goal: Id, premises : &Rc<ProofNode>) -> AnalysisContext {
+    let mut top = RecExpr::default();
+    top.add(ENodeOrVar::ENode(Rare::Symbol("⊤".to_string())));
+
     let mut context = AnalysisContext::default();
     context.proof_context.insert(goal, KindContext::Goal);
     for premise in premises.get_assumptions() {
         let clause = clauses_to_or(pool, premise.clause());
         if let Some(clause) = clause {
-            let egg_term = RecExpr::default();
-            context.premises.push(egg_term);
-            let (id, _) = convert_to_egg_expr::<&mut RecExpr<Rare>>(context.premises.last_mut().unwrap(), &clause);
+            let mut egg_term = RecExpr::default();
+            let (id, _) = convert_to_egg_expr((&mut egg_term, &IndexMap::default()), &clause);
+            let top_rule = Rewrite::new(format!("{0}-ground", premise.id()), Pattern::new(egg_term.clone()), Pattern::new(top.clone()));
+            context.premises.push(top_rule.unwrap());
             context.proof_context.insert(id, KindContext::ProofTerm);
         }
     }
@@ -306,14 +318,18 @@ pub fn reconstruct_rule(pool : &mut PrimitivePool, conclusion: Rc<Term>, root: &
     let mut root_expr = RecExpr::default();
     let (goal, _) = convert_to_egg_expr::<&mut RecExpr<Rare>>(&mut root_expr, &conclusion);
     let analysis = construct_analysis(pool, goal, root);
-    let premises = analysis.premises.clone();
+    let mut premises = analysis.premises.clone();
 
     let mut runner: Runner<Rare, (), ()> = Runner::new(()).with_explanations_enabled().with_expr(&root_expr);
-    for premise in premises {
-        runner = runner.with_expr(&premise);
+    let (egg_rules, ground_terms) = construct_egg_rules_database(database);
+    for terms in ground_terms.iter() {
+        runner = runner.with_expr(&terms);
     }
     
-    runner = runner.run(&construct_egg_rules_database(database));
+    premises.extend(egg_rules);
+    runner = runner.run(&premises);
+    println!("{:?}", premises);
+
     // the Runner knows which e-class the expression given with `with_expr` is in
     let root = runner.roots[0];
 
