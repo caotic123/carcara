@@ -1640,16 +1640,16 @@ impl<'a, R: BufRead> Parser<'a, R> {
                     },
                     true,
                 )?;
-    
+
                 self.state.symbol_table.push_scope();
                 for (name, value) in &args {
                     let sort = self.pool.sort(value);
                     self.insert_sorted_var((name.clone(), sort));
                 }
-    
+
                 let inner = self.parse_term()?;
                 self.expect_token(Token::CloseParen)?;
-    
+
                 self.state.symbol_table.pop_scope();
                 let substitution = args
                     .into_iter()
@@ -1658,13 +1658,13 @@ impl<'a, R: BufRead> Parser<'a, R> {
                         (self.pool.add(var), value)
                     })
                     .collect();
-    
+
                 let result = Substitution::new(self.pool, substitution)
                     .unwrap()
                     .apply(self.pool, &inner);
-    
-                return Ok(result)
-            },
+
+                return Ok(result);
+            }
             Token::Symbol(s) if self.state.function_defs.get(s).is_some() => {
                 let head_pos = self.current_position;
                 let func_name = self.expect_symbol()?;

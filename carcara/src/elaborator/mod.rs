@@ -1,14 +1,17 @@
 mod hole;
 mod lia_generic;
 mod polyeq;
+mod rare;
 mod reflexivity;
 mod reordering;
 mod resolution;
 mod transitivity;
 mod uncrowding;
-mod rare;
 
-use crate::{ast::{rules::Rules, *}, CheckerError};
+use crate::{
+    ast::{rules::Rules, *},
+    CheckerError,
+};
 use indexmap::IndexSet;
 use polyeq::PolyeqElaborator;
 use std::{
@@ -71,7 +74,12 @@ pub struct Elaborator<'e> {
 }
 
 impl<'e> Elaborator<'e> {
-    pub fn new(pool: &'e mut PrimitivePool, problem: &'e Problem, rules : &'e Rules, config: Config) -> Self {
+    pub fn new(
+        pool: &'e mut PrimitivePool,
+        problem: &'e Problem,
+        rules: &'e Rules,
+        config: Config,
+    ) -> Self {
         Self { pool, problem, rules, config }
     }
 
@@ -129,9 +137,11 @@ impl<'e> Elaborator<'e> {
                                 if (s.rule == "all_simplify" || s.rule == "rare_rewrite") =>
                             {
                                 hole::hole(self, s).unwrap_or_else(|| node.clone())
-                            },
+                            }
                             ProofNode::Step(s)
-                                if s.rule == "hole" && s.args.len() > 0 && *s.args[0] == Term::new_string("TRUST_THEORY_REWRITE") =>
+                                if s.rule == "hole"
+                                    && s.args.len() > 0
+                                    && *s.args[0] == Term::new_string("TRUST_THEORY_REWRITE") =>
                             {
                                 rare::elaborate_rule(self, root, s).unwrap_or_else(|| node.clone())
                             }

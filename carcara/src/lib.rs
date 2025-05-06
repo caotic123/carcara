@@ -168,7 +168,7 @@ pub fn check_parallel<T: io::BufRead>(
         &problem.prelude,
         &schedule_context_usage,
         stack_size,
-        rules
+        rules,
     );
 
     if collect_stats {
