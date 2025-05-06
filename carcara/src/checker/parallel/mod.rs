@@ -5,8 +5,8 @@ use super::{
     rules::{Premise, RuleArgs, RuleResult},
     Config, ProofChecker,
 };
-use crate::{ast::rules::Rules, checker::CheckerStatistics};
 use crate::benchmarking::{CollectResults, OnlineBenchmarkResults};
+use crate::{ast::rules::Rules, checker::CheckerStatistics};
 use crate::{
     ast::{pool::advanced::*, *},
     CarcaraResult, Error,
@@ -28,7 +28,7 @@ pub struct ParallelProofChecker<'c> {
     reached_empty_clause: bool,
     is_holey: bool,
     stack_size: usize,
-    rare_rules: Rules
+    rare_rules: Rules,
 }
 
 impl<'c> ParallelProofChecker<'c> {
@@ -48,7 +48,7 @@ impl<'c> ParallelProofChecker<'c> {
             reached_empty_clause: false,
             is_holey: false,
             stack_size,
-            rare_rules
+            rare_rules,
         }
     }
 
@@ -62,7 +62,7 @@ impl<'c> ParallelProofChecker<'c> {
             reached_empty_clause: false,
             is_holey: false,
             stack_size: self.stack_size,
-            rare_rules: self.rare_rules.clone()
+            rare_rules: self.rare_rules.clone(),
         }
     }
 

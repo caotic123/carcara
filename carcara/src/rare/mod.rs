@@ -230,7 +230,6 @@ pub fn rewrite_meta_terms(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,18 +1,25 @@
+use core::panic;
 use std::{any::Any, collections::HashMap, fmt::format};
 
-use crate::ast::{rules::{Rules, TypeParameter}, Constant, Operator, PrimitivePool, ProofNode, Rc, Sort, Term};
+use crate::{
+    ast::{
+        rules::{Rules, TypeParameter},
+        Constant, Operator, PrimitivePool, ProofNode, Rc, Sort, Term,
+    },
+    rare::util::collect_vars,
+};
 use indexmap::IndexMap;
 use rug::{Integer, Rational};
 
 use egg::*;
 
-use super::util::clauses_to_or;
+use super::util::{clauses_to_or, str_to_u32};
 
 #[derive(Debug, Clone, Copy)]
 enum KindContext {
     Goal,
     ProofTerm,
-    Processing
+    Processing,
 }
 #[derive(Debug, Default, Clone)]
 struct AnalysisContext {
@@ -31,34 +38,63 @@ define_language! {
         "Sort" = Sort(Id),
         "Var" = Var(Id),
         "App" = App(Vec<Id>),
+        // Logic-rewritter constructors
         "List" = List(Vec<Id>),
-        "Func" = Func([Id; 2]),
+        "Fun" = Fun([Id; 2]),
+        "Inhabitant" = Inhabitant([Id; 2]),
+        "Forall" = Forall(Vec<Id>),
+        "Mk" = Mk(Id),
     }
 }
 
 trait FromTerm {
-    fn from_constant(self, c : Constant) -> (Id, Self);
-    fn from_sort(self, s : Sort) -> (Id, Self);
-    fn from_var(self, name : String) -> (Id, Self);
+    fn from_constant(self, c: Constant) -> (Id, Self);
+    fn from_sort(self, s: Sort) -> (Id, Self);
+    fn from_var(self, name: String) -> (Id, Self);
     fn from_app(self, head: Id, ids: Vec<Id>) -> (Id, Self);
     fn from_op(self, head: Operator, ids: Vec<Id>) -> (Id, Self);
     fn from_list(self, ids: Vec<Id>) -> (Id, Self);
 }
 
 impl FromTerm for &mut RecExpr<Rare> {
-    fn from_constant(self, c : Constant) -> (Id, Self) {
-        (match c {
-            Constant::Integer(i) => self.add(Rare::Num(i.clone())),
-            Constant::BitVec(i, i2) => {
-                let tuple = (self.add(Rare::Num(i.clone())), self.add(Rare::Num(i2.clone())));
-                self.add(Rare::Bitvec(tuple.into()))
+    fn from_constant(self, c: Constant) -> (Id, Self) {
+        (
+            match c {
+                Constant::Integer(i) => self.add(Rare::Num(i.clone())),
+                Constant::BitVec(i, i2) => {
+                    let tuple = (
+                        self.add(Rare::Num(i.clone())),
+                        self.add(Rare::Num(i2.clone())),
+                    );
+                    self.add(Rare::Bitvec(tuple.into()))
+                }
+                Constant::Real(r) => self.add(Rare::Rational(r.clone())),
+                Constant::String(s) => self.add(Rare::Symbol(s.clone())),
             },
-            Constant::Real(r) => self.add(Rare::Rational(r.clone())),
-            Constant::String(s) => self.add(Rare::Symbol(s.clone()))          
-        }, self)
+            self,
+        )
     }
-    fn from_sort(self, _ : Sort) -> (Id, Self) {
-      panic!("The format of the term can not be converted")
+    fn from_sort(self, s: Sort) -> (Id, Self) {
+        fn from_simple_type<'a>(
+            expr: &'a mut RecExpr<Rare>,
+            name: &str,
+        ) -> (egg::Id, &'a mut egg::RecExpr<Rare>) {
+            let name = expr.add(Rare::Symbol(name.to_string()));
+            let id = expr.add(Rare::Sort(name));
+            (id, expr)
+        }
+        match s {
+            Sort::Var(s) => {
+                let name = self.add(Rare::Symbol(s));
+                let id = self.add(Rare::Sort(name));
+                (id, self)
+            }
+            Sort::Bool => from_simple_type(self, "Bool"),
+            Sort::Int => from_simple_type(self, "Int"),
+            Sort::Type => from_simple_type(self, "Type"),
+            Sort::String => from_simple_type(self, "str"),
+            _ => panic!("Not implemented yet"),
+        }
     }
 
     fn from_var(self, name: String) -> (Id, Self) {
@@ -84,10 +120,14 @@ impl FromTerm for &mut RecExpr<Rare> {
         ids_.extend(ids);
         (self.add(Rare::List(ids_)), self)
     }
-
 }
 
-impl<'a, 'b> FromTerm for (&'a mut PatternAst<Rare>, &'b IndexMap<String, TypeParameter>) {
+impl<'a, 'b> FromTerm
+    for (
+        &'a mut PatternAst<Rare>,
+        &'b IndexMap<String, TypeParameter>,
+    )
+{
     #[inline]
     fn from_constant(self, c: Constant) -> (Id, Self) {
         let (ast, params) = self;
@@ -100,44 +140,62 @@ impl<'a, 'b> FromTerm for (&'a mut PatternAst<Rare>, &'b IndexMap<String, TypePa
                 );
                 ast.add(ENodeOrVar::ENode(Rare::Bitvec(tuple.into())))
             }
-            Constant::Real(r)   => ast.add(ENodeOrVar::ENode(Rare::Rational(r.clone()))),
+            Constant::Real(r) => ast.add(ENodeOrVar::ENode(Rare::Rational(r.clone()))),
             Constant::String(s) => ast.add(ENodeOrVar::ENode(Rare::Symbol(s.clone()))),
         };
         (id, (ast, params))
     }
 
     #[inline]
-    fn from_sort(self, _s: Sort) -> (Id, Self) {
-        panic!("The format of the term cannot be converted")
+    fn from_sort(self, s: Sort) -> (Id, Self) {
+        let (ast, type_params) = self;
+
+        fn from_simple_type<'a, 'b>(
+            expr: (
+                &'a mut PatternAst<Rare>,
+                &'b IndexMap<String, TypeParameter>,
+            ),
+            name: &str,
+        ) -> (
+            egg::Id,
+            (
+                &'a mut PatternAst<Rare>,
+                &'b IndexMap<String, TypeParameter>,
+            ),
+        ) {
+            let (ast, type_params) = expr;
+
+            let name = ast.add(ENodeOrVar::ENode(Rare::Symbol(name.to_string())));
+            let id = ast.add(ENodeOrVar::ENode(Rare::Sort(name)));
+            (id, (ast, type_params))
+        }
+        match s {
+            Sort::Var(s) => {
+                let name = ast.add(ENodeOrVar::ENode(Rare::Symbol(s)));
+                let id = ast.add(ENodeOrVar::ENode(Rare::Sort(name)));
+                (id, (ast, type_params))
+            }
+            Sort::Bool => from_simple_type((ast, type_params), "Bool"),
+            Sort::Int => from_simple_type((ast, type_params), "Int"),
+            Sort::Type => from_simple_type((ast, type_params), "Type"),
+            Sort::String => from_simple_type((ast, type_params), "str"),
+            _ => panic!("Not implemented yet"),
+        }
     }
 
     #[inline]
     fn from_var(self, name: String) -> (Id, Self) {
         let (ast, type_params) = self;
 
-        #[inline]
-        // 32-bit FNV-1a hash for small strings
-        pub fn str_to_u32(input: &str) -> u32 {
-            const OFFSET_BASIS: u32 = 0x811c_9dc5;
-            const PRIME:        u32 = 0x0100_0193;
-        
-            let mut hash = OFFSET_BASIS;
-            for byte in input.as_bytes().as_ref() {
-                hash ^= *byte as u32;
-                hash = hash.wrapping_mul(PRIME);
-            }
-            hash
-        }
-
         if type_params.contains_key(&name) {
             let code = str_to_u32(&name);
-            let id   = ast.add(ENodeOrVar::Var(Var::from_u32(code)));
+            let id = ast.add(ENodeOrVar::Var(Var::from_u32(code)));
             return (id, (ast, type_params));
         }
 
         // fallback exactly as before
         let sym_id = ast.add(ENodeOrVar::ENode(Rare::Symbol(name.clone())));
-        let id     = ast.add(ENodeOrVar::ENode(Rare::Var(sym_id)));
+        let id = ast.add(ENodeOrVar::ENode(Rare::Var(sym_id)));
         (id, (ast, type_params))
     }
 
@@ -184,7 +242,7 @@ fn convert_to_egg_expr<L: FromTerm>(expr: L, term: &Rc<Term>) -> (Id, L) {
                 ids.push(rec);
             }
             expr_.from_app(func, ids)
-        },
+        }
         Term::Op(op, params) => {
             let mut ids = vec![];
             let mut expr_ = expr;
@@ -194,7 +252,7 @@ fn convert_to_egg_expr<L: FromTerm>(expr: L, term: &Rc<Term>) -> (Id, L) {
                 ids.push(rec);
             }
             expr_.from_op(*op, ids)
-        },
+        }
         Term::Sort(sort) => expr.from_sort(sort.clone()),
         _ => panic!("The format of the term can not be converted"),
     }
@@ -204,98 +262,106 @@ fn construct_egg_rules_database(rules: &Rules) -> (Vec<Rewrite<Rare, ()>>, Vec<R
     let mut top = RecExpr::default();
     top.add(ENodeOrVar::ENode(Rare::Symbol("⊤".to_string())));
 
-    fn create_function_egg_rule(vars: &IndexMap<String, TypeParameter>, goal : &Rc<Term>, params: &[Rc<Term>]) -> RecExpr<ENodeOrVar<Rare>>  {
-        let mut func = RecExpr::default();
-        let (id, _) = convert_to_egg_expr((&mut func, vars), goal);
-        let mut head = id;
-    
-        for param in params {
-            let (id, _) = convert_to_egg_expr((&mut func, vars), param);
-            head = func.add(ENodeOrVar::ENode(Rare::Func([id, head])));
+    fn construct_param_list<'a>(
+        vars: &IndexMap<String, Rc<Term>>,
+        tree: &'a mut RecExpr<ENodeOrVar<Rare>>,
+    ) -> (&'a mut RecExpr<ENodeOrVar<Rare>>, Vec<Id>) {
+        let mut tree = tree;
+        let mut ids = vec![];
+        for (name, kind) in vars {
+            let name = tree.add(ENodeOrVar::Var(Var::from_u32(str_to_u32(name))));
+            let (kind, (new_tree, _)) = convert_to_egg_expr((tree, &IndexMap::default()), &kind);
+            tree = new_tree;
+            ids.push(tree.add(ENodeOrVar::ENode(Rare::Inhabitant([name, kind]))));
         }
 
-        return func;
+        return (tree, ids);
     }
-    
+
+    fn create_function_egg_rule(
+        name: &str,
+        vars: &IndexMap<String, TypeParameter>,
+        goal: &Rc<Term>,
+        params: &[Rc<Term>],
+    ) -> (Rewrite<Rare, ()>, Rewrite<Rare, ()>) {
+        let mut lhs = RecExpr::default();
+        let mut rhs = RecExpr::default();
+        // First we look for the variables need in the goal, they are important since they define the "shape" of the rewritte rule goal
+        let goal_vars = collect_vars(goal);
+        let (rhs, mut goal_vars_id) = construct_param_list(&goal_vars, &mut rhs);
+        // now we need to look for the variables that is need to apply the "function" rewritten rule but the var does not appear in the goal
+        let premise_vars = vars
+            .iter()
+            .filter(|(k, _)| !goal_vars.contains_key(*k))
+            .map(|(n, t)| (n.clone(), t.term.clone()));
+        let (rhs, premise_vars_id) = construct_param_list(&premise_vars.collect(), rhs);
+
+        let (id, (lhs, _)) = convert_to_egg_expr((&mut lhs, vars), goal);
+        lhs.add(ENodeOrVar::ENode(Rare::Mk(id)));
+        for _ in premise_vars_id {
+            let any = rhs.add(ENodeOrVar::ENode(Rare::Symbol("any".to_string())));
+            goal_vars_id.push(any);
+        }
+
+        rhs.add(ENodeOrVar::ENode(Rare::Forall(goal_vars_id)));
+        println!("{0} = {1}", lhs, rhs);
+
+        let forall_rule = Rewrite::new(
+            format!("{0}-forall", name),
+            Pattern::new(lhs.clone()),
+            Pattern::new(rhs.clone()),
+        );
+
+        let mut conclusion = &mut RecExpr::default();
+        let (id, (concl, _)) = convert_to_egg_expr((conclusion, vars), goal);
+        conclusion = concl;
+        let mut head = id;
+
+        for param in params {
+            let (id, (concl, _)) = convert_to_egg_expr((conclusion, vars), param);
+            conclusion = concl;
+            head = conclusion.add(ENodeOrVar::ENode(Rare::Fun([id, head])));
+        }
+
+        let conclusion_rule = Rewrite::new(
+            format!("{0}-conclusion", name),
+            Pattern::new(rhs.clone()),
+            Pattern::new(conclusion.clone()),
+        );
+
+        return (forall_rule.unwrap(), conclusion_rule.unwrap());
+    }
 
     let mut db = vec![
-        rewrite!("reduction1"; "(Func ⊤ ?x)" => "?x"),
-        rewrite!("reduction2"; "(Func ?x ⊤)" => "⊤"),
-//        rewrite!("eq_refl_top"; "(App (Op =) ?x ?x)" => "⊤"),
+        rewrite!("func_composition"; "(Fun ?v (App (Op =) ?x ?y))" => "(Fun (Mk ?v) (App (Op =) ?x ?y))"),
+        rewrite!("func_apply"; "(Fun ⊤ (App (Op =) ?x ?y))" => "⊤"),
     ];
+
     let mut ground_terms = vec![];
- 
+
     for (name, definition) in rules {
-       // let mut concl_lhs = RecExpr::default();
-       // let mut concl_rhs = RecExpr::default();
-     //   let terms= match_term!((= lhs rhs) =  &definition.conclusion);
-
-        // if let Some((lhs, rhs)) = terms {
-        //     let (_, (lhs, _)) = convert_to_egg_expr((&mut concl_lhs, &definition.parameters), lhs);
-        //     let (_, (rhs, _)) = convert_to_egg_expr((&mut concl_rhs, &definition.parameters), rhs);
-        //     let rewritten_rule = Rewrite::new(name, Pattern::new(lhs.clone()), Pattern::new(rhs.clone()));
-        //     db.push(rewritten_rule.unwrap());
-        // }
         let params = &definition.premises;
-        //if params.len() == 0 {
-            let mut goal = RecExpr::default();
-            convert_to_egg_expr((&mut goal, &definition.parameters), &definition.conclusion);
-            let preposition = create_function_egg_rule(&definition.parameters, &definition.conclusion, params);
+        let mut goal = RecExpr::default();
+        convert_to_egg_expr((&mut goal, &definition.parameters), &definition.conclusion);
+        let (forall_rule, conclusion_rule) = create_function_egg_rule(
+            &definition.name,
+            &definition.parameters,
+            &definition.conclusion,
+            params,
+        );
 
-            let top_rule = Rewrite::new(format!("{0}-ground", name),  Pattern::new(goal), Pattern::new(preposition));
-            
-            db.push(top_rule.unwrap());
-        // } else {
-        //     ground_terms.push(create_function_egg_rule(&definition.conclusion, &definition.premises));
-        // }
-
-        // for (index, premise) in definition.premises.iter().enumerate() {
-        //     let mut concl_lhs = RecExpr::default();
-        //     let mut concl_rhs = RecExpr::default();
-        //     let terms= match_term!((= lhs rhs) = premise);
-        //     if let Some((lhs, rhs)) = terms {
-        //        let (_, (lhs, _)) = convert_to_egg_expr((&mut concl_lhs, &definition.parameters), lhs);
-        //        let (_, (rhs, _)) = convert_to_egg_expr((&mut concl_rhs, &definition.parameters), rhs);
-        //        println!("{:?}", &definition.parameters);
-        //        let rewritten_rule = Rewrite::new(format!("{0}-p{1}", name, index), Pattern::new(lhs.clone()), Pattern::new(rhs.clone()));
-        //        db.push(rewritten_rule.unwrap().clone());
-        //        println!("{:?}", db.last().unwrap().clone());
-        //     }
-        // }
+        db.push(forall_rule);
+        db.push(conclusion_rule);
     }
-    return (db, ground_terms)
+
+    return (db, ground_terms);
 }
 
-// impl<'a> Analysis<Rare> for &mut AnalysisContext {
-//     type Data = Option<(Id, KindContext)>;
-
-//     fn merge(&mut self, to: &mut Self::Data, from: Self::Data) -> DidMerge {
-//         match (to, from) {
-//             (Some(to), Some(from)) => {
-//                 match (to.1, from.1) {
-//                     (KindContext::Goal, KindContext::ProofTerm) => {
-//                         self.goals_merged.push((to.0.clone(), from.0));
-//                     }
-//                     (KindContext::ProofTerm, KindContext::Goal) => {
-//                         self.goals_merged.push((from.0.clone(), to.0.clone()));
-//                     }
-//                     _ => ()
-//                 }
-//             },
-//             _  => ()
-//         }
-
-//         DidMerge(true, true)
-//     }
-
-//     fn make(egraph: &mut EGraph<Rare, Self>, enode: &Rare) -> Self::Data {
-//         let id = egraph.lookup(enode.clone())?;
-//         Some((id, egraph.analysis.proof_context.get(&id).map(|x| *x).unwrap_or(KindContext::Processing)))        
-//     }
-
-// }
-
-fn construct_analysis(pool : &mut PrimitivePool, goal: Id, premises : &Rc<ProofNode>) -> AnalysisContext {
+fn construct_analysis(
+    pool: &mut PrimitivePool,
+    goal: Id,
+    premises: &Rc<ProofNode>,
+) -> AnalysisContext {
     let mut top = RecExpr::default();
     top.add(ENodeOrVar::ENode(Rare::Symbol("⊤".to_string())));
 
@@ -306,35 +372,51 @@ fn construct_analysis(pool : &mut PrimitivePool, goal: Id, premises : &Rc<ProofN
         if let Some(clause) = clause {
             let mut egg_term = RecExpr::default();
             let (id, _) = convert_to_egg_expr((&mut egg_term, &IndexMap::default()), &clause);
-            let top_rule = Rewrite::new(format!("{0}-ground", premise.id()), Pattern::new(egg_term.clone()), Pattern::new(top.clone()));
+            let top_rule = Rewrite::new(
+                format!("{0}-ground", premise.id()),
+                Pattern::new(egg_term.clone()),
+                Pattern::new(top.clone()),
+            );
             context.premises.push(top_rule.unwrap());
             context.proof_context.insert(id, KindContext::ProofTerm);
         }
     }
-    return context
+    return context;
 }
 
-pub fn reconstruct_rule(pool : &mut PrimitivePool, conclusion: Rc<Term>, root: &Rc<ProofNode>, database: &Rules) {
+pub fn reconstruct_rule(
+    pool: &mut PrimitivePool,
+    conclusion: Rc<Term>,
+    root: &Rc<ProofNode>,
+    database: &Rules,
+) {
     let mut root_expr = RecExpr::default();
     let (goal, _) = convert_to_egg_expr::<&mut RecExpr<Rare>>(&mut root_expr, &conclusion);
     let analysis = construct_analysis(pool, goal, root);
     let mut premises = analysis.premises.clone();
 
-    let mut runner: Runner<Rare, (), ()> = Runner::new(()).with_explanations_enabled().with_expr(&root_expr);
+    let mut runner: Runner<Rare, (), ()> = Runner::new(())
+        .with_explanations_enabled()
+        .with_expr(&root_expr);
     let (egg_rules, ground_terms) = construct_egg_rules_database(database);
     for terms in ground_terms.iter() {
         runner = runner.with_expr(&terms);
     }
-    
+
     premises.extend(egg_rules);
     runner = runner.run(&premises);
     println!("{:?}", premises);
 
-    // the Runner knows which e-class the expression given with `with_expr` is in
-    let root = runner.roots[0];
+    // // the Runner knows which e-class the expression given with `with_expr` is in
+    // let root = runner.roots[0];
 
-    let extractor = Extractor::new(&runner.egraph, AstSize);
-    let (best_cost, best) = extractor.find_best(root);
-    println!("Simplified {} to {} explain {} with cost {}", root_expr, best, runner.explain_equivalence(&root_expr, &best), best_cost); 
-
+    // let extractor = Extractor::new(&runner.egraph, AstSize);
+    // let (best_cost, best) = extractor.find_best(root);
+    // println!(
+    //     "Simplified {} to {} explain {} with cost {}",
+    //     root_expr,
+    //     best,
+    //     runner.explain_equivalence(&root_expr, &best),
+    //     best_cost
+    // );
 }

@@ -1,4 +1,4 @@
-(declare-rare-rule or_true_bool ((@T0 Type) (t1 @T0) (t2 @T0 :list))
+(declare-rare-rule or_true_bool ((t1 Bool) (t2 Bool :list))
   :args (t1 t2)
   :premises ((= t1 true))
   :conclusion (= (or true t1 t2) true)
