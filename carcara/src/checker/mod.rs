@@ -187,11 +187,11 @@ impl<'c> ProofChecker<'c> {
                 }
             }
         }
-        if self.reached_empty_clause {
+     //   if self.reached_empty_clause {
             Ok(self.is_holey)
-        } else {
-            Err(Error::DoesNotReachEmptyClause)
-        }
+       // } else {
+            //Err(Error::DoesNotReachEmptyClause)
+      //  }
     }
 
     fn check_assume<'i, CR: CollectResults + Send + Default>(

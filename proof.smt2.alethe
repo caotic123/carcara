@@ -1,8 +1,5 @@
-(assume a1 (= b false))
 (assume a2 (= b true))
-(step a0 (cl (= true false)) :rule hole :premises (a2 a1) :args ("TRUST_THEORY_REWRITE" b))
-(step t0 (cl (not (= (= true false) false)) (not (= true false)) false) :rule equiv_pos2)
-(step t1 (cl (= (= true false) false)) :rule hole)
-(step t2 (cl false) :rule resolution :premises (t0 t1 a0))
-(step t3 (cl (not false)) :rule false)
-(step t4 (cl) :rule resolution :premises (t2 t3))
+(assume a5 (= (+ k 1) k))
+
+(step a0 (cl (= (or (= (+ k 1) k) b) b)) :rule hole :premises (a2 a5) :args ("TRUST_THEORY_REWRITE" b))
+
