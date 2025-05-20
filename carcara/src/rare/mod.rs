@@ -2,6 +2,8 @@ use indexmap::IndexMap;
 
 pub mod engine;
 pub mod util;
+pub mod meta;
+pub mod language;
 
 use crate::{
     ast::{rules::RewriteTerm, Rc, Term, TermPool},
