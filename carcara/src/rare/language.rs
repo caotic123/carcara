@@ -28,7 +28,7 @@ define_language! {
         "~" = Eq(Vec<Id>),
         // Logic-rewritter constructors
         "Ground" = Ground(Id),
-        "List" = List(Vec<Id>),
+        "RareList" = RareList(Vec<Id>),
         "Func" = Func(Vec<Id>),
         "=>" = Forall([Id; 2]),
         "Inst" = Inst(Vec<Id>),
@@ -128,7 +128,7 @@ impl FromTerm for &mut RecExpr<Rare> {
     fn from_list(self, ids: Vec<Id>) -> (Id, Self) {
         let mut ids_ = vec![];
         ids_.extend(ids);
-        (self.add(Rare::List(ids_)), self)
+        (self.add(Rare::RareList(ids_)), self)
     }
     fn from_indexed_types(self, head: Id, params: Vec<Id>) -> (Id, Self) {
         let mut ids_ = vec![head];
@@ -260,7 +260,7 @@ impl<'a, 'b> FromTerm
         let (ast, params) = self;
         let mut ids_ = vec![];
         ids_.extend(ids);
-        (ast.add(ENodeOrVar::ENode(Rare::List(ids_))), (ast, params))
+        (ast.add(ENodeOrVar::ENode(Rare::RareList(ids_))), (ast, params))
     }
 
     fn from_indexed_types(self, head: Id, params: Vec<Id>) -> (Id, Self) {

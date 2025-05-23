@@ -81,3 +81,4 @@ pub fn collect_vars(root: &Rc<Term>) -> IndexMap<String, Rc<Term>> {
     visit(&root, &mut map);
     map.into_iter().collect()
 }
+

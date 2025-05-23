@@ -10,9 +10,7 @@ use indexmap::{IndexMap, IndexSet};
 use egg::*;
 
 use super::{
-    language::*,
-    meta::*,
-    util::clauses_to_or,
+    default::BUILTIN_RULES, language::*, meta::*, util::*
 };
 
 fn construct_egg_rules_database(rules: &Rules) -> Vec<Rewrite<Rare, ()>> {
@@ -22,40 +20,16 @@ fn construct_egg_rules_database(rules: &Rules) -> Vec<Rewrite<Rare, ()>> {
     let mut db = vec![
         rewrite!("func-dependency"; "(=> ?v (~ ?x ?y))" => "(=> (Mk ?v) (~ ?x ?y))"),
         rewrite!("func-reduction1"; "(=> ⊤ (~ ?x ?y))" => "⊤"),
-//        rewrite!("func-reduction2"; "(-> (-> ⊤ (~ ?a ?b)) (~ ?c ?d))" => "(-> (~ ?a ?b) (~ ?c ?d))"),
 
         // Some axioms to state that we have booleans freely
         rewrite!("true-ground"; "any" => "(Inhabitant Free (Op true) (Sort Bool))"),
         rewrite!("true-type"; "(Ground (Op true))" => "(Inhabitant Ground (Op true) (Sort Bool))"),
         rewrite!("false-ground"; "any" => "(Inhabitant Free (Op false) (Sort Bool))"),
         rewrite!("false-type"; "(Ground (Op false))" => "(Inhabitant Ground (Op false) (Sort Bool))"),
-        
-        //Works but need to be fixed (using Ground between arguments) (also add named rules in the first arg)
-        rewrite!("add-inst"; "(Ground (App (Op +) ?x2 ?y2)))"
-            => "(Inhabitant Ground (App (Op +) ?x2 ?y2) (Sort Int))"),
-        rewrite!("add-any"; "any" => "(Inhabitant Free (App (Op +) any any) (Sort Int))"),
-
-        rewrite!("eq-inst"; "(Ground (~ ?x2 ?y2)))"
-            => "(Inhabitant Ground (~ ?x2 ?y2) (Sort Bool))"),
-        rewrite!("eq-any"; "any" => "(Inhabitant Free (~ any any) (Sort Bool))"),
-
-        rewrite!("or-inst"; "(Ground (App (Op or) ?x2 ?y2)))"
-            => "(Inhabitant Ground (App (Op or) ?x2 ?y2) (Sort Bool))"),
-        rewrite!("or-any"; "any" => "(Inhabitant Free (App (Op or) any any) (Sort Bool))"),
-
-        rewrite!("not-inst"; "(Ground (App (Op not) ?x2)))"
-            => "(Inhabitant Ground (App (Op not) ?x2) (Sort Bool))"),
-        rewrite!("not-any"; "any" => "(Inhabitant Free (App (Op not) any) (Sort Bool))"),
-
-        rewrite!("any"; "(Ground 1)" => "(Inhabitant Ground 1 (Sort Int))"),
-        rewrite!("any"; "any" => "(Inhabitant Free 1 (Sort Int))"),
-
-        //rewrite!("ground-unfold"; "(Ground ⊤)" => "⊤"),
-        //rewrite!("ground-unfold2"; "⊤" => "(Ground ⊤)"),
-
-       // rewrite!("add-inst"; "(Ground (App (Op not) ?x)))" => "(Ground (App (Op not) (Ground ?x))"),
 
     ];
+
+    db.extend_from_slice(&*BUILTIN_RULES);
 
     for (name, definition) in rules {
         let goal_vars: IndexMap<String, Rc<Term>> = collect_vars(&definition.conclusion);
