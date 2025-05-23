@@ -1,5 +1,5 @@
 use egg::*;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 
 use crate::ast::{rules::TypeParameter, Rc, Term};
 
