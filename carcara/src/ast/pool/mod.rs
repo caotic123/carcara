@@ -3,7 +3,7 @@
 pub mod advanced;
 mod storage;
 
-use super::{Binder, Operator, Rc, Sort, Term};
+use super::{Binder, Operator, Rc, Sort, Substitution, Term};
 use crate::ast::{Constant, ParamOperator};
 use indexmap::{IndexMap, IndexSet};
 use rug::Integer;
@@ -114,21 +114,26 @@ impl PrimitivePool {
                 | Operator::BvSLe
                 | Operator::BvSGt
                 | Operator::BvSGe
-                | Operator::BvShl
-                | Operator::BvLShr => Sort::Bool,
+                | Operator::Cl
+                | Operator::Delete => Sort::Bool,
+
+                Operator::BvSize | Operator::UBvToInt | Operator::SBvToInt => Sort::Int,
+
                 Operator::BvAdd
                 | Operator::BvSub
                 | Operator::BvNot
                 | Operator::BvNeg
-                | Operator::BvNAnd
-                | Operator::BvNOr
                 | Operator::BvAnd
                 | Operator::BvOr
+                | Operator::BvMul
                 | Operator::BvUDiv
                 | Operator::BvURem
+                | Operator::BvShl
+                | Operator::BvLShr
+                | Operator::BvNAnd
+                | Operator::BvNOr
                 | Operator::BvXor
                 | Operator::BvXNor
-                | Operator::BvMul
                 | Operator::BvSDiv
                 | Operator::BvSRem
                 | Operator::BvSMod
@@ -141,7 +146,11 @@ impl PrimitivePool {
                     Sort::BitVec(width)
                 }
                 Operator::BvComp => Sort::BitVec(Integer::ONE.into()),
-                Operator::BvBbTerm => Sort::BitVec(Integer::from(args.len())),
+                Operator::BvBbTerm | Operator::BvPBbTerm => Sort::BitVec(Integer::from(args.len())),
+                Operator::BvConst => {
+                    let bvsize = args[1].as_integer().unwrap();
+                    Sort::BitVec(bvsize)
+                }
                 Operator::BvConcat => {
                     let mut total_width = Integer::ZERO;
                     for arg in args {
@@ -199,9 +208,40 @@ impl PrimitivePool {
                 | Operator::ReRange => Sort::RegLan,
                 Operator::RareList => Sort::RareList,
             },
-            Term::App(f, _) => {
+            Term::App(f, args) => {
                 match self.compute_sort(f).as_sort().unwrap() {
                     Sort::Function(sorts) => sorts.last().unwrap().as_sort().unwrap().clone(),
+                    Sort::ParamSort(_, p_sort) => {
+                        let p_function_sort = p_sort.as_sort().unwrap();
+                        if let Sort::Function(sorts) = p_function_sort {
+                            // match with sorts of args, apply the resulting substitution on the return sort
+                            let mut map = IndexMap::new();
+                            for i in 0..args.len() {
+                                let sort_i = sorts[i].as_sort().unwrap();
+                                let arg_sort_i =
+                                    self.compute_sort(&args[i]).as_sort().unwrap().clone();
+                                if !sort_i.match_with(&arg_sort_i, &mut map) {
+                                    unreachable!();
+                                }
+                            }
+                            let substitution: IndexMap<_, _> = map
+                                .into_iter()
+                                .map(|(var_name, sort)| {
+                                    let var = Term::Sort(Sort::Var(var_name));
+                                    let sort_t = Term::Sort(sort);
+                                    (self.add(var), self.add(sort_t))
+                                })
+                                .collect();
+                            Substitution::new(self, substitution)
+                                .unwrap()
+                                .apply(self, sorts.last().unwrap())
+                                .as_sort()
+                                .unwrap()
+                                .clone()
+                        } else {
+                            unreachable!()
+                        }
+                    }
                     _ => unreachable!(), // We assume that the function is correctly sorted
                 }
             }
@@ -231,10 +271,28 @@ impl PrimitivePool {
                         };
                         Sort::BitVec(extension_width + bv_width)
                     }
+                    ParamOperator::RotateLeft | ParamOperator::RotateRight => {
+                        self.compute_sort(&args[0]).as_sort().unwrap().clone()
+                    }
+                    ParamOperator::Repeat => {
+                        let repetitions = op_args[0].as_integer().unwrap();
+                        let Sort::BitVec(bv_width) =
+                            self.compute_sort(&args[0]).as_sort().unwrap().clone()
+                        else {
+                            unreachable!()
+                        };
+                        Sort::BitVec(repetitions * bv_width)
+                    }
+
                     ParamOperator::BvConst => unreachable!(
-                        "bv const should be handled by the parser and transfromed into a constant"
+                        "bv const should be handled by the parser and transformed into a constant"
                     ),
+                    ParamOperator::IntToBv => {
+                        let bvsize = op_args[0].as_integer().unwrap();
+                        Sort::BitVec(bvsize)
+                    }
                     ParamOperator::BvBitOf => Sort::Bool,
+                    ParamOperator::BvIntOf => Sort::Int,
                     ParamOperator::RePower | ParamOperator::ReLoop => Sort::RegLan,
                     ParamOperator::ArrayConst => op_args[0].as_sort().unwrap().clone(),
                 };
