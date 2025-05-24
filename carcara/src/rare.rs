@@ -68,12 +68,12 @@ where
         RewriteTerm::VarEqual(var) => {
             traces.insert(var.to_string(), Trace::Term(term));
             return Some(traces);
-        },
+        }
         RewriteTerm::Const(v1) => {
             if let Term::Const(v2) = &**term {
                 if *v1 == *v2 {
-                     return Some(traces);
-                } 
+                    return Some(traces);
+                }
             }
             None
         }
