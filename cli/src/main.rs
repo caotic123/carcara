@@ -188,7 +188,7 @@ impl From<CheckingOptions> for checker::Config {
     fn from(val: CheckingOptions) -> Self {
         Self {
             elaborated: val.check_granularity == CheckGranularity::Elaborated,
-            ignore_unknown_rules: val.ignore_unknown_rules,
+            ignore_unknown_rules: val.ignore_unknown_rules || val.skip_unknown_rules,
             allowed_rules: val.allowed_rules.unwrap_or_default().into_iter().collect(),
         }
     }
@@ -549,9 +549,7 @@ fn parse_command(
     options: ParseCommandOptions,
 ) -> CliResult<(ast::Problem, ast::Proof, Rules, ast::PrimitivePool)> {
     let (problem, proof, rules) = get_instance(&options.input)?;
-    let result = parser::parse_instance(problem, proof, rules, options.parsing.into())
-        .map_err(carcara::Error::from)?;
-
+    let result = parser::parse_instance(problem, proof, rules, options.parsing.into())?;
     Ok(result)
 }
 
@@ -659,9 +657,8 @@ fn slice_command(
     options: SliceCommandOptions,
 ) -> CliResult<(ast::Problem, ast::Proof, ast::PrimitivePool)> {
     let (problem, proof, rules) = get_instance(&options.input)?;
-    let (problem, proof, _rules, pool) =
-        parser::parse_instance(problem, proof, rules, options.parsing.into())
-            .map_err(carcara::Error::from)?;
+    let (problem, proof, _, pool) =
+        parser::parse_instance(problem, proof, rules, options.parsing.into())?;
 
     let node = ast::ProofNode::from_commands_with_root_id(proof.commands, &options.from)
         .ok_or_else(|| CliError::InvalidSliceId(options.from))?;

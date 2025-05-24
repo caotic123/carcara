@@ -2,10 +2,10 @@
 //! contains two definitions of equality that differ from `PartialEq`:
 //!
 //! - `polyeq` considers `=` terms that are reflections of each other as equal, meaning the terms
-//! `(= a b)` and `(= b a)` are considered equal by this method.
+//!     `(= a b)` and `(= b a)` are considered equal by this method.
 //!
 //! - `alpha_equiv` compares terms by alpha-equivalence, meaning it implements equality of terms
-//! modulo renaming of bound variables.
+//!     modulo renaming of bound variables.
 
 use rug::Rational;
 
@@ -70,12 +70,13 @@ pub fn alpha_equiv(a: &Rc<Term>, b: &Rc<Term>, time: &mut Duration) -> bool {
 /// Configuration for a `Polyeq`.
 ///
 /// - If `is_mod_reordering` is `true`, the comparator will compare terms modulo reordering of
-/// equalities.
+///     equalities.
 //  - If `is_alpha_equivalence` is `true`, the comparator will compare terms for alpha
-/// equivalence.
+///     equivalence.
 /// - If `is_mod_nary` is `true`, the comparator will compare terms modulo the expansion of
-/// n-ary operators.
+///     n-ary operators.
 /// - If `is_mod_string_concat` is `true`, the comparator will compare terms modulo the collection of
+///
 /// String constants arguments in the String concatenation.
 #[derive(Default)]
 pub struct PolyeqConfig {
@@ -496,7 +497,15 @@ impl PolyeqComparable for Rc<Term> {
 impl PolyeqComparable for Term {
     fn eq(comp: &mut Polyeq, a: &Self, b: &Self) -> bool {
         match (a, b) {
-            (Term::Const(a), Term::Const(b)) => a == b,
+            (Term::Const(a1), Term::Const(b1)) => match (a1, b1) {
+                (Constant::Real(r1), Constant::Integer(i2)) if r1.is_integer() => {
+                    r1.numer().clone() == i2.clone()
+                }
+                (Constant::Integer(i1), Constant::Real(r2)) if r2.is_integer() => {
+                    i1.clone() == r2.numer().clone()
+                }
+                _ => a == b,
+            },
             (Term::Var(a, a_sort), Term::Var(b, b_sort)) if comp.de_bruijn_map.is_some() => {
                 // If we are checking for alpha-equivalence, and we encounter two variables, we
                 // check that they are equivalent using the De Bruijn map
@@ -549,9 +558,19 @@ impl PolyeqComparable for Term {
                 // if they are the same
                 match (args[0].as_ref(), args[1].as_ref()) {
                     (Term::Const(Constant::Real(r1)), Term::Const(Constant::Real(r2)))
-                        if r1.is_integer() && r2.is_integer() =>
+                        if r.is_positive() && r1.is_integer() && r2.is_integer() =>
                     {
                         Rational::from((r1.numer(), r2.numer())) == r.clone()
+                    }
+                    (Term::Op(Operator::Sub, args), Term::Const(Constant::Integer(r2)))
+                    | (Term::Const(Constant::Integer(r2)), Term::Op(Operator::Sub, args))
+                        if r.is_negative() && args.len() == 1 =>
+                    {
+                        if let Term::Const(Constant::Integer(r1)) = args[0].as_ref() {
+                            Rational::from((r1, r2)) == r.clone().abs()
+                        } else {
+                            false
+                        }
                     }
                     _ => false,
                 }
@@ -562,6 +581,8 @@ impl PolyeqComparable for Term {
             {
                 if let Term::Const(Constant::Integer(i2)) = args[0].as_ref() {
                     i1.clone().abs() == i2.clone()
+                } else if let Term::Const(Constant::Real(r2)) = args[0].as_ref() {
+                    i1.clone().abs() == r2.numer().clone()
                 } else {
                     false
                 }
@@ -884,7 +905,15 @@ fn nary_case(op: Operator) -> Option<NaryCase> {
         | Operator::BvSLe
         | Operator::BvSGt
         | Operator::BvSGe
+        | Operator::UBvToInt
+        | Operator::SBvToInt
+        | Operator::BvPBbTerm
         | Operator::BvBbTerm
+        | Operator::BvConst
+        | Operator::BvSize
         | Operator::RareList => None,
+
+        // Clausal
+        Operator::Cl | Operator::Delete => Some(NaryCase::LeftAssoc),
     }
 }

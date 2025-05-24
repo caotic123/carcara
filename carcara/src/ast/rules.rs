@@ -39,6 +39,7 @@ pub enum RewriteTerm {
 macro_rules! pseudo_term {
     (true) => {$crate::rare::RewriteTerm::OperatorEq($crate::ast::Operator::True, vec![])};
     (false) => {$crate::rare::RewriteTerm::OperatorEq($crate::ast::Operator::False, vec![])};
+    
     ($v:ident) => {$crate::rare::RewriteTerm::VarEqual(stringify!($v))};
     (($op:tt ..$args:ident..)) => {{
         $crate::rare::RewriteTerm::ManyEq($crate::ast::Operator::$op, stringify!($args))

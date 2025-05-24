@@ -1,8 +1,8 @@
-use std::io::BufRead;
-use crate::ast::*;
-use crate::{ast::rules::*, Error};
-use crate::CarcaraResult;
 use super::{Parser, ParserError, Reserved, SortDef, Token};
+use crate::ast::*;
+use crate::CarcaraResult;
+use crate::{ast::rules::*, Error};
+use std::io::BufRead;
 
 #[derive(Debug, Clone)]
 enum Body {

@@ -220,12 +220,16 @@ macro_rules! test_cases {
 }
 
 // Since the rule submodules use the `test_cases` macro, we have to declare them here, after the
+// Since the rule submodules use the `rassert!` macro, we have to declare them here, after the
 // macro is declared
 pub(super) mod bitvectors;
 pub(super) mod clausification;
 pub(super) mod congruence;
+pub(super) mod cutting_planes;
+pub(super) mod drup;
 pub(super) mod extras;
 pub(super) mod linear_arithmetic;
+pub(super) mod pb_blasting;
 pub(super) mod quantifier;
 pub(super) mod rare;
 pub(super) mod reflexivity;
