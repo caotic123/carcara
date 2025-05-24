@@ -1,8 +1,6 @@
 use std::cell::RefCell;
-
 use indexmap::IndexMap;
-
-use super::{Operator, Rc, Term};
+use super::{Constant, Operator, Rc, Term};
 
 pub type Holes = IndexMap<String, Rc<RefCell<Option<Rc<Term>>>>>;
 
@@ -33,13 +31,17 @@ pub enum RewriteTerm {
     ManyEq(Operator, &'static str),
     OperatorEq(Operator, Vec<RewriteTerm>),
     VarEqual(&'static str),
+    Const(Constant)
 }
 
 #[macro_export]
 macro_rules! pseudo_term {
     (true) => {$crate::rare::RewriteTerm::OperatorEq($crate::ast::Operator::True, vec![])};
     (false) => {$crate::rare::RewriteTerm::OperatorEq($crate::ast::Operator::False, vec![])};
-    
+    (0) => {$crate::rare::RewriteTerm::Const($crate::ast::Constant::Integer(Integer::from(0)))};
+    (1) => {$crate::rare::RewriteTerm::Const($crate::ast::Constant::Integer(Integer::from(1)))};
+    ("") => {$crate::rare::RewriteTerm::Const($crate::ast::Constant::String("".to_string()))};
+
     ($v:ident) => {$crate::rare::RewriteTerm::VarEqual(stringify!($v))};
     (($op:tt ..$args:ident..)) => {{
         $crate::rare::RewriteTerm::ManyEq($crate::ast::Operator::$op, stringify!($args))
