@@ -1,6 +1,6 @@
-use std::cell::RefCell;
-use indexmap::IndexMap;
 use super::{Constant, Operator, Rc, Term};
+use indexmap::IndexMap;
+use std::cell::RefCell;
 
 pub type Holes = IndexMap<String, Rc<RefCell<Option<Rc<Term>>>>>;
 
@@ -31,7 +31,7 @@ pub enum RewriteTerm {
     ManyEq(Operator, &'static str),
     OperatorEq(Operator, Vec<RewriteTerm>),
     VarEqual(&'static str),
-    Const(Constant)
+    Const(Constant),
 }
 
 #[macro_export]
