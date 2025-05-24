@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use rug::Integer;
 
 use crate::{
     ast::{rules::RewriteTerm, Rc, Term, TermPool},
@@ -9,8 +10,13 @@ pub fn get_rules() -> Vec<(RewriteTerm, RewriteTerm)> {
     return vec![
         build_equation!((RareList ..x..) ~> x),
         build_equation!((Or x) ~> x),
+        build_equation!((And x) ~> x),
+        build_equation!((Mult x) ~> x),
         build_equation!((Or) ~> False),
         build_equation!((And) ~> True),
+        build_equation!((Add) ~> 0),
+        build_equation!((Mult) ~> 1),
+        build_equation!((StrConcat) ~> ""),
     ];
 }
 
@@ -62,6 +68,14 @@ where
         RewriteTerm::VarEqual(var) => {
             traces.insert(var.to_string(), Trace::Term(term));
             return Some(traces);
+        },
+        RewriteTerm::Const(v1) => {
+            if let Term::Const(v2) = &**term {
+                if *v1 == *v2 {
+                     return Some(traces);
+                } 
+            }
+            None
         }
     }
 }
@@ -90,6 +104,9 @@ fn reconstruct_meta_terms<'a>(
                 Trace::Term(t) => Trace::Term((*t).clone()),
                 Trace::ManyTerm(t) => Trace::ManyTerm((*t).clone()),
             }
+        }
+        RewriteTerm::Const(v) => {
+            return Trace::Term(pool.add(Term::Const(v.clone())));
         }
     }
 }

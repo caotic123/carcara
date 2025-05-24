@@ -4,4 +4,4 @@
 (assume a4 (= b true))
 (step t1 (cl (= true false)) :rule trans :premises (a1 a2))
 (step t2 (cl (not true) false) :rule equiv1 :premises (t1))
-(step t3 (cl (= (not (not b)) b)) :rule rare_rewrite :args ("bool-double-not-elim" (rare-list b)))
+(step t3 (cl (= 0 0)) :rule rare_rewrite :args ("test" rare-list rare-list))

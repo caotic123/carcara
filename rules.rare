@@ -35,3 +35,7 @@
   :args (t1)
   :conclusion (eo::define ((_let_1 (= t1 t1))) (= _let_1 true))
 )
+(declare-rare-rule test ((t1 Int :list) (t2 Int :list))
+  :args (t1 t2)
+  :conclusion (= 0 (+ t1 t2))
+)
