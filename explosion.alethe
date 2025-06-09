@@ -4,3 +4,46 @@
 (assume a5 (= c true))
 
 (step a0 (cl (= false true)) :rule hole :premises (a2 a3 a4 a5) :args ("TRUST_THEORY_REWRITE" b))
+
+(declare-rare-rule symmetry ((t1 Bool) (t2 Bool))
+  :args (t1 t2)
+  :premises ((= t1 t2))
+  :conclusion (= t2 t1)
+)
+
+(declare-rare-rule eq_trans ((@T Type) (t1 @T) (t2 @T) (t3 @T))
+  :args (t1 t2 t3)
+  :premises ((= t1 t2) (= t2 t3))
+  :conclusion (= t1 t3)
+)
+
+
+
+                                   ┌───────────────────────────────┐
+                                   │        func-reduction1         │
+                                   │       ⊤ ⇒ P   ─────►  ⊤        │
+                                   └───────────────▲────────────────┘
+                                                   │
+                     ┌─────────────────────────────┴─────────────────────────┐
+                     │            func-dependency   (twice-nested)           │
+                     │   Mk( Mk(~false b) ) ⇒ (~false true)                  │
+                     └──────────────────────▲────────────────────────────────┘
+                                            │
+           ┌────────────────────────────────┴────────────────────────────────┐
+           │                 eq_trans-rule-apply (transitivity)              │
+           │  (~b true) ⇒ ((~false b) ⇒ (~false true))                       │
+           └───────────────┬────────────────────────────────────────────────┘
+                           │
+            ┌──────────────┴───────────────┐
+            │                              │
+  ┌─────────────────────┐      ┌──────────────────────────┐
+  │  Premise 1          │      │  symmetry-rule-apply      │
+  │  (~b true)          │      │  (~b false) ⇒ (~false b) │
+  │  (hidden leaf)      │      └─────────────▲────────────┘
+  └─────────────────────┘                    │
+                                            │
+                                   ┌────────┴────────┐
+                                   │  Premise 2      │
+                                   │  (~b false)     │
+                                   │  (hidden leaf)  │
+                                   └─────────────────┘
