@@ -4,7 +4,6 @@ pub mod engine;
 pub mod util;
 pub mod meta;
 pub mod language;
-pub mod default;
 
 use crate::{
     ast::{rules::RewriteTerm, Rc, Term, TermPool},

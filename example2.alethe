@@ -3,28 +3,3 @@
 (assume a5 (= c true))
 
 (step a0 (cl (= (or a true) true)) :rule hole :premises (a4) :args ("TRUST_THEORY_REWRITE" b))
-
-(declare-rare-rule or ((c1 Bool :list))
-  :args (c1)
-  :conclusion (= (or c1 true) true)
-)
-
-
-                                   ┌────────────────────────────┐
-                                   │        func-reduction1      │
-                                   │   ⊤ ⇒ P   ───────────►  ⊤   │
-                                   └──────────────▲─────────────┘
-                                                  │
-                     ┌────────────────────────────┴──────────────────────────┐
-                     │                    or-rule-apply                    │
-                     │ ⊢ ⊤ ⇒ (¬((a ∨ true) = true)) from Inst(or-rule)     │
-                     └─────────────────────▲─────────────────────────────────┘
-                                           │
-           ┌───────────────────────────────┴────────────────────────────────┐
-           │                           or-goal-inst                       │
-           │  matches  ¬((a ∨ true) = true)  and produces Inst(or-rule)   │
-           └───────────────────────────────▲────────────────────────────────┘
-                                           │
-                         original goal term │
-                                           ▼
-                     ¬((a ∨ true) = true)
