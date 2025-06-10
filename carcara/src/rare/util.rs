@@ -14,6 +14,14 @@ pub fn clauses_to_or(pool: &mut PrimitivePool, clauses: &[Rc<Term>]) -> Option<R
     return Some(pool.add(Term::Op(Operator::Or, clauses.to_vec())));
 }
 
+
+pub fn get_equational_terms(term: &Rc<Term>) -> Option<(&Rc<Term>, &Rc<Term>)> {
+    if let Some((lhs, rhs)) = match_term!((= x y) = term) {
+        return Some((lhs, rhs))
+    }
+    None
+}
+
 #[inline]
 // 32-bit FNV-1a hash for small strings
 pub fn str_to_u32(input: &str) -> u32 {
