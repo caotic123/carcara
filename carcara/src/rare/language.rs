@@ -25,6 +25,7 @@ pub enum EggExpr {
     Num(Integer),
     String(String),
     Real(Integer),
+    Mk(Box<EggExpr>),
     BitVec(Integer, Integer),
     Literal(String),
     Ground(Box<EggExpr>),
@@ -37,7 +38,9 @@ pub enum EggStatement {
     DataType(String, Vec<Constructor>),
     Relation(String, ConstType),
     Premise(String, Box<EggExpr>),
+    Let(String, Box<EggExpr>),
     Rewrite(Box<EggExpr>, Box<EggExpr>, Vec<EggExpr>),
+    Union(Box<EggExpr>, Box<EggExpr>),
     Rule(Vec<EggExpr>, Vec<EggExpr>),
     Check(Box<EggExpr>),
     Run(i16),
@@ -78,6 +81,7 @@ impl fmt::Display for EggExpr {
                 write!(f, ")")
             }
             EggExpr::Op(name) => write!(f, "(Op \"{}\")", name),
+            EggExpr::Mk(term) => write!(f, "(Mk {})", term),
             EggExpr::Var(name) => write!(f, "(Var \"{}\")", name),
             EggExpr::Bool(b) => write!(f, "(Bool {})", if *b { "true" } else { "false" }),
             EggExpr::Num(n) => write!(f, "(Num {})", n),
@@ -129,6 +133,8 @@ impl fmt::Display for EggStatement {
                 }
                 write!(f, ") )")
             }
+            EggStatement::Union(expr, expr2) => write!(f, "(union {} {})", expr, expr2),
+            EggStatement::Let(s, expr) => write!(f, "(let {} {})", s, expr),
             EggStatement::Run(i) => write!(f, "(run {})", i),
         }
     }
