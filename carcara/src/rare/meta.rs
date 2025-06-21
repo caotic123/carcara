@@ -93,6 +93,11 @@ fn to_expr(e: EggExpr) -> Expr {
             Symbol::from("App"),
             vec![to_expr(*f), to_expr(*x)],
         ),
+        Mk(term) => Expr::Call(
+            dummy_span(),
+            Symbol::from("Mk"),
+            vec![to_expr(*term)],
+        ),
         Equal(l, r) => Expr::Call(
             dummy_span(),
             Symbol::from("="),
@@ -189,7 +194,7 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
 
                 /* -------------- check -------------- */
                 EggStatement::Check(e) => {
-                    vec![Command::Check(dummy_span(), vec![Fact::Fact(to_expr(*e))])]
+                    vec![Command::Check(dummy_span(), facts(vec![*e]))]
                 }
 
                 /* --------------- run --------------- */
@@ -204,7 +209,11 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                         Box::new(Schedule::Run(dummy_span(), rcfg)),
                     );
                     vec![Command::RunSchedule(sched)]
-                }
+                },
+                EggStatement::Let(name, expr) => vec![Command::Action(GenericAction::Let(dummy_span(), Symbol::from(name), to_expr(*expr)))],       
+                EggStatement::Union(expr, expr2) => 
+                    vec![Command::Action(GenericAction::Union(dummy_span(), to_expr(*expr), to_expr(*expr2)))]
+
             }
         })
         .collect()
