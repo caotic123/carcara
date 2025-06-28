@@ -31,6 +31,8 @@ pub enum EggExpr {
     Ground(Box<EggExpr>),
     Equal(Box<EggExpr>, Box<EggExpr>),
     Union(Box<EggExpr>, Box<EggExpr>),
+    Args(Box<EggExpr>, Box<EggExpr>),
+    Empty()
 }
 
 #[derive(Clone)]
@@ -43,6 +45,7 @@ pub enum EggStatement {
     Union(Box<EggExpr>, Box<EggExpr>),
     Rule(Vec<EggExpr>, Vec<EggExpr>),
     Check(Box<EggExpr>),
+    Function(String, Vec<ConstType>, ConstType),
     Run(i16),
 }
 
@@ -68,74 +71,5 @@ impl fmt::Display for Constructor {
             write!(f, " {}", arg)?;
         }
         write!(f, ")")
-    }
-}
-
-impl fmt::Display for EggExpr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EggExpr::App(func, arg) => {
-                write!(f, "(App ")?;
-                write!(f, "{}", func)?;
-                write!(f, " {}", arg)?;
-                write!(f, ")")
-            }
-            EggExpr::Op(name) => write!(f, "(Op \"{}\")", name),
-            EggExpr::Mk(term) => write!(f, "(Mk {})", term),
-            EggExpr::Var(name) => write!(f, "(Var \"{}\")", name),
-            EggExpr::Bool(b) => write!(f, "(Bool {})", if *b { "true" } else { "false" }),
-            EggExpr::Num(n) => write!(f, "(Num {})", n),
-            EggExpr::BitVec(i, j) => write!(f, "(Bitvec {} {})", i, j),
-            EggExpr::Real(i) => write!(f, "(Real {})", i),
-            EggExpr::String(s) => write!(f, "(String {})", s),
-            EggExpr::Literal(s) => write!(f, "{}", s),
-            EggExpr::Equal(x, y) => write!(f, "(= {} {})", x, y),
-            EggExpr::Ground(expr) => write!(f, "(Ground {})", expr),
-            EggExpr::Union(left, rhs) => write!(f, "(union {} {})", left, rhs),
-        }
-    }
-}
-
-impl fmt::Display for EggStatement {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EggStatement::DataType(name, ctors) => {
-                write!(f, "(datatype {}", name)?;
-                for ctor in ctors {
-                    write!(f, " {}", ctor)?;
-                }
-                write!(f, ")")
-            }
-            EggStatement::Relation(name, type_) => write!(f, "(relation {} ({}))", name, type_),
-            EggStatement::Premise(name, expr) => write!(f, "({} {})", name, expr),
-            EggStatement::Rewrite(lhs, rhs, premises) => {
-                write!(f, "(rewrite")?;
-                write!(f, " {}", rhs)?;
-                write!(f, " {}", lhs)?;
-                if premises.len() != 0 {
-                    write!(f, " :when ( ")?;
-                    for p in premises.iter() {
-                        write!(f, "{} ", p)?;
-                    }
-                    write!(f, ")")?;
-                }
-                write!(f, ")")
-            }
-            EggStatement::Check(expr) => write!(f, "(check {})", expr),
-            EggStatement::Rule(cond, action) => {
-                write!(f, "(rule ( ",)?;
-                for ctor in cond {
-                    write!(f, "{} ", ctor)?;
-                }
-                write!(f, ") (")?;
-                for ctor in action {
-                    write!(f, "{} ", ctor)?;
-                }
-                write!(f, ") )")
-            }
-            EggStatement::Union(expr, expr2) => write!(f, "(union {} {})", expr, expr2),
-            EggStatement::Let(s, expr) => write!(f, "(let {} {})", s, expr),
-            EggStatement::Run(i) => write!(f, "(run {})", i),
-        }
     }
 }
