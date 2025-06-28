@@ -34,7 +34,10 @@ fn to_expr(e: EggExpr) -> Expr {
         Var(v) => Expr::Call(
             dummy_span(),
             Symbol::from("Var"),
-            vec![Expr::Lit(dummy_span(), egglog::ast::Literal::String(v.into()))],
+            vec![Expr::Lit(
+                dummy_span(),
+                egglog::ast::Literal::String(v.into()),
+            )],
         ),
 
         Bool(b) => Expr::Call(
@@ -83,7 +86,7 @@ fn to_expr(e: EggExpr) -> Expr {
             vec![Expr::Lit(
                 dummy_span(),
                 egglog::ast::Literal::String(op.into()),
-            )]
+            )],
         ),
 
         Literal(s) => Expr::Var(dummy_span(), Symbol::from(s.as_str())),
@@ -93,11 +96,12 @@ fn to_expr(e: EggExpr) -> Expr {
             Symbol::from("App"),
             vec![to_expr(*f), to_expr(*x)],
         ),
-        Mk(term) => Expr::Call(
+        Args(x, xs) => Expr::Call(
             dummy_span(),
-            Symbol::from("Mk"),
-            vec![to_expr(*term)],
+            Symbol::from("Args"),
+            vec![to_expr(*x), to_expr(*xs)],
         ),
+        Mk(term) => Expr::Call(dummy_span(), Symbol::from("Mk"), vec![to_expr(*term)]),
         Equal(l, r) => Expr::Call(
             dummy_span(),
             Symbol::from("="),
@@ -108,6 +112,11 @@ fn to_expr(e: EggExpr) -> Expr {
             Symbol::from("union"),
             vec![to_expr(*l), to_expr(*r)],
         ),
+        Empty() => Expr::Call(
+            dummy_span(),
+            Symbol::from("Empty"),
+            vec![],
+        )
     }
 }
 
@@ -115,7 +124,7 @@ fn eggexpr_to_fact(e: EggExpr) -> Fact {
     match e {
         EggExpr::Equal(l, r) => Fact::Eq(
             dummy_span(),
-            to_expr(*l),        // normal expression conversion
+            to_expr(*l), // normal expression conversion
             to_expr(*r),
         ),
         other => Fact::Fact(to_expr(other)),
@@ -128,11 +137,7 @@ fn facts(es: Vec<EggExpr>) -> Vec<Fact> {
 
 fn eggexpr_to_action(e: EggExpr) -> Action {
     match e {
-        EggExpr::Union(l, r) => Action::Union(
-            dummy_span(),
-            to_expr(*l),
-            to_expr(*r),
-        ),
+        EggExpr::Union(l, r) => Action::Union(dummy_span(), to_expr(*l), to_expr(*r)),
         other => Action::Expr(dummy_span(), to_expr(other)),
     }
 }
@@ -145,6 +150,16 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
     lang.into_iter()
         .flat_map(|stmt| {
             match stmt {
+                EggStatement::Function(name, inputs, out) => vec![Command::Function {
+                    span: dummy_span(),
+                    name: Symbol::from(name.as_str()),
+                    schema: Schema {
+                        input: inputs.iter().map(|x| ct_to_sort(x)).collect(),
+                        output: ct_to_sort(&out)
+                    },
+                    merge: None,
+                }],
+
                 /* ------------ datatype ------------- */
                 EggStatement::DataType(name, ctors) => vec![Command::Datatype {
                     span: dummy_span(),
@@ -209,11 +224,17 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                         Box::new(Schedule::Run(dummy_span(), rcfg)),
                     );
                     vec![Command::RunSchedule(sched)]
-                },
-                EggStatement::Let(name, expr) => vec![Command::Action(GenericAction::Let(dummy_span(), Symbol::from(name), to_expr(*expr)))],       
-                EggStatement::Union(expr, expr2) => 
-                    vec![Command::Action(GenericAction::Union(dummy_span(), to_expr(*expr), to_expr(*expr2)))]
-
+                }
+                EggStatement::Let(name, expr) => vec![Command::Action(GenericAction::Let(
+                    dummy_span(),
+                    Symbol::from(name),
+                    to_expr(*expr),
+                ))],
+                EggStatement::Union(expr, expr2) => vec![Command::Action(GenericAction::Union(
+                    dummy_span(),
+                    to_expr(*expr),
+                    to_expr(*expr2),
+                ))],
             }
         })
         .collect()
