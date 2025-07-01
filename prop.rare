@@ -57,6 +57,9 @@
   :conclusion (= (not (or x y))
                  (and (not x) (not y))))
 
+(declare-rare-rule demorgan-or2 ((x Bool) (y Bool)) :args (x y)
+  :conclusion (= (and (not x) (not y)) (not (or x y))))
+
 (declare-rare-rule not-elim  ((x Bool) ) :args (x)
   :premises ((= x true))
   :conclusion (= (not true)  false))
