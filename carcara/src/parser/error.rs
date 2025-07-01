@@ -247,11 +247,13 @@ impl SortError {
             let value = pool.add(Term::Sort(value.cloned().unwrap_or_else(|| any.clone())));
             vec![Sort::Array(key, value)]
         };
+
         let Sort::Array(got_key, got_value) = got else {
             return Err(Self { expected, got: got.clone() });
         };
-        if key.is_some_and(|k| got_key.as_sort().unwrap() != k)
-            || value.is_some_and(|v| got_value.as_sort().unwrap() != v)
+        
+        if (!got_key.as_sort().unwrap().is_polymorphic() && got_key.as_var().is_none() && key.is_some_and(|k| got_key.as_sort().unwrap() != k))
+            || (!got_value.as_sort().unwrap().is_polymorphic() && got_value.as_var().is_none() && value.is_some_and(|v| got_value.as_sort().unwrap() != v))
         {
             return Err(Self { expected, got: got.clone() });
         }

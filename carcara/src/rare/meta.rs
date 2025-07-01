@@ -96,6 +96,11 @@ fn to_expr(e: EggExpr) -> Expr {
             Symbol::from("App"),
             vec![to_expr(*f), to_expr(*x)],
         ),
+        Call(name, args) => Expr::Call(
+            dummy_span(),
+            Symbol::from(name),
+            vec![to_expr(*args)]
+        ),
         Args(x, xs) => Expr::Call(
             dummy_span(),
             Symbol::from("Args"),
@@ -150,14 +155,15 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
     lang.into_iter()
         .flat_map(|stmt| {
             match stmt {
-                EggStatement::Function(name, inputs, out) => vec![Command::Function {
+                EggStatement::Constructor(name, inputs, out) => vec![Command::Constructor {
                     span: dummy_span(),
                     name: Symbol::from(name.as_str()),
                     schema: Schema {
                         input: inputs.iter().map(|x| ct_to_sort(x)).collect(),
                         output: ct_to_sort(&out)
                     },
-                    merge: None,
+                    cost: None,
+                    unextractable: false
                 }],
 
                 /* ------------ datatype ------------- */
@@ -225,6 +231,17 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                     );
                     vec![Command::RunSchedule(sched)]
                 }
+                EggStatement::Saturare() => {
+                    let rcfg = RunConfig {
+                        ruleset: Symbol::from(""),
+                        until: None,
+                    };
+                    let sched = Schedule::Saturate(
+                        dummy_span(),
+                        Box::new(Schedule::Run(dummy_span(), rcfg)),
+                    );
+                    vec![Command::RunSchedule(sched)]
+                },
                 EggStatement::Let(name, expr) => vec![Command::Action(GenericAction::Let(
                     dummy_span(),
                     Symbol::from(name),

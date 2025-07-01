@@ -32,6 +32,7 @@ pub enum EggExpr {
     Equal(Box<EggExpr>, Box<EggExpr>),
     Union(Box<EggExpr>, Box<EggExpr>),
     Args(Box<EggExpr>, Box<EggExpr>),
+    Call(String, Box<EggExpr>),
     Empty()
 }
 
@@ -45,8 +46,9 @@ pub enum EggStatement {
     Union(Box<EggExpr>, Box<EggExpr>),
     Rule(Vec<EggExpr>, Vec<EggExpr>),
     Check(Box<EggExpr>),
-    Function(String, Vec<ConstType>, ConstType),
+    Constructor(String, Vec<ConstType>, ConstType),
     Run(i16),
+    Saturare()
 }
 
 pub type EggLanguage = Vec<EggStatement>;

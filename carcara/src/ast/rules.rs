@@ -6,7 +6,7 @@ use super::{Operator, Rc, Term};
 
 pub type Holes = IndexMap<String, Rc<RefCell<Option<Rc<Term>>>>>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttributeParameters {
     List,
     None,

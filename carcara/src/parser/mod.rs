@@ -1843,12 +1843,28 @@ impl<'a, R: BufRead> Parser<'a, R> {
             }
             Token::OpenParen if polymorphic => {
                 let name = self.expect_symbol()?;
-                if !["BitVec".to_string()].contains(&name)
+                if !["BitVec".to_string(), "Array".to_string()].contains(&name)
                     && !self.state.sort_defs.contains_key(&name)
                 {
                     return Err(Error::Parser(ParserError::UndefinedSort(name), pos));
                 }
                 let args = self.parse_sequence(Self::parse_term, true)?;
+                if name == "Array" {
+                    let args = args
+                        .iter()
+                        .map(|x| {
+                            if let Some(v) = x.as_var() {
+                                self.pool.add(Term::Sort(Sort::Var(v.to_string())))
+                            } else {
+                                x.clone()
+                            }
+                        })
+                        .collect();
+                    return self
+                        .make_sort(name, args, polymorphic)
+                        .map_err(|e| Error::Parser(e, pos));
+                }
+
                 let head_term = self.pool.add(Term::Sort(Sort::Var(name)));
                 return Ok(self.pool.add(Term::Sort(Sort::ParamSort(args, head_term))));
             }

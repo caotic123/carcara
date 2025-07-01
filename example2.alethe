@@ -2,4 +2,4 @@
 (assume a4 (= a false))
 (assume a5 (= c true))
 
-(step a0 (cl (= (or a true) true)) :rule hole :premises (a4) :args ("TRUST_THEORY_REWRITE" b))
+(step a0 (cl (= (* 2 1 10 3) (* 2 10 3))) :rule hole :premises (a4) :args ("TRUST_THEORY_REWRITE" b))
