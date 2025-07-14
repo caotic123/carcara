@@ -32,7 +32,7 @@ pub enum EggExpr {
     Equal(Box<EggExpr>, Box<EggExpr>),
     Union(Box<EggExpr>, Box<EggExpr>),
     Args(Box<EggExpr>, Box<EggExpr>),
-    Call(String, Box<EggExpr>),
+    Call(String, Vec<EggExpr>),
     Empty()
 }
 
