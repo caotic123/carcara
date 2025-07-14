@@ -1,4 +1,3 @@
-use std::fmt::{format, Arguments};
 
 use crate::{
     ast::{
@@ -107,6 +106,34 @@ pub fn create_headers() -> EggLanguage {
                 Box::new(EggExpr::Literal("y".to_string())),
             )],
         ),
+        EggStatement::Rewrite(
+            Box::new(EggExpr::Args(
+                Box::new(EggExpr::Literal("t1".to_string())),
+                Box::new(EggExpr::Literal("t2".to_string())),
+            )),
+            Box::new(EggExpr::Args(
+                Box::new(EggExpr::Args(
+                    Box::new(EggExpr::Literal("t1".to_string())),
+                    Box::new(EggExpr::Empty()),
+                )),
+                Box::new(EggExpr::Literal("t2".to_string())),
+            )),
+            vec![],
+        ),
+        EggStatement::Rewrite(
+            Box::new(EggExpr::Args(
+                Box::new(EggExpr::Args(
+                    Box::new(EggExpr::Literal("t1".to_string())),
+                    Box::new(EggExpr::Empty()),
+                )),
+                Box::new(EggExpr::Literal("t2".to_string())),
+            )),
+            Box::new(EggExpr::Args(
+                Box::new(EggExpr::Literal("t1".to_string())),
+                Box::new(EggExpr::Literal("t2".to_string())),
+            )),
+            vec![],
+        ),
     ]
 }
 
@@ -140,7 +167,7 @@ pub fn to_egg_expr(
             }
             Term::App(head, args) => {
                 if let Some(func_name) = head.as_var() {
-                    func_cache.insert(func_name.to_string());
+                    func_cache.insert(format!("@{0}", func_name.to_string()));
                 }
 
                 if args.len() == 0 {
@@ -161,10 +188,7 @@ pub fn to_egg_expr(
                     args = EggExpr::Args(Box::new(a.clone()), Box::new(args));
                 }
 
-                Some(EggExpr::Call(
-                    format!("{0}!", head.to_string()),
-                    Box::new(args),
-                ))
+                Some(EggExpr::Call(format!("@{0}", head.to_string()), vec![args]))
             }
             Term::Op(Operator::RareList, args) => {
                 let args: Vec<EggExpr> = args
@@ -196,7 +220,7 @@ pub fn to_egg_expr(
                     return None;
                 }
 
-                func_cache.insert(format!("{}!", head));
+                func_cache.insert(format!("@{}", head));
                 let args: Vec<EggExpr> = args
                     .clone()
                     .iter()
@@ -212,10 +236,7 @@ pub fn to_egg_expr(
                     args = EggExpr::Args(Box::new(a.clone()), Box::new(args));
                 }
 
-                Some(EggExpr::Call(
-                    format!("{0}!", head.to_string()),
-                    Box::new(args),
-                ))
+                Some(EggExpr::Call(format!("@{0}", head.to_string()), vec![args]))
             }
             _ => None,
         }
@@ -334,11 +355,49 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
 
 fn declare_functions(functions: EggFunctions) -> Vec<EggStatement> {
     let mut declarations = vec![];
-    for name in functions {
+    for name in functions.iter() {
         declarations.push(EggStatement::Constructor(
-            name,
+            name.clone(),
             vec![ConstType::ConstrType("Term".to_string())],
             ConstType::ConstrType("Term".to_string()),
+        ));
+    }
+
+    if functions.contains("@+") {
+        declarations.push(EggStatement::Rewrite(
+            Box::new(EggExpr::Call(
+                "@+".to_string(),
+                vec![EggExpr::Args(
+                    Box::new(EggExpr::Call(
+                        "Num".to_string(),
+                        vec![EggExpr::Literal("t1".to_string())],
+                    )),
+                    Box::new(EggExpr::Args(
+                        Box::new(EggExpr::Call(
+                            "Num".to_string(),
+                            vec![EggExpr::Literal("t2".to_string())],
+                        )),
+                        Box::new(EggExpr::Empty()),
+                    )),
+                )],
+            )),
+            Box::new(EggExpr::Call(
+                "@+".to_string(),
+                vec![EggExpr::Args(
+                    Box::new(EggExpr::Call(
+                        "Num".to_string(),
+                        vec![EggExpr::Call(
+                            "+".to_string(),
+                            vec![
+                                EggExpr::Literal("t1".to_string()),
+                                EggExpr::Literal("t2".to_string()),
+                            ],
+                        )],
+                    )),
+                    Box::new(EggExpr::Empty()),
+                )],
+            )),
+            vec![],
         ));
     }
 

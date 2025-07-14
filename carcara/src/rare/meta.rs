@@ -99,7 +99,7 @@ fn to_expr(e: EggExpr) -> Expr {
         Call(name, args) => Expr::Call(
             dummy_span(),
             Symbol::from(name),
-            vec![to_expr(*args)]
+            args.into_iter().map(|x | to_expr(x)).collect()
         ),
         Args(x, xs) => Expr::Call(
             dummy_span(),
