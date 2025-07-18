@@ -25,7 +25,18 @@ pub struct RuleDefinition {
     pub conclusion: Rc<Term>,
 }
 
-pub type Rules = IndexMap<String, RuleDefinition>;
+#[derive(Debug, Clone)]
+pub struct Program {
+    pub name: String
+}
+
+pub struct RareStatements {
+    pub rules: IndexMap<String, RuleDefinition>,
+    pub programs: IndexMap<String, Program>,
+}
+
+pub type Rules = RareStatements;
+
 #[derive(Debug, Clone)]
 pub enum RewriteTerm {
     ManyEq(Operator, &'static str),

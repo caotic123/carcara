@@ -11,7 +11,10 @@ pub use error::{ParserError, SortError};
 pub use lexer::{Lexer, Position, Reserved, Token};
 
 use crate::{
-    ast::{rare_rules::Rules, *},
+    ast::{
+        rare_rules::{RareStatements, Rules},
+        *,
+    },
     utils::{HashCache, HashMapStack},
     CarcaraResult, Error,
 };
@@ -97,7 +100,14 @@ pub fn parse_instance_with_pool<T: BufRead>(
         }?;
         return Ok((problem, proof, rules));
     }
-    Ok((problem, proof, IndexMap::new()))
+    Ok((
+        problem,
+        proof,
+        RareStatements {
+            rules: IndexMap::new(),
+            programs: IndexMap::new(),
+        },
+    ))
 }
 
 /// A function definition, from a `define-fun` command.
@@ -1934,7 +1944,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
                         Term::Var(v, sort) if sort.as_sort() == Some(&Sort::Type) => {
                             self.pool.add(Term::Sort(Sort::Var(v.to_owned())))
                         }
-                        _ => term
+                        _ => term,
                     })
                     .collect();
 

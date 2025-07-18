@@ -1,0 +1,5 @@
+(assume a2 (= b true))
+(assume a5 (= (+ k 1) k))
+
+(step a0 (cl (= (or (= (+ k 1) k) b) b)) :rule hole :premises (a2 a5) :args ("TRUST_THEORY_REWRITE" b))
+
