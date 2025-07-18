@@ -1,3 +1,5 @@
+use indexmap::IndexMap;
+
 use super::{Parser, ParserError, Reserved, SortDef, Token};
 use crate::ast::*;
 use crate::CarcaraResult;
@@ -99,8 +101,44 @@ struct BodyDefinition<'a> {
     conclusion: Option<Rc<Term>>,
 }
 
-pub fn parse_rule<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<RuleDefinition> {
+pub fn parse_program<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<Program> {
+    pub fn parse_pattern<R: BufRead>(
+        parser: &mut Parser<R>,
+    ) -> CarcaraResult<(Rc<Term>, Rc<Term>)> {
+        parser.expect_token(Token::OpenParen)?;
+        let lhs = parser.parse_term()?;
+        let rhs = parser.parse_term()?;
+        parser.expect_token(Token::CloseParen)?;
+        Ok((lhs, rhs))
+    }
+
+    parser.expect_token(Token::ReservedWord(Reserved::Program))?;
+    let name = parser.expect_symbol()?;
     parser.expect_token(Token::OpenParen)?;
+    let parameters = parser.parse_sequence(|parser| parse_parameters(parser), false)?;
+    parser.expect_token(Token::Keyword("signature".to_owned()))?;
+    parser.expect_token(Token::OpenParen)?;
+    let mut signature_params = parser.parse_sequence(|parser| parser.parse_sort(true), false)?;
+    let signature_return = parser.parse_sort(true)?;
+    signature_params.push(signature_return);
+    let signature = parser.pool.add(Term::Sort(Sort::Function(signature_params)));
+    parser.insert_sorted_var((name.clone(), signature));
+
+    parser.expect_token(Token::OpenParen)?;
+    let patterns = parser.parse_sequence(
+        |parser| {
+            let pattern = parse_pattern(parser)?;
+            Ok(pattern)
+        },
+        false,
+    )?;
+
+    parser.expect_token(Token::CloseParen)?;
+
+    Ok(Program { name: name })
+}
+
+pub fn parse_rule<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<RuleDefinition> {
     parser.expect_token(Token::ReservedWord(Reserved::DeclareRareRule))?;
     let name = parser.expect_symbol()?;
     parser.expect_token(Token::OpenParen)?;
@@ -143,14 +181,33 @@ where
     'a: 'b,
 {
     let mut rules = vec![];
+    let mut programs = vec![];
     let mut current = &parser.current_token;
     while *current != Token::Eof {
-        rules.push(parse_rule(parser)?);
+        parser.expect_token(Token::OpenParen)?;
+        current = &parser.current_token;
+        match current {
+            Token::ReservedWord(Reserved::DeclareRareRule) => rules.push(parse_rule(parser)?),
+            Token::ReservedWord(Reserved::Program) => programs.push(parse_program(parser)?),
+            _ => {
+                return Err(Error::Parser(
+                    ParserError::UnexpectedToken(current.clone()),
+                    parser.current_position,
+                ));
+            }
+        }
+
         current = &parser.current_token;
     }
 
-    return Ok(rules
-        .iter()
-        .map(|x| (x.name.clone(), (*x).clone()))
-        .collect());
+    return Ok(RareStatements {
+        rules: rules
+            .iter()
+            .map(|x| (x.name.clone(), (*x).clone()))
+            .collect(),
+        programs: programs
+            .iter()
+            .map(|x| (x.name.clone(), (*x).clone()))
+            .collect(),
+    });
 }
