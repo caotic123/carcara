@@ -121,6 +121,7 @@ pub fn parse_program<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<Progra
     let mut signature_params = parser.parse_sequence(|parser| parser.parse_sort(true), false)?;
     let signature_return = parser.parse_sort(true)?;
     signature_params.push(signature_return);
+    println!("Parsed signature parameters: {:?}", signature_params);
     let signature = parser.pool.add(Term::Sort(Sort::Function(signature_params)));
     parser.insert_sorted_var((name.clone(), signature));
 
