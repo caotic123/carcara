@@ -21,7 +21,7 @@ pub enum ParserError {
     LeadingZero(String),
 
     /// The lexer encountered a numerical literal that contained a division by zero, e.g. '1/0'.
-    #[error("divison by zero in numerical literal: '{0}'")]
+    #[error("division by zero in numerical literal: '{0}'")]
     DivisionByZeroInLiteral(String),
 
     /// The lexer encountered a `\` character while reading a quoted symbol.
@@ -36,8 +36,8 @@ pub enum ParserError {
     #[error("unexpected EOF in string literal")]
     EofInString,
 
-    /// The lexer encountered an invalid unicode value in an escape sequence.
-    #[error("invalid unicode value: 0x'{0}'")]
+    /// The lexer encountered an invalid Unicode value in an escape sequence.
+    #[error("invalid Unicode value: 0x'{0}'")]
     InvalidUnicode(String),
 
     /// The lexer encountered a bitvector literal with no actual digits. This
@@ -61,7 +61,7 @@ pub enum ParserError {
     #[error("sort error: {0}")]
     SortError(#[from] SortError),
 
-    /// Expected BvSort
+    /// Expected `BvSort`
     #[error("expected bitvector sort, got '{0}'")]
     ExpectedBvSort(Sort),
 
@@ -72,6 +72,10 @@ pub enum ParserError {
     /// A term that is not a function was used as a function.
     #[error("'{0}' is not a function sort")]
     NotAFunction(Sort), // TODO: This should also carry the actual function term
+
+    /// A term that is not a function was used as a function.
+    #[error("'{0}' cannot be matched to '{1}'")]
+    IncompatibleSorts(Sort, Sort),
 
     /// The parser encountered an identifier that was not defined.
     #[error("identifier '{0}' is not defined")]
@@ -125,7 +129,7 @@ pub enum ParserError {
     #[error("not a valid qualified operator: '{0}'")]
     InvalidQualifiedOp(String),
 
-    /// The parser encountered an unknown qualified operator.
+    /// The parser encountered an invalid argument.
     #[error("not a valid format for the argument: '{0}'")]
     InvalidRareArgFormat(String),
 
@@ -160,13 +164,13 @@ where
 }
 
 /// Returns an error if the value of `sequence` is not in the `expected` range.
-pub fn assert_indexed_op_args_value<R>(sequence: &[Constant], range: R) -> Result<(), ParserError>
+pub fn assert_indexed_op_args_value<R>(sequence: &[Rc<Term>], range: R) -> Result<(), ParserError>
 where
     R: Into<Range<Integer>>,
 {
     let range = range.into();
     for x in sequence {
-        if let Constant::Integer(i) = x {
+        if let Term::Const(Constant::Integer(i)) = x.as_ref() {
             if !range.contains(i.clone()) {
                 return Err(ParserError::WrongValueOfArgs(range, i.clone()));
             }
@@ -241,6 +245,29 @@ impl SortError {
         got: &Sort,
     ) -> Result<(), Self> {
         let any = Sort::Atom("?".to_owned(), Vec::new());
+
+        if let Sort::ParamSort(v, head) = got {
+            if let Some(Sort::Var(name)) = head.as_sort() {
+                if name == "Array" {
+                    if v.len() != 2 {
+                        let any = pool.add(Term::Sort(any.clone()));
+                        return Err(Self {
+                            expected: vec![Sort::Array(any.clone(), any)],
+                            got: got.clone(),
+                        });
+                    }
+
+                    let key = &v[0].as_sort().cloned();
+                    let value = v[1].as_sort().cloned();
+                    return Self::assert_array_sort(
+                        pool,
+                        key.as_ref(),
+                        value.as_ref(),
+                        &Sort::Array(v[0].clone(), v[1].clone()),
+                    );
+                }
+            }
+        }
 
         let expected = {
             let key = pool.add(Term::Sort(key.cloned().unwrap_or_else(|| any.clone())));

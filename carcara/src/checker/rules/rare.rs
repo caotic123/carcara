@@ -24,7 +24,7 @@ pub fn check_rare(
     }
 
     if let Term::Const(Constant::String(v)) = &**rule_literal.unwrap() {
-        let rule = rare_rules.get(v);
+        let rule = rare_rules.rules.get(v);
         if rule.is_none() {
             return Err(CheckerError::RareRuleNotFound(v.clone()));
         }

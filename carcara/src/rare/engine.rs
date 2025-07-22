@@ -1,7 +1,7 @@
 
 use crate::{
     ast::{
-        rules::{AttributeParameters, Rules},
+        rare_rules::{AttributeParameters, Rules},
         Constant, Operator, PrimitivePool, ProofNode, Rc, Term,
     },
     rare::{
@@ -284,7 +284,7 @@ fn construct_premises(
 
 fn construct_rules(database: &Rules, func_cache: &mut EggFunctions) -> EggLanguage {
     let mut rules = vec![];
-    for (_name, definition) in database {
+    for (_name, definition) in database.rules.iter() {
         let mut premises = vec![];
 
         let subs = definition

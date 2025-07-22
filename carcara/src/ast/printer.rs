@@ -151,7 +151,7 @@ struct AlethePrinter<'a> {
     smt_lib_strict: bool,
 }
 
-impl<'a> PrintProof for AlethePrinter<'a> {
+impl PrintProof for AlethePrinter<'_> {
     fn write_proof(&mut self, proof: &Proof) -> io::Result<()> {
         for (name, value) in &proof.constant_definitions {
             write!(self.inner, "(define-fun {} () ", quote_symbol(name))?;
@@ -521,10 +521,7 @@ impl fmt::Display for Sort {
             Sort::String => write!(f, "String"),
             Sort::RegLan => write!(f, "RegLan"),
             Sort::Var(name) => write!(f, "{}", name),
-            Sort::ParamSort(args, s) => {
-                let par = format!("(par {:?} {})", args, s);
-                write!(f, "{}", par)
-            }
+            Sort::ParamSort(args, s) => write!(f, "(par {:?} {})", args, s),
             Sort::Array(x, y) => write_s_expr(f, "Array", &[x, y]),
             Sort::BitVec(w) => write!(f, "(_ BitVec {})", w),
             Sort::RareList => write!(f, "rare-list"),

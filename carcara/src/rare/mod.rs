@@ -6,7 +6,7 @@ pub mod meta;
 pub mod language;
 
 use crate::{
-    ast::{rules::RewriteTerm, Rc, Term, TermPool},
+    ast::{rare_rules::RewriteTerm, Rc, Term, TermPool},
     build_equation, pseudo_term,
 };
 

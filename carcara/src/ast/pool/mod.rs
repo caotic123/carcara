@@ -3,7 +3,7 @@
 pub mod advanced;
 mod storage;
 
-use super::{Binder, Operator, Rc, Sort, Term};
+use super::{Binder, Operator, Rc, Sort, Substitution, Term};
 use crate::ast::{Constant, ParamOperator};
 use indexmap::{IndexMap, IndexSet};
 use rug::Integer;
@@ -114,45 +114,95 @@ impl PrimitivePool {
                 | Operator::BvSLe
                 | Operator::BvSGt
                 | Operator::BvSGe
-                | Operator::BvShl
-                | Operator::BvLShr => Sort::Bool,
+                | Operator::Cl
+                | Operator::Delete => Sort::Bool,
+
+                Operator::BvSize | Operator::UBvToInt | Operator::SBvToInt => Sort::Int,
+
                 Operator::BvAdd
                 | Operator::BvSub
                 | Operator::BvNot
                 | Operator::BvNeg
-                | Operator::BvNAnd
-                | Operator::BvNOr
                 | Operator::BvAnd
                 | Operator::BvOr
+                | Operator::BvMul
                 | Operator::BvUDiv
                 | Operator::BvURem
+                | Operator::BvShl
+                | Operator::BvLShr
+                | Operator::BvNAnd
+                | Operator::BvNOr
                 | Operator::BvXor
                 | Operator::BvXNor
-                | Operator::BvMul
                 | Operator::BvSDiv
                 | Operator::BvSRem
                 | Operator::BvSMod
                 | Operator::BvAShr => {
-                    let Sort::BitVec(width) =
-                        self.compute_sort(&args[0]).as_sort().unwrap().clone()
-                    else {
-                        unreachable!()
-                    };
-                    Sort::BitVec(width)
+                    match self.compute_sort(&args[0]).as_sort().unwrap().clone() {
+                        Sort::BitVec(width) => Sort::BitVec(width),
+                        Sort::ParamSort(v, head) => {
+                            if let Some(Sort::Var(_)) = head.as_sort() {
+                                Sort::ParamSort(v, head)
+                            } else {
+                                unreachable!()
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
                 }
                 Operator::BvComp => Sort::BitVec(Integer::ONE.into()),
-                Operator::BvBbTerm => Sort::BitVec(Integer::from(args.len())),
+                Operator::BvBbTerm | Operator::BvPBbTerm => Sort::BitVec(Integer::from(args.len())),
+                Operator::BvConst => match &*args[1] {
+                    Term::Const(Constant::Integer(bvsize)) => Sort::BitVec(bvsize.clone()),
+                    _ => Sort::ParamSort(
+                        vec![args[1].clone()],
+                        self.add(Term::Sort(Sort::Var("BitVec".to_owned()))),
+                    ),
+                },
                 Operator::BvConcat => {
-                    let mut total_width = Integer::ZERO;
-                    for arg in args {
-                        let Sort::BitVec(arg_width) =
-                            self.compute_sort(arg).as_sort().unwrap().clone()
-                        else {
-                            unreachable!()
-                        };
-                        total_width += arg_width;
+                    enum TotalWidth {
+                        Width(Integer),
+                        ParamSort(Rc<Term>),
                     }
-                    Sort::BitVec(total_width)
+                    let mut total_width: Vec<TotalWidth> = vec![];
+                    for arg in args {
+                        match self.compute_sort(arg).as_sort().unwrap().clone() {
+                            Sort::BitVec(arg_width) => {
+                                total_width.push(TotalWidth::Width(arg_width));
+                            }
+                            Sort::ParamSort(v, _) => {
+                                total_width.push(TotalWidth::ParamSort(v[0].clone()))
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    if total_width
+                        .iter()
+                        .any(|x| matches!(x, TotalWidth::ParamSort(_)))
+                    {
+                        let add = Term::Op(
+                            Operator::Add,
+                            total_width
+                                .iter()
+                                .map(|x| match x {
+                                    TotalWidth::Width(w) => {
+                                        self.add(Term::Const(Constant::Integer(w.clone())))
+                                    }
+                                    TotalWidth::ParamSort(p) => p.clone(),
+                                })
+                                .collect(),
+                        );
+
+                        Sort::ParamSort(
+                            vec![self.add(add)],
+                            self.add(Term::Sort(Sort::Var("BitVec".to_owned()))),
+                        )
+                    } else {
+                        Sort::BitVec(total_width.iter().fold(Integer::ZERO, |acc, x| match x {
+                            TotalWidth::Width(w) => acc + w,
+                            TotalWidth::ParamSort(_) => unreachable!(),
+                        }))
+                    }
                 }
                 Operator::Ite => self.compute_sort(&args[1]).as_sort().unwrap().clone(),
                 Operator::Add | Operator::Sub | Operator::Mult => {
@@ -169,6 +219,13 @@ impl PrimitivePool {
                 Operator::IntDiv | Operator::Mod | Operator::Abs | Operator::ToInt => Sort::Int,
                 Operator::Select => match self.compute_sort(&args[0]).as_sort().unwrap() {
                     Sort::Array(_, y) => y.as_sort().unwrap().clone(),
+                    Sort::ParamSort(v, head) => {
+                        if let Some(Sort::Var(_)) = head.as_sort() {
+                            v[1].as_sort().unwrap().clone()
+                        } else {
+                            unreachable!()
+                        }
+                    }
                     _ => unreachable!(),
                 },
                 Operator::Store => self.compute_sort(&args[0]).as_sort().unwrap().clone(),
@@ -199,9 +256,40 @@ impl PrimitivePool {
                 | Operator::ReRange => Sort::RegLan,
                 Operator::RareList => Sort::RareList,
             },
-            Term::App(f, _) => {
+            Term::App(f, args) => {
                 match self.compute_sort(f).as_sort().unwrap() {
                     Sort::Function(sorts) => sorts.last().unwrap().as_sort().unwrap().clone(),
+                    Sort::ParamSort(_, p_sort) => {
+                        let p_function_sort = p_sort.as_sort().unwrap();
+                        if let Sort::Function(sorts) = p_function_sort {
+                            // match with sorts of args, apply the resulting substitution on the return sort
+                            let mut map = IndexMap::new();
+                            for i in 0..args.len() {
+                                let sort_i = sorts[i].as_sort().unwrap();
+                                let arg_sort_i =
+                                    self.compute_sort(&args[i]).as_sort().unwrap().clone();
+                                if !sort_i.match_with(&arg_sort_i, &mut map) {
+                                    unreachable!();
+                                }
+                            }
+                            let substitution: IndexMap<_, _> = map
+                                .into_iter()
+                                .map(|(var_name, sort)| {
+                                    let var = Term::Sort(Sort::Var(var_name));
+                                    let sort_t = Term::Sort(sort);
+                                    (self.add(var), self.add(sort_t))
+                                })
+                                .collect();
+                            Substitution::new(self, substitution)
+                                .unwrap()
+                                .apply(self, sorts.last().unwrap())
+                                .as_sort()
+                                .unwrap()
+                                .clone()
+                        } else {
+                            unreachable!()
+                        }
+                    }
                     _ => unreachable!(), // We assume that the function is correctly sorted
                 }
             }
@@ -231,10 +319,28 @@ impl PrimitivePool {
                         };
                         Sort::BitVec(extension_width + bv_width)
                     }
+                    ParamOperator::RotateLeft | ParamOperator::RotateRight => {
+                        self.compute_sort(&args[0]).as_sort().unwrap().clone()
+                    }
+                    ParamOperator::Repeat => {
+                        let repetitions = op_args[0].as_integer().unwrap();
+                        let Sort::BitVec(bv_width) =
+                            self.compute_sort(&args[0]).as_sort().unwrap().clone()
+                        else {
+                            unreachable!()
+                        };
+                        Sort::BitVec(repetitions * bv_width)
+                    }
+
                     ParamOperator::BvConst => unreachable!(
-                        "bv const should be handled by the parser and transfromed into a constant"
+                        "bv const should be handled by the parser and transformed into a constant"
                     ),
+                    ParamOperator::IntToBv => {
+                        let bvsize = op_args[0].as_integer().unwrap();
+                        Sort::BitVec(bvsize)
+                    }
                     ParamOperator::BvBitOf => Sort::Bool,
+                    ParamOperator::BvIntOf => Sort::Int,
                     ParamOperator::RePower | ParamOperator::ReLoop => Sort::RegLan,
                     ParamOperator::ArrayConst => op_args[0].as_sort().unwrap().clone(),
                 };

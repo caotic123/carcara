@@ -1,7 +1,7 @@
 use super::{Parser, ParserError, Reserved, SortDef, Token};
 use crate::ast::*;
 use crate::CarcaraResult;
-use crate::{ast::rules::*, Error};
+use crate::{ast::rare_rules::*, Error};
 use std::io::BufRead;
 
 #[derive(Debug, Clone)]
@@ -11,9 +11,7 @@ enum Body {
     Args(Vec<String>),
 }
 
-fn parse_parameters<'a, R: BufRead>(
-    parser: &mut Parser<'a, R>,
-) -> CarcaraResult<(String, TypeParameter)> {
+fn parse_parameters<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<(String, TypeParameter)> {
     parser.expect_token(Token::OpenParen)?;
     let name = parser.expect_symbol()?;
     let term = parser.parse_sort(true)?;
@@ -30,13 +28,13 @@ fn parse_parameters<'a, R: BufRead>(
     match current_token {
         Token::CloseParen => {
             parser.expect_token(Token::CloseParen)?;
-            return Ok((
+            Ok((
                 name,
                 TypeParameter {
                     term,
                     attribute: AttributeParameters::None,
                 },
-            ));
+            ))
         }
         Token::Keyword(_) => {
             let kind_of_arg = parser.expect_keyword()?;
@@ -45,15 +43,15 @@ fn parse_parameters<'a, R: BufRead>(
                 return Ok((
                     name,
                     TypeParameter {
-                        term: term,
+                        term,
                         attribute: AttributeParameters::List,
                     },
                 ));
             }
-            return Err(Error::Parser(
+            Err(Error::Parser(
                 ParserError::InvalidRareArgAttribute(kind_of_arg),
                 parser.current_position,
-            ));
+            ))
         }
         _ => Err(Error::Parser(
             ParserError::UnexpectedToken(current_token.clone()),
@@ -62,55 +60,88 @@ fn parse_parameters<'a, R: BufRead>(
     }
 }
 
-fn parse_body<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<Body> {
+fn parse_body<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<Body> {
     let qualified_arg: Vec<char> = parser.expect_keyword()?.chars().collect();
     match qualified_arg.as_slice() {
         ['c', 'o', 'n', 'c', 'l', 'u', 's', 'i', 'o', 'n', ..] => {
             let rewrite_term = parser.parse_term()?;
-            return Ok(Body::Conclusion(rewrite_term));
+            Ok(Body::Conclusion(rewrite_term))
         }
         ['a', 'r', 'g', 's', ..] => {
-            fn parse_args<'a, R: BufRead>(
-                parser: &mut Parser<'a, R>,
-            ) -> CarcaraResult<Vec<String>> {
+            fn parse_args<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<Vec<String>> {
                 parser.expect_token(Token::OpenParen)?;
-                return parser.parse_sequence(|parser| parser.expect_symbol(), false);
+                parser.parse_sequence(super::Parser::expect_symbol, false)
             }
             let args = parse_args(parser)?;
-            return Ok(Body::Args(args));
+            Ok(Body::Args(args))
         }
         ['p', 'r', 'e', 'm', 'i', 's', 'e', 's', ..] => {
             parser.expect_token(Token::OpenParen)?;
             let terms = parser.parse_sequence(
                 |parser| {
                     let term = parser.parse_term()?;
-                    return Ok(term);
+                    Ok(term)
                 },
                 false,
             )?;
-            return Ok(Body::Premise(terms));
+            Ok(Body::Premise(terms))
         }
-        attribute => {
-            return Err(Error::Parser(
-                ParserError::InvalidRareFunctionAttribute(attribute.iter().collect()),
-                parser.current_position,
-            ));
-        }
+        attribute => Err(Error::Parser(
+            ParserError::InvalidRareFunctionAttribute(attribute.iter().collect()),
+            parser.current_position,
+        )),
     }
 }
 
-pub fn parse_rule<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<RuleDefinition> {
+struct BodyDefinition<'a> {
+    args: &'a Vec<String>,
+    premises: &'a Vec<Rc<Term>>,
+    conclusion: Option<Rc<Term>>,
+}
+
+pub fn parse_program<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<Program> {
+    pub fn parse_pattern<R: BufRead>(
+        parser: &mut Parser<R>,
+    ) -> CarcaraResult<(Rc<Term>, Rc<Term>)> {
+        parser.expect_token(Token::OpenParen)?;
+        let lhs = parser.parse_term()?;
+        let rhs = parser.parse_term()?;
+        parser.expect_token(Token::CloseParen)?;
+        Ok((lhs, rhs))
+    }
+
+    parser.expect_token(Token::ReservedWord(Reserved::Program))?;
+    let name = parser.expect_symbol()?;
     parser.expect_token(Token::OpenParen)?;
+    let parameters = parser.parse_sequence(|parser| parse_parameters(parser), false)?;
+    parser.expect_token(Token::Keyword("signature".to_owned()))?;
+    parser.expect_token(Token::OpenParen)?;
+    let mut signature_params = parser.parse_sequence(|parser| parser.parse_sort(true), false)?;
+    let signature_return = parser.parse_sort(true)?;
+    signature_params.push(signature_return);
+    println!("Parsed signature parameters: {:?}", signature_params);
+    let signature = parser.pool.add(Term::Sort(Sort::Function(signature_params)));
+    parser.insert_sorted_var((name.clone(), signature));
+
+    parser.expect_token(Token::OpenParen)?;
+    let patterns = parser.parse_sequence(
+        |parser| {
+            let pattern = parse_pattern(parser)?;
+            Ok(pattern)
+        },
+        false,
+    )?;
+
+    parser.expect_token(Token::CloseParen)?;
+
+    Ok(Program { name: name })
+}
+
+pub fn parse_rule<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<RuleDefinition> {
     parser.expect_token(Token::ReservedWord(Reserved::DeclareRareRule))?;
     let name = parser.expect_symbol()?;
     parser.expect_token(Token::OpenParen)?;
     let parameters = parser.parse_sequence(|parser| parse_parameters(parser), false)?;
-
-    pub struct BodyDefinition<'a> {
-        args: &'a Vec<String>,
-        premises: &'a Vec<Rc<Term>>,
-        conclusion: Option<Rc<Term>>,
-    }
 
     let body_definitions = BodyDefinition {
         args: &vec![],
@@ -125,7 +156,7 @@ pub fn parse_rule<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<R
             Body::Premise(term) => body.premises = term,
             Body::Args(args) => body.args = args,
         }
-        return body;
+        body
     });
 
     if Option::is_none(&body.conclusion) {
@@ -137,10 +168,10 @@ pub fn parse_rule<'a, R: BufRead>(parser: &mut Parser<'a, R>) -> CarcaraResult<R
 
     return Ok(RuleDefinition {
         name,
-        parameters: parameters.iter().map(|x| x.clone()).collect(),
+        parameters: parameters.iter().cloned().collect(),
         arguments: body.args.clone(),
         premises: body.premises.clone(),
-        conclusion: body.conclusion.map(|x| x).unwrap(),
+        conclusion: body.conclusion.unwrap(),
     });
 }
 
@@ -149,14 +180,33 @@ where
     'a: 'b,
 {
     let mut rules = vec![];
+    let mut programs = vec![];
     let mut current = &parser.current_token;
     while *current != Token::Eof {
-        rules.push(parse_rule(parser)?);
+        parser.expect_token(Token::OpenParen)?;
+        current = &parser.current_token;
+        match current {
+            Token::ReservedWord(Reserved::DeclareRareRule) => rules.push(parse_rule(parser)?),
+            Token::ReservedWord(Reserved::Program) => programs.push(parse_program(parser)?),
+            _ => {
+                return Err(Error::Parser(
+                    ParserError::UnexpectedToken(current.clone()),
+                    parser.current_position,
+                ));
+            }
+        }
+
         current = &parser.current_token;
     }
 
-    return Ok(rules
-        .iter()
-        .map(|x| (x.name.clone(), (*x).clone()))
-        .collect());
+    return Ok(RareStatements {
+        rules: rules
+            .iter()
+            .map(|x| (x.name.clone(), (*x).clone()))
+            .collect(),
+        programs: programs
+            .iter()
+            .map(|x| (x.name.clone(), (*x).clone()))
+            .collect(),
+    });
 }
