@@ -1869,9 +1869,12 @@ impl<'a, R: BufRead> Parser<'a, R> {
             {
                 Ok(Sort::Var(other.to_owned()))
             }
-           other if polymorphic && matches!(self.state.sort_defs.get(other), Some(x) if *x.body == Term::Sort(Sort::Type)) => {
-               Ok(Sort::Var(other.to_owned()))
-           },
+            other
+                if polymorphic
+                    && matches!(self.state.sort_defs.get(other), Some(x) if *x.body == Term::Sort(Sort::Type)) =>
+            {
+                Ok(Sort::Var(other.to_owned()))
+            }
             other if self.state.sort_defs.get(other).is_some() => {
                 let def = self.state.sort_defs.get(other).unwrap();
                 return if def.params.len() != args.len() {
@@ -1941,10 +1944,11 @@ impl<'a, R: BufRead> Parser<'a, R> {
             Token::OpenParen if polymorphic => {
                 let name = self.expect_symbol()?;
                 if name == "->" {
-                    let sorts = Self::parse_sequence(self, |parser| Self::parse_sort(parser, true), true)?;
-                    return Ok(self.pool.add(Term::Sort(Sort::Function(sorts))))
+                    let sorts =
+                        Self::parse_sequence(self, |parser| Self::parse_sort(parser, true), true)?;
+                    return Ok(self.pool.add(Term::Sort(Sort::Function(sorts))));
                 }
-        
+
                 let args = self.parse_sequence(|parser| Self::parse_term(parser), true)?;
                 let head_term = self.pool.add(Term::Sort(Sort::Var(name.clone())));
                 return Ok(self.pool.add(Term::Sort(Sort::ParamSort(args, head_term))));
