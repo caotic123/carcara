@@ -1,21 +1,13 @@
 (program is_all_eq ((xs Bool :list) (x Bool) (y Bool))
   :signature (Bool Bool) Bool
   (
-  ((is_all_eq (or x xs) x) (is_all_eq xs x))
-  ((is_all_eq false x) true)
-  ((is_all_eq y x) false)
+  ((is_all_eq (and x xs) x) (is_all_eq xs x))
+  ((is_all_eq x x) true)
   )
 )
 
-(program $singleton_elim_aci ((S Type) (U Type) (f (-> S S S)) (id U) (x U) (x1 U) (x2 U))
-  :signature ((-> S S S) U U) U
-  (
-    (($singleton_elim_aci f id (f x1 x2))  (ite (= x2 id) x1 (f x1 x2)))
-    (($singleton_elim_aci f id x)  x)
+(declare-rare-rule and_is_true ((x Bool :list)) 
+  :args (x)
+  :premises ((= (is_all_eq x true) true))
+  :conclusion (= (or x true) true)
   )
-)
-
-(declare-rare-rule arith-elim-gt ((@T0 Type) (@T1 Type) (t1 @T0) (s1 @T1))
-  :args (t1 s1)
-  :conclusion (= (> t1 s1) (not (>= s1 t1)))
-)

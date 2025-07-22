@@ -1,13 +1,11 @@
 
 use crate::{
     ast::{
-        rare_rules::{AttributeParameters, Rules},
+        rare_rules::{AttributeParameters, RuleDefinition, Rules},
         Constant, Operator, PrimitivePool, ProofNode, Rc, Term,
     },
     rare::{
-        language::*,
-        meta::lower_egg_language,
-        util::{clauses_to_or, get_equational_terms},
+        computational::compile_program, language::*, meta::lower_egg_language, util::{clauses_to_or, get_equational_terms}
     },
 };
 use egglog::{self, EGraph};
@@ -282,9 +280,9 @@ fn construct_premises(
     grounds_terms
 }
 
-fn construct_rules(database: &Rules, func_cache: &mut EggFunctions) -> EggLanguage {
+fn construct_rules(database: &[RuleDefinition], func_cache: &mut EggFunctions) -> EggLanguage {
     let mut rules = vec![];
-    for (_name, definition) in database.rules.iter() {
+    for definition in database {
         let mut premises = vec![];
 
         let subs = definition
@@ -411,11 +409,21 @@ pub fn reconstruct_rule(
     database: &Rules,
 ) {
     let mut egg_functions = EggFunctions::new();
+    let mut rules: Vec<Vec<RuleDefinition>> = database.programs.iter().map(|db| compile_program(pool, db.1)).collect();
+    let db : Vec<RuleDefinition> = database.rules.values().cloned().collect();
+    rules.push(db);
+    let rules = &rules.concat();
 
-    let rules = construct_rules(database, &mut egg_functions);
+    for rule in rules.iter() {
+        println!("{}", rule);
+    }
+
+    let rules = construct_rules(&rules, &mut egg_functions);
+
     let premises = construct_premises(pool, root, &mut egg_functions);
     let goal = set_goal(&conclusion, &mut egg_functions);
     let declarations = declare_functions(egg_functions);
+    
     let mut ast = create_headers();
 
     ast.extend(declarations);
