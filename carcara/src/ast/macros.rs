@@ -74,11 +74,6 @@ macro_rules! match_term {
     (false = $var:expr $(, $flag:ident)?) => {
         if $var.is_bool_false() { Some(()) } else { None }
     };
-    (0 = $var:expr $(, $flag:ident)?) => {
-        if let Some(i) = $var.as_integer() {
-            if i == 0 { Some(()) } else { None }
-        } else { None }
-    };
     ("" = $var:expr $(, $flag:ident)?) => {
         if $var.is_empty_string() { Some(()) } else { None }
     };
@@ -93,6 +88,15 @@ macro_rules! match_term {
     };
     ((exists ... $args:tt) = $var:expr) => {
         if let $crate::ast::Term::Binder($crate::ast::Binder::Exists, bindings, inner) =
+            &$var as &$crate::ast::Term
+        {
+            match_term!($args = inner).and_then(|inner| Some((bindings, inner)))
+        } else {
+            None
+        }
+    };
+    ((choice ... $args:tt) = $var:expr) => {
+        if let $crate::ast::Term::Binder($crate::ast::Binder::Choice, bindings, inner) =
             &$var as &$crate::ast::Term
         {
             match_term!($args = inner).and_then(|inner| Some((bindings, inner)))
@@ -169,14 +173,49 @@ macro_rules! match_term {
     (@GET_VARIANT >)        => { $crate::ast::Operator::GreaterThan };
     (@GET_VARIANT <=)       => { $crate::ast::Operator::LessEq };
     (@GET_VARIANT >=)       => { $crate::ast::Operator::GreaterEq };
-    (@GET_VARIANT bbterm)   => { $crate::ast::Operator::BvBbTerm };
-    (@GET_VARIANT bvult)    => { $crate::ast::Operator::BvULt };
+
+    (@GET_VARIANT cl)    => { $crate::ast::Operator::Cl };
+    (@GET_VARIANT delete)    => { $crate::ast::Operator::Delete };
+
+    (@GET_VARIANT pbbterm)  => { $crate::ast::Operator::BvPBbTerm };
+    (@GET_VARIANT int_of)      => { $crate::ast::ParamOperator::BvIntOf };
+
+    (@GET_VARIANT bbterm)      => { $crate::ast::Operator::BvBbTerm };
+    (@GET_VARIANT bit_of)      => { $crate::ast::ParamOperator::BvBitOf };
+    (@GET_VARIANT bvnot)    => { $crate::ast::Operator::BvNot };
+    (@GET_VARIANT bvneg)    => { $crate::ast::Operator::BvNeg };
+    (@GET_VARIANT bvand)    => { $crate::ast::Operator::BvAnd };
+    (@GET_VARIANT bvor)     => { $crate::ast::Operator::BvOr };
+    (@GET_VARIANT bvxor)    => { $crate::ast::Operator::BvXor };
+    (@GET_VARIANT bvxnor)   => { $crate::ast::Operator::BvXNor };
+    (@GET_VARIANT bvcomp)   => { $crate::ast::Operator::BvComp };
     (@GET_VARIANT bvadd)    => { $crate::ast::Operator::BvAdd };
+    (@GET_VARIANT bvmul)    => { $crate::ast::Operator::BvMul };
+    (@GET_VARIANT bvudiv)   => { $crate::ast::Operator::BvUDiv };
+    (@GET_VARIANT bvurem)   => { $crate::ast::Operator::BvURem };
+    (@GET_VARIANT bvshl)    => { $crate::ast::Operator::BvShl };
+    (@GET_VARIANT bvlshr)   => { $crate::ast::Operator::BvLShr };
+    (@GET_VARIANT concat)   => { $crate::ast::Operator::BvConcat };
+
+    (@GET_VARIANT bvuge)    => { $crate::ast::Operator::BvUGe };
+    (@GET_VARIANT bvugt)    => { $crate::ast::Operator::BvUGt };
+    (@GET_VARIANT bvule)    => { $crate::ast::Operator::BvULe };
+    (@GET_VARIANT bvult)    => { $crate::ast::Operator::BvULt };
+    (@GET_VARIANT bvsge)    => { $crate::ast::Operator::BvSGe };
+    (@GET_VARIANT bvsgt)    => { $crate::ast::Operator::BvSGt };
+    (@GET_VARIANT bvsle)    => { $crate::ast::Operator::BvSLe };
+    (@GET_VARIANT bvslt)    => { $crate::ast::Operator::BvSLt };
+
+    (@GET_VARIANT ubv_to_int)   => { $crate::ast::Operator::UBvToInt };
+    (@GET_VARIANT sbv_to_int)   => { $crate::ast::Operator::SBvToInt };
+    (@GET_VARIANT int_to_bv)   => { $crate::ast::ParamOperator::IntToBv };
 
     (@GET_VARIANT extract)     => { $crate::ast::ParamOperator::BvExtract };
-    (@GET_VARIANT bit_of)      => { $crate::ast::ParamOperator::BvBitOf };
     (@GET_VARIANT zero_extend) => { $crate::ast::ParamOperator::ZeroExtend };
     (@GET_VARIANT sign_extend) => { $crate::ast::ParamOperator::SignExtend };
+    (@GET_VARIANT rotate_left) => { $crate::ast::ParamOperator::RotateLeft };
+    (@GET_VARIANT rotate_right) => { $crate::ast::ParamOperator::RotateRight };
+    (@GET_VARIANT repeat) => { $crate::ast::ParamOperator::Repeat };
 
     (@GET_VARIANT strconcat) => { $crate::ast::Operator::StrConcat };
     (@GET_VARIANT strsubstr) => { $crate::ast::Operator::Substring };
@@ -187,6 +226,18 @@ macro_rules! match_term {
 
     (@GET_VARIANT rarelist)    => { $crate::ast::Operator::RareList };
 
+    // In the last case it can match a literal integer
+    ($lit:literal = $var:expr $(, $flag:ident)?) => {
+        if let Some(i) = $var.as_integer() {
+            if i == $lit {
+                Some(())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
 }
 
 /// A variant of `match_term` that returns a `Result<_, CheckerError>` instead of an `Option`.
@@ -228,7 +279,17 @@ macro_rules! match_term_err {
 macro_rules! build_term {
     ($pool:expr, true) => { $pool.bool_true() };
     ($pool:expr, false) => { $pool.bool_false() };
-    ($pool:expr, $int:literal) => { $pool.add(Term::Const(Constant::Integer($int.into()))) };
+    ($pool:expr, (let $name:ident $sort:ident)) => {{
+        let sort = $pool.add($crate::ast::Term::Sort(Sort::$sort));
+        $pool.add($crate::ast::Term::new_var(stringify!($name), sort))
+    }};
+    ($pool:expr, (choice (($z:literal $sort:ident)) $arg:tt)) => {{
+        let sort = $pool.add($crate::ast::Term::Sort(Sort::$sort));
+        let bindings = $crate::ast::BindingList(vec![($z.into(), sort)]);
+        let body = build_term!($pool, $arg);
+        $pool.add(Term::Binder(Binder::Choice, bindings, body))
+    }};
+    ($pool:expr, $int:literal) => { $pool.add(Term::Const($crate::ast::Constant::Integer($int.into()))) };
     ($pool:expr, {$terminal:expr}) => { $terminal };
     ($pool:expr, ((_ $indexed_op:tt $($op_args:tt)+) $($args:tt)+)) => {{
         let term = $crate::ast::Term::ParamOp {
@@ -236,6 +297,13 @@ macro_rules! build_term {
             op_args: vec![ $(build_term!($pool, $op_args)),+ ],
             args: vec![ $(build_term!($pool, $args)),+ ],
         };
+        $pool.add(term)
+    }};
+    ($pool:expr, ($op:tt [$arg:expr])) => {{
+        let term = $crate::ast::Term::Op(
+            match_term!(@GET_VARIANT $op),
+            $arg,
+        );
         $pool.add(term)
     }};
     ($pool:expr, ($op:tt $($args:tt)+)) => {{
@@ -357,8 +425,13 @@ mod tests {
         assert_eq!(1, j.as_integer().unwrap());
         assert_eq!(Term::new_bv(0, 5), **b);
 
-        let term = parse_term(&mut p, "((_ bit_of 2) (_ bv0 5))");
+        let term = parse_term(&mut p, "((_ @bit_of 2) (_ bv0 5))");
         let (i, b): (&Rc<Term>, &[Rc<Term>]) = match_term!(((_ bit_of i) ...) = term).unwrap();
+        assert_eq!(2, i.as_integer().unwrap());
+        assert_eq!(Term::new_bv(0, 5), *b[0]);
+
+        let term = parse_term(&mut p, "((_ @int_of 2) (_ bv0 5))");
+        let (i, b): (&Rc<Term>, &[Rc<Term>]) = match_term!(((_ int_of i) ...) = term).unwrap();
         assert_eq!(2, i.as_integer().unwrap());
         assert_eq!(Term::new_bv(0, 5), *b[0]);
 
@@ -416,9 +489,15 @@ mod tests {
                 )),
             ),
             (
-                "((_ bit_of 1) ((_ extract 3 2) #b000000))",
+                "((_ @bit_of 1) ((_ extract 3 2) #b000000))",
                 build_term!(pool,
-                    ((_ bit_of 1) ((_ extract 3 2) {zeros}))
+                    ((_ bit_of 1) ((_ extract 3 2) {zeros.clone()}))
+                ),
+            ),
+            (
+                "((_ @int_of 1) ((_ extract 3 2) #b000000))",
+                build_term!(pool,
+                    ((_ int_of 1) ((_ extract 3 2) {zeros.clone()}))
                 ),
             ),
             ("(and true false)", build_term!(pool, (and true false))),

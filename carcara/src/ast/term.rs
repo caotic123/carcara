@@ -1,5 +1,6 @@
 use super::{PrimitivePool, Rc, TermPool};
 use crate::CheckerError;
+use indexmap::{map::Entry, IndexMap};
 use rug::{Integer, Rational};
 use std::{collections::HashSet, hash::Hash, ops::Deref};
 
@@ -17,7 +18,7 @@ pub enum Term {
     /// An application of a function to one or more terms.
     App(Rc<Term>, Vec<Rc<Term>>),
 
-    /// An application of a bulit-in operator to one or more terms.
+    /// An application of a built-in operator to one or more terms.
     Op(Operator, Vec<Rc<Term>>),
 
     /// A sort.
@@ -87,7 +88,6 @@ pub enum Sort {
     /// The associated term is the BV width of this sort.
     BitVec(Integer),
 
-    // TODO delete this and incorporate it to function sort?
     /// A parametric sort, with a set of sort variables that can appear in the second argument.
     ParamSort(Vec<Rc<Term>>, Rc<Term>),
 
@@ -113,6 +113,7 @@ pub enum Constant {
     /// A string literal term.
     String(String),
 
+    /// A bitvector literal term.
     BitVec(Integer, Integer),
 }
 
@@ -359,11 +360,22 @@ pub enum Operator {
     BvSLe,
     BvSGt,
     BvSGe,
+
+    UBvToInt,
+    SBvToInt,
+
+    BvPBbTerm,
     BvBbTerm,
+    BvConst,
+    BvSize,
 
     // Misc.
     /// The `rare-list` operator, used to represent RARE lists.
     RareList,
+
+    // The clausal operators
+    Cl,
+    Delete,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -371,9 +383,15 @@ pub enum ParamOperator {
     // Indexed operators
     BvExtract,
     BvBitOf,
+    BvIntOf,
     ZeroExtend,
     SignExtend,
+    RotateLeft,
+    RotateRight,
+    Repeat,
     BvConst,
+
+    IntToBv,
 
     RePower,
     ReLoop,
@@ -478,17 +496,33 @@ impl_str_conversion_traits!(Operator {
     BvSLe: "bvsle",
     BvSGt: "bvsgt",
     BvSGe: "bvsge",
-    BvBbTerm: "bbterm",
+
+    UBvToInt: "ubv_to_int",
+    SBvToInt: "sbv_to_int",
+
+    BvPBbTerm: "@pbbterm",
+    BvBbTerm: "@bbterm",
+    BvConst: "@bv",
+    BvSize: "@bvsize",
 
     RareList: "rare-list",
+
+    Cl: "cl",
+    Delete: "@d"
 });
 
 impl_str_conversion_traits!(ParamOperator {
     BvExtract: "extract",
-    BvBitOf: "bit_of",
+    BvBitOf: "@bit_of",
+    BvIntOf: "@int_of",
     ZeroExtend: "zero_extend",
     SignExtend: "sign_extend",
+    RotateLeft: "rotate_left",
+    RotateRight: "rotate_right",
+    Repeat: "repeat",
     BvConst: "bv",
+
+    IntToBv: "int_to_bv",
 
     RePower: "re.^",
     ReLoop: "re.loop",
@@ -542,6 +576,62 @@ impl From<SortedVar> for Term {
     }
 }
 
+impl Sort {
+    // Whether this sort can be matched with another, i.e., whether we
+    // can find a substitution to the sort variables of `self` that
+    // will make it equal to `target`. The map argument will store the
+    // substitution
+    pub fn match_with(&self, target: &Sort, map: &mut IndexMap<String, Sort>) -> bool {
+        match (self, target) {
+            (Sort::Var(a), _) => {
+                match map.entry(a.to_string()) {
+                    Entry::Vacant(e) => {
+                        e.insert(target.clone());
+                    }
+                    Entry::Occupied(e) => {
+                        return e.get() == target;
+                    }
+                }
+                true
+            }
+            (Sort::Atom(a, sorts_a), Sort::Atom(b, sorts_b)) => {
+                if a != b {
+                    false
+                } else {
+                    sorts_a.iter().zip(sorts_b.iter()).all(|(t_a, t_b)| {
+                        let s_a = t_a.as_sort().unwrap();
+                        let s_b = t_b.as_sort().unwrap();
+                        s_a.match_with(s_b, map)
+                    })
+                }
+            }
+            (Sort::Function(sorts_a), Sort::Function(sorts_b)) => {
+                sorts_a.iter().zip(sorts_b.iter()).all(|(a_t, b_t)| {
+                    let a_s = a_t.as_sort().unwrap();
+                    let b_s = b_t.as_sort().unwrap();
+                    a_s.match_with(b_s, map)
+                })
+            }
+            (Sort::Bool, Sort::Bool)
+            | (Sort::Int, Sort::Int)
+            | (Sort::Real, Sort::Real)
+            | (Sort::String, Sort::String)
+            | (Sort::RegLan, Sort::RegLan)
+            | (Sort::RareList, Sort::RareList)
+            | (Sort::Type, Sort::Type) => true,
+            (Sort::Array(x_a, y_a), Sort::Array(x_b, y_b)) => {
+                let s_x_a = x_a.as_sort().unwrap();
+                let s_y_a = y_a.as_sort().unwrap();
+                let s_x_b = x_b.as_sort().unwrap();
+                let s_y_b = y_b.as_sort().unwrap();
+                s_x_a.match_with(s_x_b, map) && s_y_a.match_with(s_y_b, map)
+            }
+            (Sort::BitVec(a), Sort::BitVec(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 impl Term {
     pub fn new_bool(value: impl Into<bool>) -> Self {
         let op = match value.into() {
@@ -567,8 +657,8 @@ impl Term {
     }
 
     /// Constructs a new bv term.
-    pub fn new_bv(value: impl Into<Integer>, widht: impl Into<Integer>) -> Self {
-        Term::Const(Constant::BitVec(value.into(), widht.into()))
+    pub fn new_bv(value: impl Into<Integer>, width: impl Into<Integer>) -> Self {
+        Term::Const(Constant::BitVec(value.into(), width.into()))
     }
 
     /// Constructs a new variable term.
@@ -653,6 +743,15 @@ impl Term {
         }
     }
 
+    /// Tries to extract a `BitVec` from a term. Returns `Some` if the
+    /// term is a bitvector constant.
+    pub fn as_bitvector(&self) -> Option<(Integer, Integer)> {
+        match self {
+            Term::Const(Constant::BitVec(v, w)) => Some((v.clone(), w.clone())),
+            _ => None,
+        }
+    }
+
     /// Tries to extract a `Rational` from a term, allowing fractions. This method will return
     /// `Some` if the term is:
     ///
@@ -711,6 +810,10 @@ impl Term {
         matches!(self, Term::Sort(Sort::Atom(_, args)) if args.is_empty())
     }
 
+    /// Returns `true` if the term is a user defined parametric sort
+    pub fn is_sort_parametric(&self) -> bool {
+        matches!(self, Term::Sort(Sort::ParamSort(_, _)))
+    }
     /// Tries to unwrap an operation term, returning the `Operator` and the arguments. Returns
     /// `None` if the term is not an operation term.
     pub fn as_op(&self) -> Option<(Operator, &[Rc<Term>])> {
@@ -813,6 +916,16 @@ impl Rc<Term> {
     pub fn as_integer_err(&self) -> Result<Integer, CheckerError> {
         self.as_integer()
             .ok_or_else(|| CheckerError::ExpectedAnyInteger(self.clone()))
+    }
+
+    /// Similar to `Term::as_integer_err`, but also checks if non-negative.
+    pub fn as_usize_err(&self) -> Result<usize, CheckerError> {
+        if let Some(i) = self.as_integer() {
+            if i >= 0 {
+                return Ok(i.to_usize().unwrap());
+            }
+        }
+        Err(CheckerError::ExpectedNonnegInteger(self.clone()))
     }
 
     /// Similar to `Term::as_signed_number`, but returns a `CheckerError` on failure.

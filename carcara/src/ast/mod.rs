@@ -12,8 +12,8 @@ pub mod pool;
 pub(crate) mod printer;
 mod problem;
 mod proof;
+pub mod rare_rules;
 mod rc;
-pub mod rules;
 mod substitution;
 mod term;
 #[cfg(test)]

@@ -9,7 +9,7 @@ mod transitivity;
 mod uncrowding;
 
 use crate::{
-    ast::{rules::Rules, *},
+    ast::{rare_rules::Rules, *},
     CheckerError,
 };
 use indexmap::IndexSet;

@@ -119,6 +119,9 @@ pub enum Reserved {
 
     // From rare Rules
     DeclareRareRule,
+
+    // From eunoia programs
+    Program
 }
 
 impl_str_conversion_traits!(Reserved {
@@ -145,7 +148,8 @@ impl_str_conversion_traits!(Reserved {
     Assert: "assert",
     CheckSatAssuming: "check-sat-assuming",
     SetLogic: "set-logic",
-    DeclareRareRule: "declare-rare-rule"
+    DeclareRareRule: "declare-rare-rule",
+    Program: "program",
 });
 
 /// Represents a position (line and column numbers) in the source input.
