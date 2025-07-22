@@ -27,7 +27,10 @@ pub struct RuleDefinition {
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub name: String
+    pub name: String,
+    pub parameters: IndexMap<String, TypeParameter>,
+    pub patterns: Vec<(Rc<Term>, Rc<Term>)>,
+    pub signature: Vec<Rc<Term>>,
 }
 
 pub struct RareStatements {
