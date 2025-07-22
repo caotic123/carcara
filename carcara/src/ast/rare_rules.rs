@@ -1,5 +1,6 @@
 use super::{Operator, Rc, Term};
 use indexmap::IndexMap;
+use std::fmt;
 use std::cell::RefCell;
 
 pub type Holes = IndexMap<String, Rc<RefCell<Option<Rc<Term>>>>>;
@@ -23,6 +24,24 @@ pub struct RuleDefinition {
     pub arguments: Vec<String>,
     pub premises: Vec<Rc<Term>>,
     pub conclusion: Rc<Term>,
+}
+
+impl fmt::Display for RuleDefinition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(declare-rare-rule {} (", self.name)?;
+        for (name, param) in &self.parameters {
+            write!(f, "({} {} {}) ", name, param.term, if param.attribute == AttributeParameters::List {":list"} else {""})?;
+        }
+        write!(f, ")\n  :args (")?;
+        for arg in &self.arguments {
+            write!(f, "{} ", arg)?;
+        }
+        write!(f, ")\n  :premises (")?;
+        for premise in &self.premises {
+            write!(f, "{} ", premise)?;
+        }
+        write!(f, ")\n  :conclusion {})\n", self.conclusion)
+    }
 }
 
 #[derive(Debug, Clone)]
