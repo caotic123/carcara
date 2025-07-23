@@ -7,8 +7,35 @@ use crate::{
         rare_rules::{AttributeParameters, Program, RuleDefinition, TypeParameter},
         Operator, PrimitivePool, Rc, Term, TermPool,
     },
-    rare::util::collect_vars,
+    rare::util::{collect_vars, create_set_of_disambiguation, unify_pattern},
 };
+
+enum DecisionTree {
+    Leaf(Rc<Term>, Box<DecisionTree>, Box<DecisionTree>),
+    Empty,
+}
+
+fn create_decision_tree(patterns: Vec<Vec<Rc<Term>>) -> DecisionTree {
+    let pattern = patterns.pop();
+    match pattern {
+        Some(pattern) => {
+            let tree: DecisionTree = create_decision_tree(patterns);
+            match tree {
+                DecisionTree::Leaf(target, left, right) => {
+                    for term in pattern {
+                        if !unify_pattern(term, target) {
+                            return DecisionTree::Leaf(
+                                Box::new(DecisionTree::Node(origin, target)),
+                                Box::new(tree),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        None => DecisionTree::Empty,
+    }
+}
 
 fn create_matching_clauses<'a>(
     pool: &mut PrimitivePool,
@@ -27,7 +54,7 @@ fn create_matching_clauses<'a>(
             fixed_params[index].0.clone(),
         ));
         let equality = pool.add(Term::Op(Operator::Equals, vec![term, arg.clone()]));
-        
+
         for var in collect_vars(arg) {
             fixed_params[index].1 = (parameters[&var.0].attribute == AttributeParameters::List)
                 || fixed_params[index].1;
@@ -64,7 +91,7 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
     let mut rules = vec![];
     let mut keys: Vec<String> = vec![];
     let mut symbol_table = vec![];
-    let mut rejected_clauses = vec![];
+    let mut rejected_clauses: Vec<Vec<Rc<Term>>> = vec![];
 
     for (level, sort) in program
         .signature
@@ -89,22 +116,14 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
                 .map(|v| v.0)
                 .chain((0..program.signature.len() - 1).map(|x| format!("_{}", x)))
                 .filter(|x| x != &program.name)
-                .collect(),
-            rejected_clauses
-                .iter()
-                .chain(matching_clause.iter())
-                .cloned()
-                .collect(),
+                .collect::<Vec<_>>(),
+            rejected_clauses.clone(),
+            matching_clause.clone(),
             pool.add(Term::Op(Operator::Equals, vec![lhs, pattern.1.clone()])),
         ));
 
-        let negation = build_term!(pool, false);
-        let rejected_clause = pool.add(Term::Op(Operator::Or, matching_clause));
-
-        let rejected_clause = pool.add(Term::Op(Operator::Equals, vec![rejected_clause, negation]));
-
-        if !rejected_clauses.contains(&rejected_clause) {
-            rejected_clauses.push(rejected_clause);
+        if !rejected_clauses.contains(&matching_clause) {
+            rejected_clauses.push(matching_clause);
         }
     }
 
@@ -130,14 +149,30 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
     parameters.extend(program.parameters.clone());
 
     for (index, rule) in rules.into_iter().enumerate() {
-        let (vars, premises, conclusion) = rule;
-        compiled_rules.push(RuleDefinition {
-            name: format!("{}_{}", program.name.clone(), index),
-            parameters: parameters.clone(),
-            arguments: vars,
-            premises,
-            conclusion: conclusion,
-        });
+        let (vars, rejected_clauses, premises, conclusion) = rule;
+        let desambig_set =
+            create_set_of_disambiguation(premises.as_slice(), rejected_clauses.as_slice());
+        if desambig_set.is_empty() {
+            compiled_rules.push(RuleDefinition {
+                name: format!("{}_{}", program.name.clone(), index),
+                parameters: parameters.clone(),
+                arguments: vars.clone(),
+                premises: premises,
+                conclusion: conclusion.clone(),
+            });
+            continue;
+        }
+
+        for mut desambig_set in desambig_set {
+            desambig_set.extend(premises.clone());
+            compiled_rules.push(RuleDefinition {
+                name: format!("{}_{}", program.name.clone(), index),
+                parameters: parameters.clone(),
+                arguments: vars.clone(),
+                premises: desambig_set,
+                conclusion: conclusion.clone(),
+            });
+        }
     }
 
     compiled_rules
