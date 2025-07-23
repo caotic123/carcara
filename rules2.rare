@@ -2,11 +2,12 @@
 (program test ((x Int) (y Int))
   :signature (Int Int) Bool
   (
-  ((test 0 0) true)
-  ((test 0 1) true)
-  ((test x y) false)
+  ((test 1 0) true)
+  ((test x 1) true)
+  ((test x y) true)
   )
 )
+
 
 (declare-rare-rule or_eval ((xs Bool :list) (ys Bool :list)) 
   :args (ys xs)
@@ -16,5 +17,5 @@
 (declare-rare-rule and_is_true ((x Bool :list)) 
   :args (x)
   :premises ((= (test 1 2) true))
-  :conclusion (= (and x) x)
+  :conclusion (= (and x) true)
   )
