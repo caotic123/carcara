@@ -27,8 +27,8 @@ fn create_matching_clauses<'a>(
             fixed_params[index].0.clone(),
         ));
         let equality = pool.add(Term::Op(Operator::Equals, vec![term, arg.clone()]));
+        
         for var in collect_vars(arg) {
-            
             fixed_params[index].1 = (parameters[&var.0].attribute == AttributeParameters::List)
                 || fixed_params[index].1;
         }
@@ -37,6 +37,27 @@ fn create_matching_clauses<'a>(
     }
 
     (matching_parameters, fixed_params)
+}
+
+fn compile_conclusion(
+    pool: &mut PrimitivePool,
+    clause: &Rc<Term>,
+    fixed_params: &Vec<(Rc<Term>, bool)>,
+) -> Rc<Term> {
+    let Term::App(head, _) = clause.as_ref() else {
+        panic!("Expected an application term, found: {:?}", clause);
+    };
+
+    let app = Term::App(
+        head.clone(),
+        fixed_params
+            .iter()
+            .enumerate()
+            .map(|(index, (sort, _))| pool.add(Term::Var(format! {"_{}", index}, sort.clone())))
+            .collect(),
+    );
+
+    pool.add(app)
 }
 
 pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleDefinition> {
@@ -59,14 +80,14 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
     for pattern in program.patterns.iter() {
         let mut vars = collect_vars(&pattern.0);
         vars.append(&mut collect_vars(&pattern.1));
-        let (matching_clause, attrs) =
+        let (matching_clause, _) =
             create_matching_clauses(pool, &pattern.0, &mut symbol_table, &program.parameters);
-
+        let lhs = compile_conclusion(pool, &pattern.0, &symbol_table);
 
         rules.push((
             vars.into_iter()
                 .map(|v| v.0)
-                .chain((0..program.signature.len() - 1).map(|x| format!("_{}", x))) 
+                .chain((0..program.signature.len() - 1).map(|x| format!("_{}", x)))
                 .filter(|x| x != &program.name)
                 .collect(),
             rejected_clauses
@@ -74,10 +95,7 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
                 .chain(matching_clause.iter())
                 .cloned()
                 .collect(),
-            pool.add(Term::Op(
-                Operator::Equals,
-                vec![pattern.0.clone(), pattern.1.clone()],
-            )),
+            pool.add(Term::Op(Operator::Equals, vec![lhs, pattern.1.clone()])),
         ));
 
         let negation = build_term!(pool, false);
@@ -91,15 +109,15 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
     }
 
     let mut compiled_rules = vec![];
-    let mut symbol_table  = symbol_table
-        .into_iter()
+    let mut parameters = symbol_table
+        .iter()
         .enumerate()
         .map(|(index, (sort, is_list))| {
             (
                 format!("_{}", index),
                 TypeParameter {
-                    term: sort,
-                    attribute: if is_list {
+                    term: sort.clone(),
+                    attribute: if *is_list {
                         AttributeParameters::List
                     } else {
                         AttributeParameters::None
@@ -109,16 +127,16 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
         })
         .collect::<IndexMap<_, _>>();
 
-    symbol_table.extend(program.parameters.clone());
+    parameters.extend(program.parameters.clone());
 
     for (index, rule) in rules.into_iter().enumerate() {
         let (vars, premises, conclusion) = rule;
         compiled_rules.push(RuleDefinition {
             name: format!("{}_{}", program.name.clone(), index),
-            parameters: symbol_table.clone(),
+            parameters: parameters.clone(),
             arguments: vars,
             premises,
-            conclusion,
+            conclusion: conclusion,
         });
     }
 
