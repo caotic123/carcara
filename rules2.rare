@@ -1,13 +1,20 @@
-(program is_all_eq ((xs Bool :list) (x Bool) (y Bool))
-  :signature (Bool Bool) Bool
+
+(program test ((x Int) (y Int))
+  :signature (Int Int) Bool
   (
-  ((is_all_eq (and x xs) x) (is_all_eq xs x))
-  ((is_all_eq x x) true)
+  ((test 0 0) true)
+  ((test 0 1) true)
+  ((test x y) false)
   )
+)
+
+(declare-rare-rule or_eval ((xs Bool :list) (ys Bool :list)) 
+  :args (ys xs)
+  :conclusion (= (or xs true ys) true)
 )
 
 (declare-rare-rule and_is_true ((x Bool :list)) 
   :args (x)
-  :premises ((= (is_all_eq x true) true))
-  :conclusion (= (or x true) true)
+  :premises ((= (test 1 2) true))
+  :conclusion (= (and x) x)
   )
