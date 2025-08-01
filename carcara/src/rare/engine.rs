@@ -1,11 +1,13 @@
-
 use crate::{
     ast::{
         rare_rules::{AttributeParameters, RuleDefinition, Rules},
         Constant, Operator, PrimitivePool, ProofNode, Rc, Term,
     },
     rare::{
-        computational::compile_program, language::*, meta::lower_egg_language, util::{clauses_to_or, get_equational_terms}
+        computational::compile_program,
+        language::*,
+        meta::lower_egg_language,
+        util::{clauses_to_or, get_equational_terms},
     },
 };
 use egglog::{self, EGraph};
@@ -268,7 +270,7 @@ fn construct_premises(
         let clause = clauses_to_or(pool, premise.clause());
         if let Some(clause) = clause {
             let expr = get_equational_terms(&clause);
-            if let Some((lhs, rhs)) = expr {
+            if let Some((_, lhs, rhs)) = expr {
                 grounds_terms.push(EggStatement::Union(
                     Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache).unwrap()),
                     Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache).unwrap()),
@@ -304,13 +306,20 @@ fn construct_rules(database: &[RuleDefinition], func_cache: &mut EggFunctions) -
             .collect::<IndexMap<_, _>>();
 
         for premise in definition.premises.iter() {
-            let (lhs, rhs) = get_equational_terms(&premise).unwrap();
-            premises.push(EggExpr::Equal(
-                Box::new(to_egg_expr(lhs, &subs, func_cache).unwrap()),
-                Box::new(to_egg_expr(rhs, &subs, func_cache).unwrap()),
-            ));
+            let (op, lhs, rhs) = get_equational_terms(&premise).unwrap();
+            match op {
+                |Operator::Equals => premises.push(EggExpr::Equal(
+                    Box::new(to_egg_expr(lhs, &subs, func_cache).unwrap()),
+                    Box::new(to_egg_expr(rhs, &subs, func_cache).unwrap()),
+                )),
+                |Operator::Distinct => premises.push(EggExpr::Distinct(
+                    Box::new(to_egg_expr(lhs, &subs, func_cache).unwrap()),
+                    Box::new(to_egg_expr(rhs, &subs, func_cache).unwrap()),
+                )),
+                _ => unreachable!()
+            }
         }
-        let (lhs, rhs) = get_equational_terms(&definition.conclusion).unwrap();
+        let (_, lhs, rhs) = get_equational_terms(&definition.conclusion).unwrap();
         let egg_equations = (
             Box::new(to_egg_expr(lhs, &subs, func_cache).unwrap()),
             Box::new(to_egg_expr(rhs, &subs, func_cache).unwrap()),
@@ -328,7 +337,7 @@ fn construct_rules(database: &[RuleDefinition], func_cache: &mut EggFunctions) -
 fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggStatement>> {
     let mut goal = vec![];
     let expr = get_equational_terms(term);
-    if let Some((lhs, rhs)) = expr {
+    if let Some((_, lhs, rhs)) = expr {
         goal.push(EggStatement::Let(
             "goal_lhs".to_string(),
             Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache).unwrap()),
@@ -409,8 +418,12 @@ pub fn reconstruct_rule(
     database: &Rules,
 ) {
     let mut egg_functions = EggFunctions::new();
-    let mut rules: Vec<Vec<RuleDefinition>> = database.programs.iter().map(|db| compile_program(pool, db.1)).collect();
-    let db : Vec<RuleDefinition> = database.rules.values().cloned().collect();
+    let mut rules: Vec<Vec<RuleDefinition>> = database
+        .programs
+        .iter()
+        .map(|db| compile_program(pool, db.1))
+        .collect();
+    let db: Vec<RuleDefinition> = database.rules.values().cloned().collect();
     rules.push(db);
     let rules = &rules.concat();
 
@@ -423,7 +436,7 @@ pub fn reconstruct_rule(
     let premises = construct_premises(pool, root, &mut egg_functions);
     let goal = set_goal(&conclusion, &mut egg_functions);
     let declarations = declare_functions(egg_functions);
-    
+
     let mut ast = create_headers();
 
     ast.extend(declarations);

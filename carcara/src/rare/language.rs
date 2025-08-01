@@ -30,6 +30,7 @@ pub enum EggExpr {
     Literal(String),
     Ground(Box<EggExpr>),
     Equal(Box<EggExpr>, Box<EggExpr>),
+    Distinct(Box<EggExpr>, Box<EggExpr>),
     Union(Box<EggExpr>, Box<EggExpr>),
     Args(Box<EggExpr>, Box<EggExpr>),
     Call(String, Vec<EggExpr>),

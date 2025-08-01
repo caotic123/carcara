@@ -112,6 +112,11 @@ fn to_expr(e: EggExpr) -> Expr {
             Symbol::from("="),
             vec![to_expr(*l), to_expr(*r)],
         ),
+        Distinct(l, r) => Expr::Call(
+            dummy_span(),
+            Symbol::from("!="),
+            vec![to_expr(*l), to_expr(*r)],
+        ),
         Union(l, r) => Expr::Call(
             dummy_span(),
             Symbol::from("union"),
