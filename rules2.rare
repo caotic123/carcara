@@ -1,21 +1,14 @@
 
-(program test ((x Int) (y Int))
-  :signature (Int Int) Bool
+(program has_false ((x Bool :list) (xs Bool :list))
+  :signature (Bool) Bool
   (
-  ((test 1 0) true)
-  ((test x 1) true)
-  ((test x y) true)
+  ((has_false (and false xs)) true)
+  ((has_false false) true)
   )
 )
 
-
-(declare-rare-rule or_eval ((xs Bool :list) (ys Bool :list)) 
-  :args (ys xs)
-  :conclusion (= (or xs true ys) true)
-)
-
-(declare-rare-rule and_is_true ((x Bool :list)) 
+(declare-rare-rule and_false ((x Bool :list)) 
   :args (x)
-  :premises ((= (test 1 2) true))
-  :conclusion (= (and x) true)
-  )
+  :premises ((= (has_false (and x)) true))
+  :conclusion (= (and x) false)
+)

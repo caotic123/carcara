@@ -15,9 +15,12 @@ pub fn clauses_to_or(pool: &mut PrimitivePool, clauses: &[Rc<Term>]) -> Option<R
 }
 
 
-pub fn get_equational_terms(term: &Rc<Term>) -> Option<(&Rc<Term>, &Rc<Term>)> {
+pub fn get_equational_terms(term: &Rc<Term>) -> Option<(Operator, &Rc<Term>, &Rc<Term>)> {
     if let Some((lhs, rhs)) = match_term!((= x y) = term) {
-        return Some((lhs, rhs))
+        return Some((Operator::Equals, lhs, rhs))
+    }
+    if let Some((lhs, rhs)) = match_term!((distinct x y) = term) {
+        return Some((Operator::Distinct, lhs, rhs))
     }
     None
 }
@@ -140,7 +143,10 @@ pub fn unify_pattern(
     match (&**pat, &**val) {
         // pattern variable → bind to val (or check consistency)
         (Term::Var(v, _), Term::Var(v_, _)) => v == v_,
-        
+
+        (Term::Var(_, _), _) => true,
+        (_, Term::Var(_, _)) => true,
+
         (Term::Op(op1, args1), Term::Op(op2, args2))
             if op1 == op2 && args1.len() == args2.len() =>
         {
