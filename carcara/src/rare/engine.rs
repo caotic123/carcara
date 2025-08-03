@@ -14,7 +14,7 @@ use egglog::{self, EGraph};
 use indexmap::{IndexMap, IndexSet};
 use rug::Integer;
 
-type EggFunctions = IndexSet<String>;
+type EggFunctions = IndexMap<String, (bool, usize)>;
 
 pub fn create_headers() -> EggLanguage {
     vec![
@@ -167,7 +167,7 @@ pub fn to_egg_expr(
             }
             Term::App(head, args) => {
                 if let Some(func_name) = head.as_var() {
-                    func_cache.insert(format!("@{0}", func_name.to_string()));
+                    func_cache.insert(format!("@{0}", func_name.to_string()), (false, args.len()));
                 }
 
                 if args.len() == 0 {
@@ -220,7 +220,7 @@ pub fn to_egg_expr(
                     return None;
                 }
 
-                func_cache.insert(format!("@{}", head));
+                func_cache.insert(format!("@{}", head), (true, args.len()));
                 let args: Vec<EggExpr> = args
                     .clone()
                     .iter()
@@ -266,16 +266,20 @@ fn construct_premises(
     func_cache: &mut EggFunctions,
 ) -> EggLanguage {
     let mut grounds_terms = vec![];
+
     for premise in premises.get_assumptions() {
-        let clause = clauses_to_or(pool, premise.clause());
+        let clause: Option<Rc<Term>> = clauses_to_or(pool, premise.clause());
         if let Some(clause) = clause {
             let expr = get_equational_terms(&clause);
-            if let Some((_, lhs, rhs)) = expr {
+            if let Some((Operator::Equals, lhs, rhs)) = expr {
                 grounds_terms.push(EggStatement::Union(
                     Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache).unwrap()),
                     Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache).unwrap()),
                 ));
             }
+            grounds_terms.push(EggStatement::Call(Box::new(
+                to_egg_expr(&clause, &IndexMap::new(), func_cache).unwrap(),
+            )));
         }
     }
 
@@ -308,15 +312,15 @@ fn construct_rules(database: &[RuleDefinition], func_cache: &mut EggFunctions) -
         for premise in definition.premises.iter() {
             let (op, lhs, rhs) = get_equational_terms(&premise).unwrap();
             match op {
-                |Operator::Equals => premises.push(EggExpr::Equal(
+                Operator::Equals => premises.push(EggExpr::Equal(
                     Box::new(to_egg_expr(lhs, &subs, func_cache).unwrap()),
                     Box::new(to_egg_expr(rhs, &subs, func_cache).unwrap()),
                 )),
-                |Operator::Distinct => premises.push(EggExpr::Distinct(
+                Operator::Distinct => premises.push(EggExpr::Distinct(
                     Box::new(to_egg_expr(lhs, &subs, func_cache).unwrap()),
                     Box::new(to_egg_expr(rhs, &subs, func_cache).unwrap()),
                 )),
-                _ => unreachable!()
+                _ => unreachable!(),
             }
         }
         let (_, lhs, rhs) = get_equational_terms(&definition.conclusion).unwrap();
@@ -348,7 +352,7 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
             Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache).unwrap()),
         ));
 
-        goal.push(EggStatement::Run(3));
+        goal.push(EggStatement::Run(5));
 
         goal.push(EggStatement::Check(Box::new(EggExpr::Equal(
             Box::new(EggExpr::Literal("goal_lhs".to_string())),
@@ -361,54 +365,112 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
 }
 
 fn declare_functions(functions: EggFunctions) -> Vec<EggStatement> {
-    let mut declarations = vec![];
-    for name in functions.iter() {
-        declarations.push(EggStatement::Constructor(
-            name.clone(),
+    // ───────────────────────────────────────────────────────────
+    // base‐case defaults: when an operator sees no args → this
+    // ───────────────────────────────────────────────────────────
+    let default_empty: &[(&str, bool)] = &[
+        ("or", false),
+        ("and", false),
+        // ← add new operator defaults here
+    ];
+
+    let mut decls = Vec::new();
+
+    for (func, (is_op, arity)) in functions.iter() {
+        // 1) always declare the function symbol
+        decls.push(EggStatement::Constructor(
+            func.clone(),
             vec![ConstType::ConstrType("Term".to_string())],
             ConstType::ConstrType("Term".to_string()),
         ));
+
+        if !*is_op {
+            // ───────────────────────────────────────────────────────────
+            // A) merged‐arity rule for non-operators
+            //    (rule ((= (Mk __var1) (Mk k1))
+            //            …
+            //            (= (Mk __varN) (Mk kN)))
+            //          ((Mk (@func (Args k1 (Args … Empty))))))
+            // ───────────────────────────────────────────────────────────
+            let mut premises = Vec::new();
+            for i in 1..=*arity {
+                premises.push(EggExpr::Equal(
+                    Box::new(EggExpr::Mk(Box::new(EggExpr::Literal(format!(
+                        "__var{}",
+                        i
+                    ))))),
+                    Box::new(EggExpr::Mk(Box::new(EggExpr::Literal(format!("k{}", i))))),
+                ));
+            }
+
+            // build nested Args: Args(k1, Args(k2, … Empty))
+            let mut args_expr = EggExpr::Empty();
+            for i in (1..=*arity).rev() {
+                // wrap each arg in Mk
+                let ki = EggExpr::Mk(Box::new(EggExpr::Literal(format!("k{}", i))));
+                args_expr = EggExpr::Args(Box::new(ki), Box::new(args_expr));
+            }
+
+            let call = EggExpr::Call(func.clone(), vec![args_expr]);
+            decls.push(EggStatement::Rule(
+                premises,
+                vec![EggExpr::Mk(Box::new(call))],
+            ));
+        } else {
+            // ───────────────────────────────────────────────────────────
+            // B) base‐case when operator sees ZERO args
+            // ───────────────────────────────────────────────────────────
+            let name_no_at = func.trim_start_matches('@');
+            if let Some((_, default_val)) = default_empty.iter().find(|&&(op, _)| op == name_no_at)
+            {
+                decls.push(EggStatement::Rewrite(
+                    Box::new(EggExpr::Call(func.clone(), vec![EggExpr::Empty()])),
+                    Box::new(EggExpr::Bool(*default_val)),
+                    vec![],
+                ));
+            }
+        }
     }
 
-    if functions.contains("@+") {
-        declarations.push(EggStatement::Rewrite(
-            Box::new(EggExpr::Call(
-                "@+".to_string(),
-                vec![EggExpr::Args(
-                    Box::new(EggExpr::Call(
-                        "Num".to_string(),
-                        vec![EggExpr::Literal("t1".to_string())],
-                    )),
-                    Box::new(EggExpr::Args(
+        if functions.get("@+").is_some() {
+            decls.push(EggStatement::Rewrite(
+                Box::new(EggExpr::Call(
+                    "@+".to_string(),
+                    vec![EggExpr::Args(
                         Box::new(EggExpr::Call(
                             "Num".to_string(),
-                            vec![EggExpr::Literal("t2".to_string())],
+                            vec![EggExpr::Literal("t1".to_string())],
+                        )),
+                        Box::new(EggExpr::Args(
+                            Box::new(EggExpr::Call(
+                                "Num".to_string(),
+                                vec![EggExpr::Literal("t2".to_string())],
+                            )),
+                            Box::new(EggExpr::Empty()),
+                        )),
+                    )],
+                )),
+                Box::new(EggExpr::Call(
+                    "@+".to_string(),
+                    vec![EggExpr::Args(
+                        Box::new(EggExpr::Call(
+                            "Num".to_string(),
+                            vec![EggExpr::Call(
+                                "+".to_string(),
+                                vec![
+                                    EggExpr::Literal("t1".to_string()),
+                                    EggExpr::Literal("t2".to_string()),
+                                ],
+                            )],
                         )),
                         Box::new(EggExpr::Empty()),
-                    )),
-                )],
-            )),
-            Box::new(EggExpr::Call(
-                "@+".to_string(),
-                vec![EggExpr::Args(
-                    Box::new(EggExpr::Call(
-                        "Num".to_string(),
-                        vec![EggExpr::Call(
-                            "+".to_string(),
-                            vec![
-                                EggExpr::Literal("t1".to_string()),
-                                EggExpr::Literal("t2".to_string()),
-                            ],
-                        )],
-                    )),
-                    Box::new(EggExpr::Empty()),
-                )],
-            )),
-            vec![],
-        ));
-    }
+                    )],
+                )),
+                vec![],
+            ));
+        }
 
-    declarations
+    decls
 }
 
 pub fn reconstruct_rule(

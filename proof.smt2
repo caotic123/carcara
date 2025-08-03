@@ -8,6 +8,7 @@
 (assert (= b false))
 (assert (= a false))
 (assert (= c true))
+(assert (or a c))
 (assert (= (+ k 1) k))
 (declare-fun contains (Bool Bool) Bool)
 

@@ -252,6 +252,10 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                     Symbol::from(name),
                     to_expr(*expr),
                 ))],
+                EggStatement::Call(expr) => vec![Command::Action(GenericAction::Expr(
+                    dummy_span(),
+                    to_expr(*expr),
+                ))],
                 EggStatement::Union(expr, expr2) => vec![Command::Action(GenericAction::Union(
                     dummy_span(),
                     to_expr(*expr),
