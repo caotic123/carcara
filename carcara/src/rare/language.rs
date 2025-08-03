@@ -48,6 +48,7 @@ pub enum EggStatement {
     Rule(Vec<EggExpr>, Vec<EggExpr>),
     Check(Box<EggExpr>),
     Constructor(String, Vec<ConstType>, ConstType),
+    Call(Box<EggExpr>),
     Run(i16),
     Saturare()
 }
