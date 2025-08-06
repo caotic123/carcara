@@ -178,6 +178,7 @@ pub fn parse_rule<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<RuleDefin
         arguments: body.args.clone(),
         premises: body.premises.clone(),
         conclusion: body.conclusion.unwrap(),
+        is_elaborated: false
     });
 }
 

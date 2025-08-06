@@ -79,3 +79,23 @@
   :premises ((= t1 t2) (= t2 t3))
   :conclusion (= t1 t3)
 )
+
+;; now the three rewrite rules:
+(declare-rare-rule contains-false
+  ((l Bool))
+  :args (l)
+  :conclusion (= (contains false l) false)
+)
+
+(declare-rare-rule contains-head
+  ((l Bool) (xs Bool :list))
+  :args (l xs)
+  :conclusion (= (contains (or l xs) l) true)
+)
+
+(declare-rare-rule contains-tail
+  ((x Bool) (xs Bool :list) (l Bool))
+  :args (x xs l)
+  :conclusion (= (contains (or x xs) l)
+                 (contains xs l))
+)
