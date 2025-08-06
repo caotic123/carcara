@@ -7,14 +7,18 @@ use crate::{
         computational::compile_program,
         language::*,
         meta::lower_egg_language,
-        util::{clauses_to_or, get_equational_terms},
+        util::{clauses_to_or, collect_vars, get_equational_terms},
     },
 };
 use egglog::{self, EGraph};
 use indexmap::{IndexMap, IndexSet};
 use rug::Integer;
 
-type EggFunctions = IndexMap<String, (bool, usize)>;
+#[derive(Debug, Default)]
+pub struct EggFunctions {
+    names: IndexMap<String, (bool, usize)>,
+    shapes: IndexMap<String, IndexSet<Rc<Term>>>,
+}
 
 pub fn create_headers() -> EggLanguage {
     vec![
@@ -61,6 +65,10 @@ pub fn create_headers() -> EggLanguage {
                     ),
                 },
             ],
+        ),
+        EggStatement::Relation(
+            "Avaliable".to_string(),
+            ConstType::ConstrType("Term".to_string()),
         ),
         EggStatement::Rewrite(
             Box::new(EggExpr::Args(
@@ -141,6 +149,7 @@ pub fn to_egg_expr(
     term_rc: &Rc<Term>,
     subs: &IndexMap<&String, (EggExpr, AttributeParameters)>,
     func_cache: &mut EggFunctions,
+    collect_functions_shape: bool,
 ) -> Option<EggExpr> {
     pub fn encapluse(egg_term: EggExpr) -> EggExpr {
         return EggExpr::Mk(Box::new(egg_term));
@@ -150,6 +159,7 @@ pub fn to_egg_expr(
         term_rc: &Rc<Term>,
         subs: &IndexMap<&String, (EggExpr, AttributeParameters)>,
         func_cache: &mut EggFunctions,
+        collect_functions_shape: bool,
     ) -> Option<EggExpr> {
         match &**term_rc {
             Term::Const(c) => match c {
@@ -167,16 +177,29 @@ pub fn to_egg_expr(
             }
             Term::App(head, args) => {
                 if let Some(func_name) = head.as_var() {
-                    func_cache.insert(format!("@{0}", func_name.to_string()), (false, args.len()));
+                    func_cache
+                        .names
+                        .insert(func_name.to_string(), (false, args.len()));
+                    if collect_functions_shape {
+                        func_cache
+                            .shapes
+                            .entry(func_name.to_string())
+                            .and_modify(|v| {v.insert(term_rc.clone());})
+                            .or_insert({
+                                let mut v = IndexSet::new();
+                                v.insert(term_rc.clone());
+                                v
+                            });
+                    }
                 }
 
                 if args.len() == 0 {
-                    return to_egg_expr(head, subs, func_cache);
+                    return to_egg_expr(head, subs, func_cache, collect_functions_shape);
                 }
                 let args: Vec<EggExpr> = args
                     .clone()
                     .iter()
-                    .flat_map(|x| to_egg_expr(x, subs, func_cache))
+                    .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape))
                     .rev()
                     .collect();
                 let mut stream = args.iter();
@@ -188,13 +211,13 @@ pub fn to_egg_expr(
                     args = EggExpr::Args(Box::new(a.clone()), Box::new(args));
                 }
 
-                Some(EggExpr::Call(format!("@{0}", head.to_string()), vec![args]))
+                Some(EggExpr::Call(format!("@{}", head.to_string()), vec![args]))
             }
             Term::Op(Operator::RareList, args) => {
                 let args: Vec<EggExpr> = args
                     .clone()
                     .iter()
-                    .flat_map(|x| to_egg_expr(x, subs, func_cache))
+                    .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape))
                     .rev()
                     .collect();
                 let mut stream = args.iter();
@@ -220,11 +243,13 @@ pub fn to_egg_expr(
                     return None;
                 }
 
-                func_cache.insert(format!("@{}", head), (true, args.len()));
+                func_cache
+                    .names
+                    .insert(head.to_string(), (true, args.len()));
                 let args: Vec<EggExpr> = args
                     .clone()
                     .iter()
-                    .flat_map(|x| to_egg_expr(x, subs, func_cache))
+                    .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape))
                     .rev()
                     .collect();
                 let mut stream = args.iter();
@@ -242,7 +267,7 @@ pub fn to_egg_expr(
         }
     }
 
-    return to_raw_egg(term_rc, subs, func_cache).map(|x| {
+    return to_raw_egg(term_rc, subs, func_cache, collect_functions_shape).map(|x| {
         match &x {
             EggExpr::Literal(name) => {
                 if let Some(argument) = subs.get(&name) {
@@ -273,13 +298,14 @@ fn construct_premises(
             let expr = get_equational_terms(&clause);
             if let Some((Operator::Equals, lhs, rhs)) = expr {
                 grounds_terms.push(EggStatement::Union(
-                    Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache).unwrap()),
-                    Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache).unwrap()),
+                    Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache, false).unwrap()),
+                    Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache, false).unwrap()),
                 ));
             }
-            grounds_terms.push(EggStatement::Call(Box::new(
-                to_egg_expr(&clause, &IndexMap::new(), func_cache).unwrap(),
-            )));
+            grounds_terms.push(EggStatement::Premise(
+                "Avaliable".to_string(),
+                Box::new(to_egg_expr(&clause, &IndexMap::new(), func_cache, false).unwrap()),
+            ));
         }
     }
 
@@ -313,20 +339,20 @@ fn construct_rules(database: &[RuleDefinition], func_cache: &mut EggFunctions) -
             let (op, lhs, rhs) = get_equational_terms(&premise).unwrap();
             match op {
                 Operator::Equals => premises.push(EggExpr::Equal(
-                    Box::new(to_egg_expr(lhs, &subs, func_cache).unwrap()),
-                    Box::new(to_egg_expr(rhs, &subs, func_cache).unwrap()),
+                    Box::new(to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap()),
+                    Box::new(to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap()),
                 )),
                 Operator::Distinct => premises.push(EggExpr::Distinct(
-                    Box::new(to_egg_expr(lhs, &subs, func_cache).unwrap()),
-                    Box::new(to_egg_expr(rhs, &subs, func_cache).unwrap()),
+                    Box::new(to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap()),
+                    Box::new(to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap()),
                 )),
                 _ => unreachable!(),
             }
         }
         let (_, lhs, rhs) = get_equational_terms(&definition.conclusion).unwrap();
         let egg_equations = (
-            Box::new(to_egg_expr(lhs, &subs, func_cache).unwrap()),
-            Box::new(to_egg_expr(rhs, &subs, func_cache).unwrap()),
+            Box::new(to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap()),
+            Box::new(to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap()),
         );
 
         rules.push(EggStatement::Rewrite(
@@ -344,12 +370,20 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
     if let Some((_, lhs, rhs)) = expr {
         goal.push(EggStatement::Let(
             "goal_lhs".to_string(),
-            Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache).unwrap()),
+            Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache, false).unwrap()),
         ));
 
         goal.push(EggStatement::Let(
             "goal_rhs".to_string(),
-            Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache).unwrap()),
+            Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache, false).unwrap()),
+        ));
+
+        goal.push(EggStatement::Premise("Avaliable".to_string(),
+            Box::new(EggExpr::Literal("goal_lhs".to_string())),
+        ));
+
+        goal.push(EggStatement::Premise("Avaliable".to_string(),
+            Box::new(EggExpr::Literal("goal_rhs".to_string())),
         ));
 
         goal.push(EggStatement::Run(5));
@@ -376,10 +410,10 @@ fn declare_functions(functions: EggFunctions) -> Vec<EggStatement> {
 
     let mut decls = Vec::new();
 
-    for (func, (is_op, arity)) in functions.iter() {
+    for (func, (is_op, _arity)) in functions.names.iter() {
         // 1) always declare the function symbol
         decls.push(EggStatement::Constructor(
-            func.clone(),
+            format!("@{}", func),
             vec![ConstType::ConstrType("Term".to_string())],
             ConstType::ConstrType("Term".to_string()),
         ));
@@ -392,39 +426,30 @@ fn declare_functions(functions: EggFunctions) -> Vec<EggStatement> {
             //            (= (Mk __varN) (Mk kN)))
             //          ((Mk (@func (Args k1 (Args … Empty))))))
             // ───────────────────────────────────────────────────────────
-            let mut premises = Vec::new();
-            for i in 1..=*arity {
-                premises.push(EggExpr::Equal(
-                    Box::new(EggExpr::Mk(Box::new(EggExpr::Literal(format!(
-                        "__var{}",
-                        i
-                    ))))),
-                    Box::new(EggExpr::Mk(Box::new(EggExpr::Literal(format!("k{}", i))))),
+            for shape in functions.shapes.get(func).unwrap_or(&IndexSet::default()) {
+                let mut premises = Vec::new();
+                let mut sorted_vars = IndexMap::new();
+                let mut vars = collect_vars(shape);
+                vars.swap_remove(func);
+
+                for (name, _sort) in vars.iter() {
+                    let egg_expr = EggExpr::Literal(name.clone());
+                    sorted_vars.insert(name, (egg_expr.clone(), AttributeParameters::List));
+                    premises.push(EggExpr::Call("Avaliable".to_string(), vec![egg_expr]));
+                }
+
+                decls.push(EggStatement::Rule(
+                    premises,
+                    vec![
+                        to_egg_expr(shape, &sorted_vars, &mut EggFunctions::default(), false)
+                            .unwrap(),
+                    ],
                 ));
             }
-
-            // build nested Args: Args(k1, Args(k2, … Empty))
-            let mut args_expr = EggExpr::Empty();
-            for i in (1..=*arity).rev() {
-                // wrap each arg in Mk
-                let ki = EggExpr::Mk(Box::new(EggExpr::Literal(format!("k{}", i))));
-                args_expr = EggExpr::Args(Box::new(ki), Box::new(args_expr));
-            }
-
-            let call = EggExpr::Call(func.clone(), vec![args_expr]);
-            decls.push(EggStatement::Rule(
-                premises,
-                vec![EggExpr::Mk(Box::new(call))],
-            ));
         } else {
-            // ───────────────────────────────────────────────────────────
-            // B) base‐case when operator sees ZERO args
-            // ───────────────────────────────────────────────────────────
-            let name_no_at = func.trim_start_matches('@');
-            if let Some((_, default_val)) = default_empty.iter().find(|&&(op, _)| op == name_no_at)
-            {
+            if let Some((_, default_val)) = default_empty.iter().find(|&&(op, _)| op == func) {
                 decls.push(EggStatement::Rewrite(
-                    Box::new(EggExpr::Call(func.clone(), vec![EggExpr::Empty()])),
+                    Box::new(EggExpr::Call(format!("@{}", func), vec![EggExpr::Empty()])),
                     Box::new(EggExpr::Bool(*default_val)),
                     vec![],
                 ));
@@ -432,43 +457,43 @@ fn declare_functions(functions: EggFunctions) -> Vec<EggStatement> {
         }
     }
 
-        if functions.get("@+").is_some() {
-            decls.push(EggStatement::Rewrite(
-                Box::new(EggExpr::Call(
-                    "@+".to_string(),
-                    vec![EggExpr::Args(
+    if functions.names.get("@+").is_some() {
+        decls.push(EggStatement::Rewrite(
+            Box::new(EggExpr::Call(
+                "@+".to_string(),
+                vec![EggExpr::Args(
+                    Box::new(EggExpr::Call(
+                        "Num".to_string(),
+                        vec![EggExpr::Literal("t1".to_string())],
+                    )),
+                    Box::new(EggExpr::Args(
                         Box::new(EggExpr::Call(
                             "Num".to_string(),
-                            vec![EggExpr::Literal("t1".to_string())],
-                        )),
-                        Box::new(EggExpr::Args(
-                            Box::new(EggExpr::Call(
-                                "Num".to_string(),
-                                vec![EggExpr::Literal("t2".to_string())],
-                            )),
-                            Box::new(EggExpr::Empty()),
-                        )),
-                    )],
-                )),
-                Box::new(EggExpr::Call(
-                    "@+".to_string(),
-                    vec![EggExpr::Args(
-                        Box::new(EggExpr::Call(
-                            "Num".to_string(),
-                            vec![EggExpr::Call(
-                                "+".to_string(),
-                                vec![
-                                    EggExpr::Literal("t1".to_string()),
-                                    EggExpr::Literal("t2".to_string()),
-                                ],
-                            )],
+                            vec![EggExpr::Literal("t2".to_string())],
                         )),
                         Box::new(EggExpr::Empty()),
-                    )],
-                )),
-                vec![],
-            ));
-        }
+                    )),
+                )],
+            )),
+            Box::new(EggExpr::Call(
+                "@+".to_string(),
+                vec![EggExpr::Args(
+                    Box::new(EggExpr::Call(
+                        "Num".to_string(),
+                        vec![EggExpr::Call(
+                            "+".to_string(),
+                            vec![
+                                EggExpr::Literal("t1".to_string()),
+                                EggExpr::Literal("t2".to_string()),
+                            ],
+                        )],
+                    )),
+                    Box::new(EggExpr::Empty()),
+                )],
+            )),
+            vec![],
+        ));
+    }
 
     decls
 }
@@ -479,7 +504,7 @@ pub fn reconstruct_rule(
     root: &Rc<ProofNode>,
     database: &Rules,
 ) {
-    let mut egg_functions = EggFunctions::new();
+    let mut egg_functions = EggFunctions::default();
     let mut rules: Vec<Vec<RuleDefinition>> = database
         .programs
         .iter()

@@ -24,6 +24,7 @@ pub struct RuleDefinition {
     pub arguments: Vec<String>,
     pub premises: Vec<Rc<Term>>,
     pub conclusion: Rc<Term>,
+    pub is_elaborated: bool
 }
 
 impl fmt::Display for RuleDefinition {

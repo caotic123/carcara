@@ -244,6 +244,7 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
             arguments: vars.clone(),
             premises: premises,
             conclusion: conclusion.clone(),
+            is_elaborated: true
         });
     }
 
