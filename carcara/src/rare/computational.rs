@@ -91,7 +91,6 @@ fn collect_conflict_clauses(
                 collect_conflict_clauses(pool, right, fixed_params, clause, clause_index);
 
             if left.contains(&clause_index) {
-                println!("{:?} {:?}", &target, &clause);
                 conflicts.extend(collect_conflicts(pool, fixed_params, &target, clause));
             }
 
