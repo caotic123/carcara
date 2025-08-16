@@ -24,6 +24,7 @@ pub enum EggExpr {
     Bool(bool),
     Num(Integer),
     String(String),
+    Const(String),
     Real(Integer),
     Mk(Box<EggExpr>),
     BitVec(Integer, Integer),

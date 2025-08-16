@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         rare_rules::{AttributeParameters, Program, RuleDefinition, Rules},
-        Binder, Constant, Operator, PrimitivePool, ProofNode, Rc, Sort, Term,
+        Binder, Constant, Operator, PrimitivePool, ProofNode, Rc, Term,
     },
     rare::{
         computational::{defunctionalization::elaborate_rule, program::compile_program},
@@ -191,20 +191,6 @@ pub fn to_egg_expr(
         return EggExpr::Mk(Box::new(egg_term));
     }
 
-    fn build_args_list<I: IntoIterator<Item = EggExpr>>(it: I) -> EggExpr {
-        let v: Vec<EggExpr> = it.into_iter().collect();
-        if v.is_empty() {
-            return EggExpr::Empty();
-        }
-        let mut it = v.into_iter().rev();
-        let first = it.next().unwrap();
-        let mut acc = EggExpr::Args(Box::new(first), Box::new(EggExpr::Empty()));
-        for e in it {
-            acc = EggExpr::Args(Box::new(e), Box::new(acc));
-        }
-        acc
-    }
-
     pub fn to_raw_egg(
         term_rc: &Rc<Term>,
         subs: &IndexMap<&String, (EggExpr, AttributeParameters)>,
@@ -315,6 +301,21 @@ pub fn to_egg_expr(
                 Some(EggExpr::Call(format!("@{0}", head.to_string()), vec![args]))
             }
             Term::Binder(binder, bindings, body) => {
+                // build a right-associated Args list
+                fn build_args_list<I: IntoIterator<Item = EggExpr>>(it: I) -> EggExpr {
+                    let v: Vec<EggExpr> = it.into_iter().collect();
+                    if v.is_empty() {
+                        return EggExpr::Empty();
+                    }
+                    let mut it = v.into_iter().rev();
+                    let first = it.next().unwrap();
+                    let mut acc = EggExpr::Args(Box::new(first), Box::new(EggExpr::Empty()));
+                    for e in it {
+                        acc = EggExpr::Args(Box::new(e), Box::new(acc));
+                    }
+                    acc
+                }
+
                 // map binder enum -> ctor name (now arity = 1)
                 let ctor = match binder {
                     Binder::Forall => "Forall",
@@ -339,93 +340,6 @@ pub fn to_egg_expr(
                 let packed = EggExpr::Args(Box::new(vars_list), Box::new(body_e));
 
                 Some(EggExpr::Call(ctor, vec![packed]))
-            }
-            Term::Sort(s) => {
-                // Nullary/atomic sort → Sort(Op("<NAME>"))
-                let sort_atom = |name: &str| {
-                    EggExpr::Call("Sort".to_string(), vec![EggExpr::Op(name.to_string())])
-                };
-
-                // Parametric sort → Sort(@Head(Args ...))
-                let sort_app = |head: &str, args: Vec<EggExpr>| {
-                    EggExpr::Call(
-                        "Sort".to_string(),
-                        vec![EggExpr::Call(
-                            format!("@{}", head),
-                            vec![build_args_list(args)],
-                        )],
-                    )
-                };
-
-                let out = match s {
-                    // Built-ins
-                    Sort::Bool => sort_atom("Bool"),
-                    Sort::Int => sort_atom("Int"),
-                    Sort::Real => sort_atom("Real"),
-                    Sort::String => sort_atom("String"),
-                    Sort::RegLan => sort_atom("RegLan"),
-                    Sort::RareList => sort_atom("RareList"),
-                    Sort::Type => sort_atom("Type"),
-
-                    // BitVec(n)
-                    Sort::BitVec(w) => sort_app("BitVec", vec![EggExpr::Num(w.clone())]),
-
-                    // Array(I, E)
-                    Sort::Array(i, e) => {
-                        let ei = to_egg_expr(i, subs, func_cache, collect_functions_shape)?;
-                        let ee = to_egg_expr(e, subs, func_cache, collect_functions_shape)?;
-                        sort_app("Array", vec![ei, ee])
-                    }
-
-                    // Function(sorts...) (domain..., codomain)
-                    Sort::Function(v) => {
-                        let args: Vec<EggExpr> = v
-                            .iter()
-                            .flat_map(|t| to_egg_expr(t, subs, func_cache, collect_functions_shape))
-                            .collect();
-                        sort_app("Function", args)
-                    }
-
-                    // User-declared sorts
-                    Sort::Atom(name, args) if args.is_empty() => sort_atom(name),
-                    Sort::Atom(name, args) => {
-                        let es: Vec<EggExpr> = args
-                            .iter()
-                            .flat_map(|t| to_egg_expr(t, subs, func_cache, collect_functions_shape))
-                            .collect();
-                        sort_app(name, es)
-                    }
-
-                    // Sort variable
-                    Sort::Var(n) => sort_atom(&format!("Var:{}", n)),
-
-                    // Parametric sort with sort vars and a body
-                    Sort::ParamSort(vars, body) => {
-                        let mut es: Vec<EggExpr> = Vec::with_capacity(vars.len() + 1);
-                        for v in vars {
-                            match &**v {
-                                Term::Sort(Sort::Var(n)) => {
-                                    es.push(sort_atom(&format!("Var:{}", n)))
-                                }
-                                _ => es.push(to_egg_expr(
-                                    v,
-                                    subs,
-                                    func_cache,
-                                    collect_functions_shape,
-                                )?),
-                            }
-                        }
-                        es.push(to_egg_expr(
-                            body,
-                            subs,
-                            func_cache,
-                            collect_functions_shape,
-                        )?);
-                        sort_app("ParamSort", es)
-                    }
-                };
-
-                Some(out)
             }
             _ => None,
         }
@@ -608,7 +522,7 @@ fn declare_functions(functions: EggFunctions) -> Vec<EggStatement> {
             for shape in functions.shapes.get(func).unwrap_or(&IndexSet::default()) {
                 let mut premises = Vec::new();
                 let mut sorted_vars = IndexMap::new();
-                let mut vars = collect_vars(shape);
+                let mut vars = collect_vars(shape, true);
                 vars.swap_remove(func);
 
                 for (name, _sort) in vars.iter() {

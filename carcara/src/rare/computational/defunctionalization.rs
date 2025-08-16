@@ -138,7 +138,7 @@ pub fn elaborate_rule(
     programs: &IndexMap<String, Program>,
     decl_consts: &IndexMap<String, DeclConst>,
 ) -> Vec<RuleDefinition> {
-    let mut rule = rule.clone();
+    let rule = rule.clone();
     let mut elaborated_rules = vec![];
     let mut instations = IndexSet::new();
 

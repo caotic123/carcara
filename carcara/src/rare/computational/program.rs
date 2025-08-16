@@ -112,7 +112,7 @@ fn create_matching_clauses<'a>(
     };
 
     for (index, arg) in args.iter().enumerate() {
-        for var in collect_vars(arg) {
+        for var in collect_vars(arg, false) {
             
             fixed_params[index].1 = (parameters[&var.0].attribute == AttributeParameters::List)
                 || fixed_params[index].1;
@@ -180,8 +180,8 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
     }
 
     for pattern in program.patterns.iter() {
-        let mut vars = collect_vars(&pattern.0);
-        vars.append(&mut collect_vars(&pattern.1));
+        let mut vars = collect_vars(&pattern.0, false);
+        vars.append(&mut collect_vars(&pattern.1, false));
         let (matching_clause, _) =
             create_matching_clauses(&pattern.0, &mut symbol_table, &program.parameters);
         let lhs = compile_conclusion(pool, &pattern.0, &symbol_table);
