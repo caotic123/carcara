@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 
-use crate::ast::{Operator, PrimitivePool, Rc, Term, TermPool};
+use crate::ast::{Operator, PrimitivePool, Rc, Sort, Term, TermPool};
 
 pub fn clauses_to_or(pool: &mut PrimitivePool, clauses: &[Rc<Term>]) -> Option<Rc<Term>> {
     if clauses.len() == 0 {
@@ -39,26 +39,32 @@ pub fn str_to_u32(input: &str) -> u32 {
     hash
 }
 
-pub fn collect_vars(root: &Rc<Term>) -> IndexMap<String, Rc<Term>> {
-    fn visit(term: &Rc<Term>, acc: &mut IndexMap<String, Rc<Term>>) {
+pub fn collect_vars(root: &Rc<Term>, collect_functions: bool) -> IndexMap<String, Rc<Term>> {
+    fn visit(term: &Rc<Term>, acc: &mut IndexMap<String, Rc<Term>>, collect_functions: bool) {
         match &**term {
             Term::Const(_) | Term::Sort(_) => {}
 
             Term::Var(name, sort) => {
+                if !collect_functions {
+                    if let  Some(Sort::Function(_)) = sort.as_sort() {
+                        return;
+                    } 
+                }
+                    // If we are not collecting functions, or if the 
                 // keep the first sort we see for a given identifier
                 acc.entry(name.clone()).or_insert_with(|| sort.clone());
             }
 
             Term::App(fun, args) => {
-                visit(fun, acc);
+                visit(fun, acc, collect_functions);
                 for arg in args {
-                    visit(arg, acc);
+                    visit(arg, acc, collect_functions);
                 }
             }
 
             Term::Op(_, args) => {
                 for arg in args {
-                    visit(arg, acc);
+                    visit(arg, acc, collect_functions);
                 }
             }
 
@@ -66,30 +72,30 @@ pub fn collect_vars(root: &Rc<Term>) -> IndexMap<String, Rc<Term>> {
                 // Traverse each binder declaration (identifier + sort) …
                 for (id, sort) in bindings {
                     acc.entry(id.clone()).or_insert_with(|| sort.clone());
-                    visit(sort, acc);
+                    visit(sort, acc, collect_functions);
                 }
                 // … and then its body.
-                visit(body, acc);
+                visit(body, acc, collect_functions);
             }
 
             Term::Let(bindings, body) => {
                 for (id, sort) in bindings {
                     acc.entry(id.clone()).or_insert_with(|| sort.clone());
-                    visit(sort, acc);
+                    visit(sort, acc, collect_functions);
                 }
-                visit(body, acc);
+                visit(body, acc, collect_functions);
             }
 
             Term::ParamOp { op_args, args, .. } => {
                 for t in op_args.iter().chain(args) {
-                    visit(t, acc);
+                    visit(t, acc, collect_functions);
                 }
             }
         }
     }
 
     let mut map = IndexMap::<String, Rc<Term>>::new();
-    visit(&root, &mut map);
+    visit(&root, &mut map, collect_functions);
     map.into_iter().collect()
 }
 
