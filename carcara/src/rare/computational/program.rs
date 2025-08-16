@@ -113,6 +113,7 @@ fn create_matching_clauses<'a>(
 
     for (index, arg) in args.iter().enumerate() {
         for var in collect_vars(arg) {
+            
             fixed_params[index].1 = (parameters[&var.0].attribute == AttributeParameters::List)
                 || fixed_params[index].1;
         }

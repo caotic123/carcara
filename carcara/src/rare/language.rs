@@ -2,7 +2,7 @@ use std::fmt;
 
 use rug::Integer;
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub enum ConstType {
     Var,
     Bool,
@@ -11,12 +11,12 @@ pub enum ConstType {
     Operator,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Constructor {
     pub(crate) constr: (String, Vec<ConstType>),
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Hash, Debug, Eq)]
 pub enum EggExpr {
     App(Box<EggExpr>, Box<EggExpr>),
     Op(String),
@@ -37,7 +37,7 @@ pub enum EggExpr {
     Empty()
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub enum EggStatement {
     DataType(String, Vec<Constructor>),
     Relation(String, ConstType),

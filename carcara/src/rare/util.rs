@@ -93,49 +93,7 @@ pub fn collect_vars(root: &Rc<Term>) -> IndexMap<String, Rc<Term>> {
     map.into_iter().collect()
 }
 
-fn terms_may_unify(a: &Rc<Term>, b: &Rc<Term>) -> bool {
-    match (&**a, &**b) {
-        // a var can match anything, and anything can match a var
-        (Term::Var(_, _), _) | (_, Term::Var(_, _)) => true,
 
-        // two constants only overlap if they are literally the same
-        (Term::Const(c1), Term::Const(c2)) => c1 == c2,
-
-        // two Op(...) only if same operator and all their args overlap
-        (Term::Op(op1, args1), Term::Op(op2, args2))
-            if op1 == op2 && args1.len() == args2.len() =>
-        {
-            args1.iter()
-                 .zip(args2.iter())
-                 .all(|(x, y)| terms_may_unify(x, y))
-        }
-
-        // two App(f, xs) only if the heads overlap and each pair of arguments overlaps
-        (Term::App(f1, xs1), Term::App(f2, xs2))
-            if xs1.len() == xs2.len() =>
-        {
-            terms_may_unify(f1, f2)
-                && xs1.iter()
-                      .zip(xs2.iter())
-                      .all(|(x, y)| terms_may_unify(x, y))
-        }
-
-        // conservatively assume no overlap in all other cases
-        _ => false,
-    }
-}
-
-
-
-pub fn create_set_of_disambiguation(
-    target: &[Rc<Term>],
-    previous: &[Vec<Rc<Term>>],
-) -> Vec<Vec<Rc<Term>>> {
-    unreachable!()
-}
-
-/// One‐sided unifier: `pat` may contain variables, `val` is the concrete term.
-/// Records each `pat_var → val_subterm` in `subst`.  Returns `true` on success.
 pub fn unify_pattern(
     pat: &Rc<Term>,
     val: &Rc<Term>,

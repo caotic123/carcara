@@ -53,10 +53,38 @@ pub struct Program {
     pub signature: Vec<Rc<Term>>,
 }
 
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclAttr {
+    LeftAssoc,
+    RightAssoc,
+    RightAssocNil(Rc<Term>),
+    Chainable(String),
+    Binder(String),
+    Pairwise(String)
+}
+
+#[derive(Debug, Clone)]
+pub struct ParsedAnnotatedSort {
+    pub base_sort: Rc<Term>,
+    pub var_name: Option<String>,
+    pub implicit: bool,
+    pub requires: Vec<Vec<Rc<Term>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeclConst {
+    pub name: String,
+    pub sort: Rc<Term>,
+    pub attrs: Vec<DeclAttr>,
+    pub ty_params: Vec<ParsedAnnotatedSort>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RareStatements {
     pub rules: IndexMap<String, RuleDefinition>,
     pub programs: IndexMap<String, Program>,
+    pub consts: IndexMap<String, DeclConst>,
 }
 
 pub type Rules = RareStatements;
