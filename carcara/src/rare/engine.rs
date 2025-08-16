@@ -1,10 +1,10 @@
 use crate::{
     ast::{
-        rare_rules::{AttributeParameters, RuleDefinition, Rules},
-        Constant, Operator, PrimitivePool, ProofNode, Rc, Term,
+        rare_rules::{AttributeParameters, Program, RuleDefinition, Rules},
+        Binder, Constant, Operator, PrimitivePool, ProofNode, Rc, Sort, Term,
     },
     rare::{
-        computational::compile_program,
+        computational::{defunctionalization::elaborate_rule, program::compile_program},
         language::*,
         meta::lower_egg_language,
         util::{clauses_to_or, collect_vars, get_equational_terms},
@@ -44,7 +44,43 @@ pub fn create_headers() -> EggLanguage {
                     constr: ("Num".to_string(), vec![ConstType::Integer]),
                 },
                 Constructor {
+                    constr: ("Real".to_string(), vec![ConstType::Integer]),
+                },
+                Constructor {
                     constr: ("Op".to_string(), vec![ConstType::Operator]),
+                },
+                Constructor {
+                    constr: ("@String".to_string(), vec![ConstType::Operator]),
+                },
+                Constructor {
+                    constr: (
+                        "Forall".to_string(),
+                        vec![ConstType::ConstrType("Term".to_string())],
+                    ),
+                },
+                Constructor {
+                    constr: (
+                        "Exists".to_string(),
+                        vec![ConstType::ConstrType("Term".to_string())],
+                    ),
+                },
+                Constructor {
+                    constr: (
+                        "Lambda".to_string(),
+                        vec![ConstType::ConstrType("Term".to_string())],
+                    ),
+                },
+                Constructor {
+                    constr: (
+                        "Choice".to_string(),
+                        vec![ConstType::ConstrType("Term".to_string())],
+                    ),
+                },
+                Constructor {
+                    constr: (
+                        "Sort".to_string(),
+                        vec![ConstType::ConstrType("Term".to_string())],
+                    ),
                 },
                 Constructor {
                     constr: ("Empty".to_string(), vec![]),
@@ -155,6 +191,20 @@ pub fn to_egg_expr(
         return EggExpr::Mk(Box::new(egg_term));
     }
 
+    fn build_args_list<I: IntoIterator<Item = EggExpr>>(it: I) -> EggExpr {
+        let v: Vec<EggExpr> = it.into_iter().collect();
+        if v.is_empty() {
+            return EggExpr::Empty();
+        }
+        let mut it = v.into_iter().rev();
+        let first = it.next().unwrap();
+        let mut acc = EggExpr::Args(Box::new(first), Box::new(EggExpr::Empty()));
+        for e in it {
+            acc = EggExpr::Args(Box::new(e), Box::new(acc));
+        }
+        acc
+    }
+
     pub fn to_raw_egg(
         term_rc: &Rc<Term>,
         subs: &IndexMap<&String, (EggExpr, AttributeParameters)>,
@@ -176,21 +226,22 @@ pub fn to_egg_expr(
                 }
             }
             Term::App(head, args) => {
-                if let Some(func_name) = head.as_var() {
+                let func_name = head.to_string();
+                func_cache
+                    .names
+                    .insert(func_name.to_string(), (false, args.len()));
+                if collect_functions_shape {
                     func_cache
-                        .names
-                        .insert(func_name.to_string(), (false, args.len()));
-                    if collect_functions_shape {
-                        func_cache
-                            .shapes
-                            .entry(func_name.to_string())
-                            .and_modify(|v| {v.insert(term_rc.clone());})
-                            .or_insert({
-                                let mut v = IndexSet::new();
-                                v.insert(term_rc.clone());
-                                v
-                            });
-                    }
+                        .shapes
+                        .entry(func_name.to_string())
+                        .and_modify(|v| {
+                            v.insert(term_rc.clone());
+                        })
+                        .or_insert({
+                            let mut v = IndexSet::new();
+                            v.insert(term_rc.clone());
+                            v
+                        });
                 }
 
                 if args.len() == 0 {
@@ -211,7 +262,7 @@ pub fn to_egg_expr(
                     args = EggExpr::Args(Box::new(a.clone()), Box::new(args));
                 }
 
-                Some(EggExpr::Call(format!("@{}", head.to_string()), vec![args]))
+                Some(EggExpr::Call(format!("@{}", func_name), vec![args]))
             }
             Term::Op(Operator::RareList, args) => {
                 let args: Vec<EggExpr> = args
@@ -240,7 +291,7 @@ pub fn to_egg_expr(
                             false
                         }));
                     }
-                    return None;
+                    return Some(EggExpr::Op(head.to_string()));
                 }
 
                 func_cache
@@ -262,6 +313,119 @@ pub fn to_egg_expr(
                 }
 
                 Some(EggExpr::Call(format!("@{0}", head.to_string()), vec![args]))
+            }
+            Term::Binder(binder, bindings, body) => {
+                // map binder enum -> ctor name (now arity = 1)
+                let ctor = match binder {
+                    Binder::Forall => "Forall",
+                    Binder::Exists => "Exists",
+                    Binder::Lambda => "Lambda",
+                    Binder::Choice => "Choice",
+                }
+                .to_string();
+
+                // encode the bound variable list
+                let vars_list = build_args_list(
+                    bindings
+                        .0
+                        .iter()
+                        .map(|(name, _sort)| EggExpr::Var(name.clone())),
+                );
+
+                // encode the body
+                let body_e = to_egg_expr(body, subs, func_cache, collect_functions_shape)?;
+
+                // single Term parameter: Args(vars_list, body_e)
+                let packed = EggExpr::Args(Box::new(vars_list), Box::new(body_e));
+
+                Some(EggExpr::Call(ctor, vec![packed]))
+            }
+            Term::Sort(s) => {
+                // Nullary/atomic sort → Sort(Op("<NAME>"))
+                let sort_atom = |name: &str| {
+                    EggExpr::Call("Sort".to_string(), vec![EggExpr::Op(name.to_string())])
+                };
+
+                // Parametric sort → Sort(@Head(Args ...))
+                let sort_app = |head: &str, args: Vec<EggExpr>| {
+                    EggExpr::Call(
+                        "Sort".to_string(),
+                        vec![EggExpr::Call(
+                            format!("@{}", head),
+                            vec![build_args_list(args)],
+                        )],
+                    )
+                };
+
+                let out = match s {
+                    // Built-ins
+                    Sort::Bool => sort_atom("Bool"),
+                    Sort::Int => sort_atom("Int"),
+                    Sort::Real => sort_atom("Real"),
+                    Sort::String => sort_atom("String"),
+                    Sort::RegLan => sort_atom("RegLan"),
+                    Sort::RareList => sort_atom("RareList"),
+                    Sort::Type => sort_atom("Type"),
+
+                    // BitVec(n)
+                    Sort::BitVec(w) => sort_app("BitVec", vec![EggExpr::Num(w.clone())]),
+
+                    // Array(I, E)
+                    Sort::Array(i, e) => {
+                        let ei = to_egg_expr(i, subs, func_cache, collect_functions_shape)?;
+                        let ee = to_egg_expr(e, subs, func_cache, collect_functions_shape)?;
+                        sort_app("Array", vec![ei, ee])
+                    }
+
+                    // Function(sorts...) (domain..., codomain)
+                    Sort::Function(v) => {
+                        let args: Vec<EggExpr> = v
+                            .iter()
+                            .flat_map(|t| to_egg_expr(t, subs, func_cache, collect_functions_shape))
+                            .collect();
+                        sort_app("Function", args)
+                    }
+
+                    // User-declared sorts
+                    Sort::Atom(name, args) if args.is_empty() => sort_atom(name),
+                    Sort::Atom(name, args) => {
+                        let es: Vec<EggExpr> = args
+                            .iter()
+                            .flat_map(|t| to_egg_expr(t, subs, func_cache, collect_functions_shape))
+                            .collect();
+                        sort_app(name, es)
+                    }
+
+                    // Sort variable
+                    Sort::Var(n) => sort_atom(&format!("Var:{}", n)),
+
+                    // Parametric sort with sort vars and a body
+                    Sort::ParamSort(vars, body) => {
+                        let mut es: Vec<EggExpr> = Vec::with_capacity(vars.len() + 1);
+                        for v in vars {
+                            match &**v {
+                                Term::Sort(Sort::Var(n)) => {
+                                    es.push(sort_atom(&format!("Var:{}", n)))
+                                }
+                                _ => es.push(to_egg_expr(
+                                    v,
+                                    subs,
+                                    func_cache,
+                                    collect_functions_shape,
+                                )?),
+                            }
+                        }
+                        es.push(to_egg_expr(
+                            body,
+                            subs,
+                            func_cache,
+                            collect_functions_shape,
+                        )?);
+                        sort_app("ParamSort", es)
+                    }
+                };
+
+                Some(out)
             }
             _ => None,
         }
@@ -302,6 +466,7 @@ fn construct_premises(
                     Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache, false).unwrap()),
                 ));
             }
+
             grounds_terms.push(EggStatement::Premise(
                 "Avaliable".to_string(),
                 Box::new(to_egg_expr(&clause, &IndexMap::new(), func_cache, false).unwrap()),
@@ -312,8 +477,11 @@ fn construct_premises(
     grounds_terms
 }
 
-fn construct_rules(database: &[RuleDefinition], func_cache: &mut EggFunctions) -> EggLanguage {
-    let mut rules = vec![];
+fn construct_rules(
+    database: &[RuleDefinition],
+    func_cache: &mut EggFunctions,
+) -> IndexSet<EggStatement> {
+    let mut rules = IndexSet::new();
     for definition in database {
         let mut premises = vec![];
 
@@ -339,23 +507,32 @@ fn construct_rules(database: &[RuleDefinition], func_cache: &mut EggFunctions) -
             let (op, lhs, rhs) = get_equational_terms(&premise).unwrap();
             match op {
                 Operator::Equals => premises.push(EggExpr::Equal(
-                    Box::new(to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap()),
-                    Box::new(to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap()),
+                    Box::new(
+                        to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap(),
+                    ),
+                    Box::new(
+                        to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap(),
+                    ),
                 )),
                 Operator::Distinct => premises.push(EggExpr::Distinct(
-                    Box::new(to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap()),
-                    Box::new(to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap()),
+                    Box::new(
+                        to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap(),
+                    ),
+                    Box::new(
+                        to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap(),
+                    ),
                 )),
                 _ => unreachable!(),
             }
         }
+
         let (_, lhs, rhs) = get_equational_terms(&definition.conclusion).unwrap();
-        let egg_equations = (
+        let egg_equations: (Box<EggExpr>, Box<EggExpr>) = (
             Box::new(to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap()),
             Box::new(to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap()),
         );
 
-        rules.push(EggStatement::Rewrite(
+        rules.insert(EggStatement::Rewrite(
             egg_equations.0.clone(),
             egg_equations.1.clone(),
             premises.clone(),
@@ -378,11 +555,13 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
             Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache, false).unwrap()),
         ));
 
-        goal.push(EggStatement::Premise("Avaliable".to_string(),
+        goal.push(EggStatement::Premise(
+            "Avaliable".to_string(),
             Box::new(EggExpr::Literal("goal_lhs".to_string())),
         ));
 
-        goal.push(EggStatement::Premise("Avaliable".to_string(),
+        goal.push(EggStatement::Premise(
+            "Avaliable".to_string(),
             Box::new(EggExpr::Literal("goal_rhs".to_string())),
         ));
 
@@ -505,14 +684,18 @@ pub fn reconstruct_rule(
     database: &Rules,
 ) {
     let mut egg_functions = EggFunctions::default();
-    let mut rules: Vec<Vec<RuleDefinition>> = database
-        .programs
-        .iter()
-        .map(|db| compile_program(pool, db.1))
-        .collect();
-    let db: Vec<RuleDefinition> = database.rules.values().cloned().collect();
-    rules.push(db);
-    let rules = &rules.concat();
+
+    let mut rules: Vec<RuleDefinition> = vec![];
+
+    for (_, rule) in database.rules.iter() {
+        rules.extend(elaborate_rule(
+            pool,
+            rule,
+            &database.programs,
+            &database.consts,
+        ));
+        rules.push(rule.clone());
+    }
 
     for rule in rules.iter() {
         println!("{}", rule);

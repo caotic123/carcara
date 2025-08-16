@@ -106,6 +106,7 @@ pub fn parse_instance_with_pool<'a, T: BufRead>(
         RareStatements {
             rules: IndexMap::new(),
             programs: IndexMap::new(),
+            consts: IndexMap::new(),
         },
     ))
 }
@@ -1314,6 +1315,10 @@ impl<'a, R: BufRead> Parser<'a, R> {
                         .map_err(|err| Error::Parser(err, pos))
                 } else if let Ok(op) = Operator::from_str(&s) {
                     let args = Vec::new();
+                    // We need to check if the user overwritted the operator name with a constant
+                    if let Some(sort) = self.state.symbol_table.get(&HashCache::new(s.clone())) {
+                        return Ok(self.pool.add(Term::Var(s, sort.clone())));
+                    }
 
                     self.make_op(op, args)
                         .map_err(|err| Error::Parser(err, pos))
@@ -1928,6 +1933,44 @@ impl<'a, R: BufRead> Parser<'a, R> {
         }
     }
 
+    fn parser_app_sorted(&mut self, polymorphic: bool) -> CarcaraResult<Rc<Term>> {
+        let pos = self.current_position;
+        if !polymorphic {
+            let name = self.expect_symbol()?;
+            let args =
+                self.parse_sequence(|parser| Parser::parse_sort(parser, polymorphic), true)?;
+            return self
+                .make_sort(name, args, polymorphic)
+                .map_err(|e| Error::Parser(e, pos));
+        }
+        let name = self.expect_symbol()?;
+        if name == "Array" {
+            let args = self.parse_sequence(Self::parse_term, true)?;
+            let args = args
+                .iter()
+                .map(|x| {
+                    if let Some(v) = x.as_var() {
+                        self.pool.add(Term::Sort(Sort::Var(v.to_string())))
+                    } else {
+                        x.clone()
+                    }
+                })
+                .collect();
+            return self
+                .make_sort(name, args, polymorphic)
+                .map_err(|e| Error::Parser(e, pos));
+        }
+
+        if name == "->" {
+            let sorts = Self::parse_sequence(self, |parser| Self::parse_sort(parser, true), true)?;
+            return Ok(self.pool.add(Term::Sort(Sort::Function(sorts))));
+        }
+
+        let args = self.parse_sequence(|parser| Self::parse_term(parser), true)?;
+        let head_term = self.pool.add(Term::Sort(Sort::Var(name.clone())));
+        return Ok(self.pool.add(Term::Sort(Sort::ParamSort(args, head_term))));
+    }
+
     /// Parses a sort.
     fn parse_sort(&mut self, polymorphic: bool) -> CarcaraResult<Rc<Term>> {
         let pos = self.current_position;
@@ -1941,40 +1984,8 @@ impl<'a, R: BufRead> Parser<'a, R> {
                     .make_indexed_sort(name, args)
                     .map_err(|e| Error::Parser(e, pos));
             }
-            Token::OpenParen if polymorphic => {
-                let name = self.expect_symbol()?;
-                if name == "Array" {
-                    let args = self.parse_sequence(Self::parse_term, true)?;
-                    let args = args
-                        .iter()
-                        .map(|x| {
-                            if let Some(v) = x.as_var() {
-                                self.pool.add(Term::Sort(Sort::Var(v.to_string())))
-                            } else {
-                                x.clone()
-                            }
-                        })
-                        .collect();
-                    return self
-                        .make_sort(name, args, polymorphic)
-                        .map_err(|e| Error::Parser(e, pos));
-                }
-
-                if name == "->" {
-                    let sorts =
-                        Self::parse_sequence(self, |parser| Self::parse_sort(parser, true), true)?;
-                    return Ok(self.pool.add(Term::Sort(Sort::Function(sorts))));
-                }
-
-                let args = self.parse_sequence(|parser| Self::parse_term(parser), true)?;
-                let head_term = self.pool.add(Term::Sort(Sort::Var(name.clone())));
-                return Ok(self.pool.add(Term::Sort(Sort::ParamSort(args, head_term))));
-            }
             Token::OpenParen => {
-                let name = self.expect_symbol()?;
-                let args =
-                    self.parse_sequence(|parser| Parser::parse_sort(parser, polymorphic), true)?;
-                (name, args)
+                return self.parser_app_sorted(polymorphic);
             }
             other => {
                 return Err(Error::Parser(ParserError::UnexpectedToken(other), pos));

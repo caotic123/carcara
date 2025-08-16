@@ -1,31 +1,23 @@
+(declare-const ite (-> (! Type :var A :implicit) Bool A A A))
+(declare-const not (-> Bool Bool))
+(declare-const or (-> Bool Bool Bool) :right-assoc-nil false)
+(declare-const and (-> Bool Bool Bool) :right-assoc-nil true)
+(declare-const => (-> Bool Bool Bool) :right-assoc)
+(declare-const xor (-> Bool Bool Bool) :left-assoc)
+(declare-const = (-> (! Type :var A :implicit) A A Bool) :chainable and)
+(declare-const distinct (-> (! Type :var A :implicit) A A Bool) :pairwise and)
 
-(program has_false ((xs Bool :list))
-  :signature (Bool) Bool
+(program has_false ((f (-> Bool Bool Bool)) (xs Bool :list))
+  :signature ((-> Bool Bool Bool) Bool) Bool
   (
-  ((has_false (and false xs)) true)
-  ((has_false (and true xs)) (has_false (and xs)))
-  ((has_false false) true)
+  ((has_false f (f false xs)) true)
+  ((has_false f (f true xs)) (has_false f xs))
+  ((has_false f false) true)
   )
 )
 
 (declare-rare-rule and_false ((x Bool :list)) 
   :args (x)
-  :premises ((= (has_false (and x)) true))
+  :premises ((= (has_false and x) true))
   :conclusion (= (and x) false)
-)
-
-(program $check_not_not ((phi Bool))
-    :signature (Bool Bool) Bool
-    (
-    (($check_not_not (not (not (not phi))) phi) true)
-    )
-)
-
-(program $lt ((x Int) (y Int))
-    :signature (Int Int) Bool
-    (
-    (($lt 0 0) false)
-    (($lt 0 x) true)
-    (($lt x y) ($lt (- x 1) (- y 1)))
-    )
 )

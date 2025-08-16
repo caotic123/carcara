@@ -56,7 +56,7 @@ fn to_expr(e: EggExpr) -> Expr {
         ),
         String(s) => Expr::Call(
             dummy_span(),
-            Symbol::from("String"),
+            Symbol::from("@String"),
             vec![Expr::Lit(
                 dummy_span(),
                 egglog::ast::Literal::String(s.into()),
