@@ -1,0 +1,1042 @@
+{
+  "2018-Goel-hwbench/QF_UF_lifts.3.prop1_ab_reg_max": {
+    "time": "13.890s",
+    "ok": true,
+    "elaborations": { "success": 2, "failed": 0, "total": 2 }
+  },
+  "2018-Goel-hwbench/QF_UF_elevator.3.prop1_ab_reg_max": {
+    "time": "4.955s",
+    "ok": true,
+    "elaborations": { "success": 2, "failed": 0, "total": 2 }
+  },
+  "2018-Goel-hwbench/QF_UF_counter_v_ab_reg_max": {
+    "time": "7ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "2018-Goel-hwbench/QF_UF_brp.5.prop1_ab_reg_max": {
+    "time": "3.079s",
+    "ok": true,
+    "elaborations": { "success": 2, "failed": 0, "total": 2 }
+  },
+  "2018-Goel-hwbench/QF_UF_brp2.4.prop2_ab_reg_max": {
+    "time": "39.559s",
+    "ok": true,
+    "elaborations": { "success": 9, "failed": 0, "total": 9 }
+  },
+  "2018-Goel-hwbench/QF_UF_resistance.1.prop2_ab_cti_max": {
+    "time": "38ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "2018-Goel-hwbench/QF_UF_brp2.3.prop3_ab_reg_max": {
+    "time": "1m",
+    "ok": true,
+    "elaborations": { "success": 14, "failed": 0, "total": 14 }
+  },
+  "2018-Goel-hwbench/QF_UF_pgm_protocol.4.prop6_ab_reg_max": {
+    "time": "25.736s",
+    "ok": true,
+    "elaborations": { "success": 2, "failed": 0, "total": 2 }
+  },
+  "2018-Goel-hwbench/QF_UF_needham.1.prop4_ab_reg_max": {
+    "time": "19.715s",
+    "ok": true,
+    "elaborations": { "success": 7, "failed": 0, "total": 7 }
+  },
+  "2018-Goel-hwbench/QF_UF_elevator.2.prop1_ab_reg_max": {
+    "time": "2.540s",
+    "ok": true,
+    "elaborations": { "success": 2, "failed": 0, "total": 2 }
+  },
+  "2018-Goel-hwbench/QF_UF_pouring.2.prop1_ab_reg_max": {
+    "time": "5.466s",
+    "ok": true,
+    "elaborations": { "success": 2, "failed": 0, "total": 2 }
+  },
+  "2018-Goel-hwbench/QF_UF_brp2.2.prop3_ab_reg_max": {
+    "time": "59.655s",
+    "ok": true,
+    "elaborations": { "success": 14, "failed": 0, "total": 14 }
+  },
+  "2018-Goel-hwbench/QF_UF_iprotocol.7.prop1_ab_reg_max": {
+    "time": "1m",
+    "ok": true,
+    "elaborations": { "success": 10, "failed": 0, "total": 10 }
+  },
+  "20170829-Rodin/smt249825283571301584": {
+    "time": "64ms",
+    "ok": true,
+    "elaborations": { "success": 1, "failed": 0, "total": 1 }
+  },
+  "NEQ/NEQ027_size8": {
+    "time": "6.268s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "NEQ/NEQ033_size5": {
+    "time": "5.283s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "SEQ/SEQ038_size7": {
+    "time": "4.422s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/iso_icl082": {
+    "time": "363ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/gensys_icl019": {
+    "time": "632ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/gensys_icl064": {
+    "time": "2.211s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/gensys_icl084": {
+    "time": "1.131s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/iso_icl083": {
+    "time": "225ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/gensys_icl100": {
+    "time": "577ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/gensys_icl044": {
+    "time": "1.506s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/iso_brn028": {
+    "time": "145ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/gensys_icl099": {
+    "time": "1.170s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/dead_dnd016": {
+    "time": "2.784s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/iso_icl038": {
+    "time": "198ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/iso_brn033": {
+    "time": "166ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/iso_icl071": {
+    "time": "156ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/gensys_icl055": {
+    "time": "1.686s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/gensys_brn089": {
+    "time": "964ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/loops6/iso_brn005": {
+    "time": "69ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg7/iso_icl_sk002": {
+    "time": "422ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg7/iso_brn004": {
+    "time": "387ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg7/iso_brn_sk036": {
+    "time": "166ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg7/iso_icl_repgen_sk006": {
+    "time": "22.976s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg7/iso_icl002": {
+    "time": "170ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg7/iso_brn023": {
+    "time": "724ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg6/iso_icl012": {
+    "time": "1.026s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl832": {
+    "time": "2.975s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl288": {
+    "time": "132ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl726": {
+    "time": "240ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl005": {
+    "time": "45ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn307": {
+    "time": "138ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/dead_dnd007": {
+    "time": "1.231s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl636": {
+    "time": "1.107s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl891": {
+    "time": "482ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl911": {
+    "time": "1.254s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn235": {
+    "time": "105ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl515": {
+    "time": "192ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl063": {
+    "time": "290ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl972": {
+    "time": "202ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl096": {
+    "time": "214ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl204": {
+    "time": "880ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl468": {
+    "time": "98ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn1097": {
+    "time": "160ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl887": {
+    "time": "105ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn023": {
+    "time": "819ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn1086": {
+    "time": "79ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn420": {
+    "time": "2.102s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/dead_dnd041": {
+    "time": "1.504s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl330": {
+    "time": "833ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl1265": {
+    "time": "161ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl631": {
+    "time": "313ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl539": {
+    "time": "1.391s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl070": {
+    "time": "2.414s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn998": {
+    "time": "1.979s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl218": {
+    "time": "744ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl190": {
+    "time": "1.369s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl944": {
+    "time": "296ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl969": {
+    "time": "224ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl487": {
+    "time": "98ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl825": {
+    "time": "1.043s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn484": {
+    "time": "125ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl582": {
+    "time": "211ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl010": {
+    "time": "396ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl1051": {
+    "time": "277ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl576": {
+    "time": "107ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl353": {
+    "time": "901ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/dead_dnd031": {
+    "time": "3.341s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl042": {
+    "time": "152ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl336": {
+    "time": "112ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn1212": {
+    "time": "222ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl080": {
+    "time": "1.097s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl183": {
+    "time": "1.734s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl538": {
+    "time": "1.857s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1219": {
+    "time": "1.153s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl653": {
+    "time": "237ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn411": {
+    "time": "71ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl658": {
+    "time": "3.025s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl720": {
+    "time": "628ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl547": {
+    "time": "357ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl679": {
+    "time": "239ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl132": {
+    "time": "148ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl498": {
+    "time": "289ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn750": {
+    "time": "157ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/dead_dnd002": {
+    "time": "7ms",
+    "ok": true,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl1236": {
+    "time": "104ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn180": {
+    "time": "966ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl823": {
+    "time": "254ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl949": {
+    "time": "2.671s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl143": {
+    "time": "2.130s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn223": {
+    "time": "84ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1261": {
+    "time": "543ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn507": {
+    "time": "143ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl748": {
+    "time": "122ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl299": {
+    "time": "1.312s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl874": {
+    "time": "109ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1131": {
+    "time": "360ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl865": {
+    "time": "1.198s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl159": {
+    "time": "2.443s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn526": {
+    "time": "1.720s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl839": {
+    "time": "105ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl308": {
+    "time": "786ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn588": {
+    "time": "286ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn425": {
+    "time": "648ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl036": {
+    "time": "46ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl583": {
+    "time": "235ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl142": {
+    "time": "96ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1153": {
+    "time": "677ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl870": {
+    "time": "91ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn1047": {
+    "time": "179ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl248": {
+    "time": "116ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl160": {
+    "time": "95ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn317": {
+    "time": "137ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl970": {
+    "time": "1.106s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl150": {
+    "time": "171ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl271": {
+    "time": "135ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl783": {
+    "time": "3.199s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/dead_dnd036": {
+    "time": "2.100s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1259": {
+    "time": "596ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl374": {
+    "time": "1.858s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl184": {
+    "time": "1.111s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn900": {
+    "time": "1.024s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl1097": {
+    "time": "237ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1270": {
+    "time": "391ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl561": {
+    "time": "273ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl986": {
+    "time": "110ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1106": {
+    "time": "396ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl075": {
+    "time": "839ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl813": {
+    "time": "2.731s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn261": {
+    "time": "653ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl379": {
+    "time": "1.259s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1223": {
+    "time": "1.073s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl238": {
+    "time": "494ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl432": {
+    "time": "1.253s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1044": {
+    "time": "529ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl774": {
+    "time": "66ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl896": {
+    "time": "1.418s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl1255": {
+    "time": "192ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl178": {
+    "time": "193ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn114": {
+    "time": "112ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl1217": {
+    "time": "221ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn1104": {
+    "time": "840ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn606": {
+    "time": "272ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl692": {
+    "time": "83ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl713": {
+    "time": "1.357s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl509": {
+    "time": "2.333s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl760": {
+    "time": "2.064s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn658": {
+    "time": "270ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl651": {
+    "time": "325ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl473": {
+    "time": "98ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl212": {
+    "time": "295ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1280": {
+    "time": "313ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1009": {
+    "time": "1.164s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl463": {
+    "time": "98ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1251": {
+    "time": "1.373s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1055": {
+    "time": "1.102s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl922": {
+    "time": "215ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl335": {
+    "time": "1.271s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl599": {
+    "time": "157ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl416": {
+    "time": "75ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl217": {
+    "time": "773ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl935": {
+    "time": "1.359s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl353": {
+    "time": "119ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl505": {
+    "time": "159ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl016": {
+    "time": "89ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn942": {
+    "time": "150ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl115": {
+    "time": "171ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl964": {
+    "time": "1.846s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl312": {
+    "time": "1.409s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl249": {
+    "time": "1.000s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn009": {
+    "time": "455ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl945": {
+    "time": "2.018s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl1046": {
+    "time": "1.117s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl221": {
+    "time": "71ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn869": {
+    "time": "3.415s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl600": {
+    "time": "1.486s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl954": {
+    "time": "183ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl906": {
+    "time": "261ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl112": {
+    "time": "231ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl123": {
+    "time": "215ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl866": {
+    "time": "195ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn1058": {
+    "time": "89ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl815": {
+    "time": "2.744s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl220": {
+    "time": "179ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn1126": {
+    "time": "134ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn1103": {
+    "time": "1.076s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn1279": {
+    "time": "161ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl050": {
+    "time": "59ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn1092": {
+    "time": "111ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_icl075": {
+    "time": "165ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_brn1231": {
+    "time": "1.160s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl904": {
+    "time": "2.364s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/dead_dnd032": {
+    "time": "1.883s",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/iso_brn749": {
+    "time": "128ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "QG-classification/qg5/gensys_icl842": {
+    "time": "884ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  }
+}

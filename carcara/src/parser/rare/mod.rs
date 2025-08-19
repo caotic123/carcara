@@ -153,7 +153,14 @@ pub fn parse_declare_const<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<
     }
 
     parser.expect_token(Token::ReservedWord(Reserved::DeclareConst))?;
-    let symbol = parser.expect_symbol()?;
+    let mut symbol = parser.expect_symbol()?;
+    let current = &parser.current_token;
+    if let Token::Keyword(_) = current {
+        parser.expect_keyword()?;
+        let s = parser.expect_keyword()?;
+        symbol = format!("{}::{}", symbol, s);
+    }
+
     let sorts = parser_sort(parser)?;
     let attrs = parse_decl_attrs(parser)?;
     parser.expect_token(Token::CloseParen)?;
