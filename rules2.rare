@@ -6,6 +6,7 @@
 (declare-const xor (-> Bool Bool Bool) :left-assoc)
 (declare-const = (-> (! Type :var A :implicit) A A Bool) :chainable and)
 (declare-const distinct (-> (! Type :var A :implicit) A A Bool) :pairwise and)
+(declare-const eo::nil (-> (! Type :var A :implicit) (! Type :var B :implicit) B))
 
 (program has_false ((f (-> Bool Bool Bool)) (xs Bool :list))
   :signature ((-> Bool Bool Bool) Bool) Bool
@@ -16,8 +17,8 @@
   )
 )
 
-(declare-rare-rule and_false ((x Bool :list)) 
+(declare-rare-rule and_false ((x Bool)) 
   :args (x)
   :premises ((= (has_false and x) true))
-  :conclusion (= (and x) false)
+  :conclusion (= x false)
 )

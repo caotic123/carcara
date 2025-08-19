@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        rare_rules::{AttributeParameters, Program, RuleDefinition, Rules},
+        rare_rules::{AttributeParameters, DeclAttr, DeclConst, Program, RuleDefinition, Rules},
         Binder, Constant, Operator, PrimitivePool, ProofNode, Rc, Term,
     },
     rare::{
@@ -491,16 +491,10 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
     None
 }
 
-fn declare_functions(functions: EggFunctions) -> Vec<EggStatement> {
-    // ───────────────────────────────────────────────────────────
-    // base‐case defaults: when an operator sees no args → this
-    // ───────────────────────────────────────────────────────────
-    let default_empty: &[(&str, bool)] = &[
-        ("or", false),
-        ("and", false),
-        // ← add new operator defaults here
-    ];
-
+fn declare_functions(
+    functions: EggFunctions,
+    constant: &IndexMap<String, DeclConst>,
+) -> Vec<EggStatement> {
     let mut decls = Vec::new();
 
     for (func, (is_op, _arity)) in functions.names.iter() {
@@ -540,12 +534,27 @@ fn declare_functions(functions: EggFunctions) -> Vec<EggStatement> {
                 ));
             }
         } else {
-            if let Some((_, default_val)) = default_empty.iter().find(|&&(op, _)| op == func) {
-                decls.push(EggStatement::Rewrite(
-                    Box::new(EggExpr::Call(format!("@{}", func), vec![EggExpr::Empty()])),
-                    Box::new(EggExpr::Bool(*default_val)),
-                    vec![],
-                ));
+            if let Some(default_val) = constant.get(func) {
+                if let Some(DeclAttr::RightAssocNil(nil)) =
+                    default_val.attrs.iter().find(|x| match x {
+                        DeclAttr::RightAssocNil(_) => true,
+                        _ => false,
+                    })
+                {
+                    decls.push(EggStatement::Rewrite(
+                        Box::new(EggExpr::Call(format!("@{}", func), vec![EggExpr::Empty()])),
+                        Box::new(
+                            to_egg_expr(
+                                nil,
+                                &IndexMap::default(),
+                                &mut EggFunctions::default(),
+                                false,
+                            )
+                            .unwrap(),
+                        ),
+                        vec![],
+                    ));
+                }
             }
         }
     }
@@ -608,7 +617,6 @@ pub fn reconstruct_rule(
             &database.programs,
             &database.consts,
         ));
-        rules.push(rule.clone());
     }
 
     for rule in rules.iter() {
@@ -619,7 +627,7 @@ pub fn reconstruct_rule(
 
     let premises = construct_premises(pool, root, &mut egg_functions);
     let goal = set_goal(&conclusion, &mut egg_functions);
-    let declarations = declare_functions(egg_functions);
+    let declarations = declare_functions(egg_functions, &database.consts);
 
     let mut ast = create_headers();
 

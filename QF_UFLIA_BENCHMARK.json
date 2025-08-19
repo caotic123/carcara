@@ -1,0 +1,47 @@
+{
+  "TwoSquares/smtlib.606691": {
+    "time": "315ms",
+    "ok": false,
+    "elaborations": { "success": 3, "failed": 2, "total": 5 }
+  },
+  "mathsat/Wisa/xs-11-18-3-3-4-1": {
+    "time": "10ms",
+    "ok": true,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "mathsat/Wisa/xs-05-06-2-2-5-1": {
+    "time": "1m",
+    "ok": false,
+    "elaborations": { "success": 8, "failed": 58, "total": 66 }
+  },
+  "mathsat/Wisa/xs-07-16-2-4-3-5": {
+    "time": "15ms",
+    "ok": true,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "mathsat/Wisa/xs-09-16-3-4-1-5": {
+    "time": "10ms",
+    "ok": true,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "mathsat/Wisa/xs-06-14-3-1-5-2": {
+    "time": "1m",
+    "ok": false,
+    "elaborations": { "success": 8, "failed": 82, "total": 90 }
+  },
+  "mathsat/EufLaArithmetic/medium/medium11": {
+    "time": "319ms",
+    "ok": false,
+    "elaborations": { "success": 0, "failed": 0, "total": 0 }
+  },
+  "mathsat/Hash/hash_uns_04_04": {
+    "time": "4.119s",
+    "ok": false,
+    "elaborations": { "success": 3, "failed": 1, "total": 4 }
+  },
+  "mathsat/Hash/hash_uns_03_16": {
+    "time": "7.794s",
+    "ok": false,
+    "elaborations": { "success": 3, "failed": 1, "total": 4 }
+  }
+}

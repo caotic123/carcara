@@ -1,11 +1,10 @@
-use std::{vec};
+use std::vec;
 
 use indexmap::IndexMap;
 
 use crate::{
     ast::{
-        rare_rules::{AttributeParameters, Program, RuleDefinition, TypeParameter},
-        Operator, PrimitivePool, Rc, Term, TermPool,
+        rare_rules::{AttributeParameters, Program, RuleDefinition, TypeParameter}, Operator, PrimitivePool, Rc, Sort, Substitution, Term, TermPool
     },
     rare::util::{collect_vars, unify_pattern},
 };
@@ -113,7 +112,6 @@ fn create_matching_clauses<'a>(
 
     for (index, arg) in args.iter().enumerate() {
         for var in collect_vars(arg, false) {
-            
             fixed_params[index].1 = (parameters[&var.0].attribute == AttributeParameters::List)
                 || fixed_params[index].1;
         }
@@ -140,6 +138,167 @@ fn transform_to_rare_params<'a>(
     }
     vec
 }
+
+
+// Eunoia list in pattern matching has a akward behavior, where when a parameter is a list, whenever we mention it
+// we need to create a representation such (or x xs) = [xs/(or xs)].
+fn handle_eo_lists<'a>(
+    pool: &mut PrimitivePool,
+    terms: &Vec<Rc<Term>>,
+    parameters: &IndexMap<String, TypeParameter>,
+) -> Substitution {
+    use std::collections::HashSet;
+
+    // Helper: is this a list-attribute parameter var that isn't shadowed?
+    fn is_list_param(
+        t: &Rc<Term>,
+        parameters: &IndexMap<String, TypeParameter>,
+        shadowed: &HashSet<String>,
+    ) -> bool {
+        if let Some(name) = t.as_var() {
+            if !shadowed.contains(name) {
+                if let Some(p) = parameters.get(name) {
+                    return p.attribute == AttributeParameters::List;
+                }
+            }
+        }
+        false
+    }
+
+    // Traverse Sorts (they can contain Terms in some cases)
+    fn visit_sort(
+        pool: &mut PrimitivePool,
+        s: &Sort,
+        parameters: &IndexMap<String, TypeParameter>,
+        mapping: &mut IndexMap<Rc<Term>, Rc<Term>>,
+        shadowed: &HashSet<String>,
+    ) {
+        match s {
+            Sort::Function(ts) | Sort::Atom(_, ts) => {
+                for t in ts {
+                    visit(pool, t, parameters, mapping, shadowed);
+                }
+            }
+            Sort::Array(a, b) => {
+                visit(pool, a, parameters, mapping, shadowed);
+                visit(pool, b, parameters, mapping, shadowed);
+            }
+            Sort::ParamSort(ts, inner) => {
+                for t in ts {
+                    visit(pool, t, parameters, mapping, shadowed);
+                }
+                visit(pool, inner, parameters, mapping, shadowed);
+            }
+            // Primitive / leaf sorts and sort variables: nothing to do
+            Sort::BitVec(_)
+            | Sort::Bool
+            | Sort::Int
+            | Sort::Real
+            | Sort::String
+            | Sort::RegLan
+            | Sort::RareList
+            | Sort::Type
+            | Sort::Var(_) => {}
+        }
+    }
+
+    fn visit(
+        pool: &mut PrimitivePool,
+        t: &Rc<Term>,
+        parameters: &IndexMap<String, TypeParameter>,
+        mapping: &mut IndexMap<Rc<Term>, Rc<Term>>,
+        shadowed: &HashSet<String>,
+    ) {
+        match &**t {
+            Term::Const(_) => {}
+
+            Term::Var(_, _) => {}
+
+            Term::Sort(s) => {
+                visit_sort(pool, s, parameters, mapping, shadowed);
+            }
+
+            Term::Op(op, args) => {
+                for arg in args {
+                    if is_list_param(arg, parameters, shadowed) && !mapping.contains_key(arg) {
+                        let unary = pool.add(Term::Op(*op, vec![arg.clone()]));
+                        mapping.insert(arg.clone(), unary);
+                    }
+                    visit(pool, arg, parameters, mapping, shadowed);
+                }
+            }
+
+            Term::App(head, args) => {
+                visit(pool, head, parameters, mapping, shadowed);
+
+                for arg in args {
+                    if is_list_param(arg, parameters, shadowed) && !mapping.contains_key(arg) {
+                        let unary = pool.add(Term::App(head.clone(), vec![arg.clone()]));
+                        mapping.insert(arg.clone(), unary);
+                    }
+                    visit(pool, arg, parameters, mapping, shadowed);
+                }
+            }
+
+            Term::ParamOp { op, op_args, args } => {
+                // Operator parameters can be terms (e.g., qualified sorts); recurse
+                for oa in op_args {
+                    visit(pool, oa, parameters, mapping, shadowed);
+                }
+
+                for arg in args {
+                    if is_list_param(arg, parameters, shadowed) && !mapping.contains_key(arg) {
+                        let unary = pool.add(Term::ParamOp {
+                            op: *op,
+                            op_args: op_args.clone(),
+                            args: vec![arg.clone()],
+                        });
+                        mapping.insert(arg.clone(), unary);
+                    }
+                    visit(pool, arg, parameters, mapping, shadowed);
+                }
+            }
+
+            Term::Binder(_, bindings, inner) => {
+                // Visit sorts of bound vars with current scope
+                for (_, sort) in bindings.0.iter() {
+                    visit(pool, sort, parameters, mapping, shadowed);
+                }
+
+                // Shadow bound names for the inner term
+                let mut next_shadow = shadowed.clone();
+                for (name, _) in bindings.0.iter() {
+                    next_shadow.insert(name.clone());
+                }
+                visit(pool, inner, parameters, mapping, &next_shadow);
+            }
+
+            Term::Let(bindings, body) => {
+                // In let, values are evaluated in the *current* scope
+                for (_, val) in bindings.0.iter() {
+                    visit(pool, val, parameters, mapping, shadowed);
+                }
+
+                // Bound names are shadowed in the body
+                let mut next_shadow = shadowed.clone();
+                for (name, _) in bindings.0.iter() {
+                    next_shadow.insert(name.clone());
+                }
+                visit(pool, body, parameters, mapping, &next_shadow);
+            }
+        }
+    }
+
+    let mut mapping: IndexMap<Rc<Term>, Rc<Term>> = IndexMap::new();
+    let shadowed = HashSet::new();
+
+    for t in terms {
+        visit(pool, t, parameters, &mut mapping, &shadowed);
+    }
+
+    Substitution::new(pool, mapping).unwrap()
+}
+
 
 fn compile_conclusion(
     pool: &mut PrimitivePool,
@@ -184,6 +343,7 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
         vars.append(&mut collect_vars(&pattern.1, false));
         let (matching_clause, _) =
             create_matching_clauses(&pattern.0, &mut symbol_table, &program.parameters);
+
         let lhs = compile_conclusion(pool, &pattern.0, &symbol_table);
 
         rules.push((
@@ -193,7 +353,7 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
                 .filter(|x| x != &program.name)
                 .collect::<Vec<_>>(),
             matching_clause.clone(),
-            pool.add(Term::Op(Operator::Equals, vec![lhs, pattern.1.clone()])),
+            (lhs, pattern.1.clone()),
         ));
 
         if !rejected_clauses.contains(&matching_clause) {
@@ -228,12 +388,17 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
     parameters.extend(program.parameters.clone());
 
     for (index, rule) in rules.into_iter().enumerate() {
-        let (vars, matching_clauses, conclusion) = rule;
+        let (vars, matching_clauses, (lhs, rhs)) = rule;
 
         let conflicts =
             collect_conflict_clauses(pool, &set, &symbol_table, &matching_clauses, index);
+
+        let rhs = handle_eo_lists(pool, &matching_clauses, &program.parameters).apply(pool, &rhs);
+        let conclusion = pool.add(Term::Op(Operator::Equals, vec![lhs, rhs]));
+
         let mut premises = transform_to_rare_params(pool, matching_clauses, &symbol_table);
         premises.extend(conflicts);
+
         compiled_rules.push(RuleDefinition {
             name: format!("{}_{}", program.name.clone(), index),
             parameters: parameters
@@ -244,7 +409,7 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
             arguments: vars.clone(),
             premises: premises,
             conclusion: conclusion.clone(),
-            is_elaborated: true
+            is_elaborated: true,
         });
     }
 
