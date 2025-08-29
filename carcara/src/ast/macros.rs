@@ -120,6 +120,20 @@ macro_rules! match_term {
             None
         }
     }};
+
+    ((eo::$f:tt $($args:tt)+) = $var:expr) => {{
+        if let $crate::ast::Term::App(g, args) = &$var as &$crate::ast::Term
+        {
+            if let Some(concat!("eo::", stringify!($f))) = g.as_var() {
+                match_term!(@ARGS ($($args)+) = args.as_slice())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }};
+
     (($op:tt $($args:tt)+) = $var:expr) => {{
         if let $crate::ast::Term::Op(match_term!(@GET_VARIANT $op), args) =
             &$var as &$crate::ast::Term

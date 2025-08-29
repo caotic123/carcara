@@ -5,18 +5,16 @@ mod lexer;
 mod rare;
 pub(crate) mod tests;
 
-use std::{fmt::format, iter::Iterator};
+use std::iter::Iterator;
 
 pub use error::{ParserError, SortError};
 pub use lexer::{Lexer, Position, Reserved, Token};
 
 use crate::{
-    ast::{
+    CarcaraResult, Error, ast::{
         rare_rules::{RareStatements, Rules},
         *,
-    },
-    utils::{HashCache, HashMapStack},
-    CarcaraResult, Error,
+    }, utils::{HashCache, HashMapStack}
 };
 use error::assert_num_args;
 use indexmap::{IndexMap, IndexSet};
@@ -163,7 +161,7 @@ struct ParserState {
     function_defs: IndexMap<String, FunctionDef>,
     sort_declarations: HashMapStack<String, usize>,
     sort_defs: IndexMap<String, SortDef>,
-    step_ids: HashMapStack<HashCache<String>, usize>,
+    step_ids: HashMapStack<HashCache<String>, usize>
 }
 
 /// A parser for the Alethe proof format.
