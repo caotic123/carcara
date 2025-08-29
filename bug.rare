@@ -1,0 +1,42 @@
+
+(declare-const eo::typeof (-> (! Type :var A :implicit) A Type))
+(declare-const eo::nil (-> (! Type :var A :implicit) (! Type :var B :implicit) A Type B))
+(declare-const BitVec (-> Int Type))
+(declare-parameterized-const eo::to_bin ((m Int)) (-> Int (BitVec m)))
+
+(declare-const ite (-> (! Type :var A :implicit) Bool A A A))
+(declare-const not (-> Bool Bool))
+(declare-const or (-> Bool Bool Bool) :right-assoc-nil false)
+(declare-const and (-> Bool Bool Bool) :right-assoc-nil true)
+(declare-const => (-> Bool Bool Bool) :right-assoc)
+(declare-const xor (-> Bool Bool Bool) :left-assoc)
+
+(declare-const distinct (-> (! Type :var A :implicit) A A Bool) :pairwise and)
+
+(declare-parameterized-const bvor ((n Int :implicit))
+    (-> (BitVec n) (BitVec n) (BitVec n))
+    :right-assoc-nil (eo::to_bin n 0)               
+)
+
+(program eo::esqueci ((x Int) (y Int))
+  :signature (Int Int) Bool
+  (
+    ((eo::esqueci 1 2) true)
+    ((eo::esqueci 3 y) false)
+    ((eo::esqueci x y) false)
+  )
+)
+
+(program eo::eq ((T Type) (x T) (y T))
+  :signature (T T) Bool
+  (
+    ((eo::eq x x) true)
+    ((eo::eq x y) false)
+  )
+)
+
+(declare-rare-rule and_false ((x Bool)) 
+  :args (x)
+  :premises ((= (eo::eq 1 2) false) (= (eo::esqueci 1 2) true))
+  :conclusion (= x false)
+)

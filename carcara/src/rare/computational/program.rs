@@ -73,7 +73,7 @@ fn collect_conflict_clauses(
     ) -> Vec<Rc<Term>> {
         let mut conflicts = vec![];
         for (index, l) in left.iter().zip(right).enumerate() {
-            if l.0 != l.1 && !l.0.is_var() {
+            if l.0 != l.1 && (!l.0.is_var() || (l.0.is_var() && l.1.is_var()))  {
                 let term = pool.add(Term::Var(
                     format! {"_{}", index},
                     fixed_params[index].0.clone(),
@@ -392,6 +392,8 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
 
         let conflicts =
             collect_conflict_clauses(pool, &set, &symbol_table, &matching_clauses, index);
+
+        println!("{:?}", set);
 
         let rhs = handle_eo_lists(pool, &matching_clauses, &program.parameters).apply(pool, &rhs);
         let conclusion = pool.add(Term::Op(Operator::Equals, vec![lhs, rhs]));
