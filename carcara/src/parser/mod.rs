@@ -11,10 +11,12 @@ pub use error::{ParserError, SortError};
 pub use lexer::{Lexer, Position, Reserved, Token};
 
 use crate::{
-    CarcaraResult, Error, ast::{
+    ast::{
         rare_rules::{RareStatements, Rules},
         *,
-    }, utils::{HashCache, HashMapStack}
+    },
+    utils::{HashCache, HashMapStack},
+    CarcaraResult, Error,
 };
 use error::assert_num_args;
 use indexmap::{IndexMap, IndexSet};
@@ -161,7 +163,7 @@ struct ParserState {
     function_defs: IndexMap<String, FunctionDef>,
     sort_declarations: HashMapStack<String, usize>,
     sort_defs: IndexMap<String, SortDef>,
-    step_ids: HashMapStack<HashCache<String>, usize>
+    step_ids: HashMapStack<HashCache<String>, usize>,
 }
 
 /// A parser for the Alethe proof format.
@@ -1715,11 +1717,20 @@ impl<'a, R: BufRead> Parser<'a, R> {
             // However, `if let` guards are still nightly only. For more info, see:
             // https://github.com/rust-lang/rust/issues/51114
             Token::Symbol(s) if Operator::from_str(s).is_ok() => {
-                let operator = Operator::from_str(s).unwrap();
-                self.next_token()?;
-                let args = self.parse_sequence(Self::parse_term, true)?;
-                self.make_op(operator, args)
-                    .map_err(|err| Error::Parser(err, head_pos))
+                // We need to check if the user overwritted the operator name with a constant
+                if let Some(sort) = self.state.symbol_table.get(&HashCache::new(s.clone())) {
+                    let var = self.pool.add(Term::Var(s.to_owned(), sort.clone()));
+                    self.next_token()?;
+                    let args = self.parse_sequence(Self::parse_term, true)?;
+                    self.make_app(var, args)
+                        .map_err(|err| Error::Parser(err, head_pos))
+                } else {
+                    let operator = Operator::from_str(s).unwrap();
+                    self.next_token()?;
+                    let args = self.parse_sequence(Self::parse_term, true)?;
+                    self.make_op(operator, args)
+                        .map_err(|err| Error::Parser(err, head_pos))
+                }
             }
             Token::Symbol(s) if self.state.function_defs.get(s).is_some() => {
                 let head_pos = self.current_position;
