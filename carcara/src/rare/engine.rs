@@ -659,6 +659,7 @@ pub fn reconstruct_rule(
             rule,
             &database.programs,
             &database.consts,
+            &rule.name
         ));
     }
 

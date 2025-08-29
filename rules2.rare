@@ -11,7 +11,6 @@
 (declare-const => (-> Bool Bool Bool) :right-assoc)
 (declare-const xor (-> Bool Bool Bool) :left-assoc)
 
-(declare-const = (-> (! Type :var A :implicit) A A Bool) :chainable and)
 (declare-const distinct (-> (! Type :var A :implicit) A A Bool) :pairwise and)
 
 (declare-parameterized-const bvor ((n Int :implicit))

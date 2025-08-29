@@ -389,6 +389,7 @@ pub fn elaborate_rule(
     rule: &RuleDefinition,
     programs: &IndexMap<String, Program>,
     decl_consts: &IndexMap<String, DeclConst>,
+    name: &str
 ) -> Vec<RuleDefinition> {
     // Gather all instantiations triggered by *this* rule, calling defunc only once per term.
     let mut instations = IndexSet::new();
@@ -417,6 +418,10 @@ pub fn elaborate_rule(
     let mut out: Vec<RuleDefinition> = Vec::new();
 
     for (program_name, args) in instations {
+        if name == program_name {
+            continue;
+        }
+
         let program = match programs.get(&program_name) {
             Some(p) => p,
             None => continue, // defensively skip if missing
@@ -424,104 +429,126 @@ pub fn elaborate_rule(
 
         let mut high_order_unifications = vec![];
 
-        // Let's see if we can eliminate high-order parameters
+        // Let's see if we can eliminate high-order parameters, we start by looking for expressions
+        // that has the format (program ...), where this expression inside of our term
         for (index, arg) in args.iter().enumerate() {
+            // Let`s go for every pattern in the program
             for (lhs, _) in program.patterns.iter() {
+                // A pattern is a expression like (program ?x ?y ?z ...)
                 let Term::App(_, patts) = &**lhs else {
                     unreachable!()
                 };
+                // can unify our term with any ?x, ?y, ?z, ...?
                 if let Some(unifier) = unify_pattern_bidirectional(&patts[index], arg) {
-                    let (left, _) = unifier;
+                    let (left, right) = unifier;
                     let first_unified = left.iter().find_map(|(unified_left, unified_right)| {
                         if let Term::Sort(Sort::Function(_)) = &*pool.sort(&unified_right) {
-                            Some((unified_left, unified_right))
+                            // If we found the first expression such we unify a high-order term from our pattern
+                            // and the program call function we simply adds and assume that is the correct
+                            // elimination, for example ?x = and in a pattern (program (f ...)) and a expression (program (and ...))
+                            Some((index, unified_left, unified_right))
                         } else {
                             None
                         }
                     });
 
-                    if let Some(first_unified) = first_unified {
-                        high_order_unifications
-                            .push((first_unified.0.clone(), first_unified.1.clone()));
+                    if let Some((position, matched, against)) = first_unified {
+                        high_order_unifications.push((position, matched.clone(), against.clone()));
                         break;
                     }
                 }
             }
         }
 
-        println!("{:?}", high_order_unifications);
-
         // Build positional signature (indices of higher-order params) once per program.
-        // let mut positional_signature = Vec::new();
-        // let mut flat_signature = Vec::new();
-        // for (idx, sort) in program.signature.iter().enumerate() {
-        //     if let Some(Sort::Function(_)) = sort.as_sort() {
-        //         positional_signature.push(idx);
-        //     } else {
-        //         flat_signature.push(sort.clone());
-        //     }
-        // }
+        let mut positional_signature = Vec::new();
+        let mut flat_signature = Vec::new();
+        for (idx, sort) in program.signature.iter().enumerate() {
+            if let Some(Sort::Function(_)) = sort.as_sort() {
+                // If we look and we find if the could eliminate the high-order parameter
+                // and it is also used in the signature, we eliminate the parameter and the signature
+                if high_order_unifications
+                    .iter()
+                    .any(|(position, _, _)| idx == *position)
+                {
+                    // Save the position in the pattern (program ?x ?y ...) if for example ?x is
+                    // high-order parameter and we can eliminate it
+                    positional_signature.push(idx);
+                }
+            } else {
+                flat_signature.push(sort.clone());
+            }
+        }
 
-        // // Split params into: function-typed -> func_args (LHS of substitution), others -> parameters.
-        // let mut func_args: Vec<Rc<Term>> = Vec::new();
-        // let mut parameters = IndexMap::new();
-        // for (name, decl) in program.parameters.iter() {
-        //     if let Some(Sort::Function(_)) = decl.term.as_sort() {
-        //         func_args.push(pool.add(Term::Var(name.to_owned(), decl.term.clone())));
-        //     } else {
-        //         parameters.insert(name.to_owned(), decl.clone());
-        //     }
-        // }
+        // lets remove the parameters that we could eliminate
+        let parameters: IndexMap<String, TypeParameter> = program
+            .parameters
+            .iter()
+            .flat_map(|(var, sort)| {
+                if !high_order_unifications
+                    .iter()
+                    .any(|(_, t, _)| t.as_var() == Some(var))
+                {
+                    Some((var.clone(), sort.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-        // // Substitute function-typed parameters with the collected constants.
-        // let subs: IndexMap<Rc<Term>, Rc<Term>> =
-        //     func_args.into_iter().zip(constants.clone()).collect();
-        // let mut substitution = Substitution::new(pool, subs).expect("valid substitution");
+        // Substitute function-typed parameters with the collected constants.
 
-        // // Materialize specialized (lhs, rhs) patterns with positional args removed and interpreted.
-        // let mut patterns: Vec<(Rc<Term>, Rc<Term>)> = Vec::with_capacity(program.patterns.len());
-        // for (lhs0, rhs0) in &program.patterns {
-        //     let lhs = remove_positional_args(pool, lhs0, &program_name, &positional_signature);
-        //     let lhs = substitution.apply(pool, &lhs);
+        let subs: IndexMap<Rc<Term>, Rc<Term>> = high_order_unifications
+            .into_iter()
+            .map(|x| (x.1, x.2))
+            .collect();
+        let mut substitution = Substitution::new(pool, subs).expect("valid substitution");
 
-        //     let rhs = remove_positional_args(pool, rhs0, &program_name, &positional_signature);
-        //     let rhs = substitution.apply(pool, &rhs);
-        //     let rhs = interpret_eunoia(pool, &decl_consts, rhs);
+        // Materialize specialized (lhs, rhs) patterns with positional args removed and interpreted.
+        let mut patterns: Vec<(Rc<Term>, Rc<Term>)> = Vec::with_capacity(program.patterns.len());
+        for (lhs0, rhs0) in &program.patterns {
+            let lhs = remove_positional_args(pool, lhs0, &program_name, &positional_signature);
+            let lhs = substitution.apply(pool, &lhs);
 
-        //     patterns.push((lhs, rhs));
-        // }
+            let rhs = remove_positional_args(pool, rhs0, &program_name, &positional_signature);
+            let rhs = substitution.apply(pool, &rhs);
+            let rhs = interpret_eunoia(pool, &decl_consts, rhs);
 
-        // // Compile the specialized program into rules and *recursively elaborate* them to saturation.
-        // let compiled = compile_program(
-        //     pool,
-        //     &Program {
-        //         name: format!("{}@{}", program.name, rule.name),
-        //         parameters,
-        //         patterns,
-        //         signature: flat_signature,
-        //     },
-        // );
+            patterns.push((lhs, rhs));
+        }
 
-        // for r in compiled {
-        //     out.extend(elaborate_rule(pool, &r, programs, decl_consts));
-        // }
+        // Compile the specialized program into rules and *recursively elaborate* them to saturation.
+        let compiled = compile_program(
+            pool,
+            &Program {
+                name: format!("{}@{}", program.name, rule.name),
+                parameters,
+                patterns,
+                signature: flat_signature,
+            },
+        );
 
-        // // Also push a version of the *current* rule with positional args removed & interpreted,
-        // // then recursively elaborate *that* as well (this propagates defunc into nested spots).
-        // let mut updated = rule.clone();
-        // for prem in updated.premises.iter_mut() {
-        //     let t = remove_positional_args(pool, prem, &program_name, &positional_signature);
-        //     *prem = interpret_eunoia(pool, &decl_consts, t);
-        // }
-        // let c = remove_positional_args(
-        //     pool,
-        //     &updated.conclusion,
-        //     &program_name,
-        //     &positional_signature,
-        // );
-        // updated.conclusion = interpret_eunoia(pool, &decl_consts,  c);
+        for r in compiled {
+            out.extend(elaborate_rule(pool, &r, programs, decl_consts, &program.name));
+            out.push(r);
+        }
 
-        // out.extend(elaborate_rule(pool, &updated, programs, decl_consts));
+        // Also push a version of the *current* rule with positional args removed & interpreted,
+        // then recursively elaborate *that* as well (this propagates defunc into nested spots).
+        let mut updated = rule.clone();
+        for prem in updated.premises.iter_mut() {
+            let t = remove_positional_args(pool, prem, &program_name, &positional_signature);
+            *prem = interpret_eunoia(pool, &decl_consts, t);
+        }
+        let c = remove_positional_args(
+            pool,
+            &updated.conclusion,
+            &program_name,
+            &positional_signature,
+        );
+        updated.conclusion = interpret_eunoia(pool, &decl_consts, c);
+
+        out.push(updated);
     }
 
     out
