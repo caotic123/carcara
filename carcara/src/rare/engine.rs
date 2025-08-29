@@ -1,3 +1,5 @@
+use std::{iter::once, sync::Arc};
+
 use crate::{
     ast::{
         rare_rules::{AttributeParameters, DeclAttr, DeclConst, Program, RuleDefinition, Rules},
@@ -10,7 +12,14 @@ use crate::{
         util::{clauses_to_or, collect_vars, get_equational_terms},
     },
 };
-use egglog::{self, EGraph};
+use egg::Symbol;
+use egglog::{
+    self,
+    ast::Span,
+    constraint::{SimpleTypeConstraint, TypeConstraint},
+    sort::{BoolSort, EqSort},
+    ArcSort, EGraph, PrimitiveLike, SimplePrimitive, Value,
+};
 use indexmap::{IndexMap, IndexSet};
 use rug::Integer;
 
@@ -18,6 +27,37 @@ use rug::Integer;
 pub struct EggFunctions {
     names: IndexMap<String, (bool, usize)>,
     shapes: IndexMap<String, IndexSet<Rc<Term>>>,
+}
+
+struct CustomPrimitive {
+    name: Symbol,
+    input: Vec<ArcSort>,
+    output: ArcSort,
+    f: fn(&[Value]) -> Option<Value>,
+}
+
+impl PrimitiveLike for CustomPrimitive {
+    fn name(&self) -> Symbol {
+        self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        let sorts: Vec<_> = self
+            .input
+            .iter()
+            .chain(once(&self.output as &ArcSort))
+            .cloned()
+            .collect();
+        SimpleTypeConstraint::new(self.name(), sorts, span.clone()).into_box()
+    }
+    fn apply(
+        &self,
+        values: &[Value],
+        _sorts: (&[ArcSort], &ArcSort),
+        _egraph: Option<&mut EGraph>,
+    ) -> Option<Value> {
+        (self.f)(values)
+    }
 }
 
 pub fn create_headers() -> EggLanguage {
@@ -559,7 +599,7 @@ fn declare_functions(
             for shape in functions.shapes.get(func).unwrap_or(&IndexSet::default()) {
                 let mut premises = Vec::new();
                 let mut sorted_vars = IndexMap::new();
-                let mut vars = collect_vars(shape, true);
+                let mut vars = collect_vars(shape, false);
                 vars.swap_remove(func);
 
                 for (name, _sort) in vars.iter() {
@@ -659,7 +699,7 @@ pub fn reconstruct_rule(
             rule,
             &database.programs,
             &database.consts,
-            &rule.name
+            &rule.name,
         ));
     }
 
@@ -686,7 +726,21 @@ pub fn reconstruct_rule(
 
     ast.append(&mut goal.unwrap());
     let mut egraph = EGraph::default();
+
+    egraph.add_primitive(CustomPrimitive {
+        name: Symbol::from("ineq"),
+        input: vec![
+            Arc::new(EqSort { name: Symbol::from("Term") }),
+            Arc::new(EqSort { name: Symbol::from("Term") }),
+        ],
+        output: Arc::new(BoolSort),
+        f: |x| {
+            Some(Value::from(x[0].bits != x[1].bits))
+        },
+    });
+
     let egglog = lower_egg_language(ast);
+
     for rule in egglog.iter() {
         println!("{}", rule);
     }

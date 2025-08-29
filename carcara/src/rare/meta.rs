@@ -121,7 +121,7 @@ fn to_expr(e: EggExpr) -> Expr {
         ),
         Distinct(l, r) => Expr::Call(
             dummy_span(),
-            Symbol::from("!="),
+            Symbol::from("ineq"),
             vec![to_expr(*l), to_expr(*r)],
         ),
         Union(l, r) => Expr::Call(

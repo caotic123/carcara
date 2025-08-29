@@ -22,6 +22,7 @@
   :signature (T T) Bool
   (
     ((eo::eq x x) true)
+    ((eo::eq x y) false)
   )
 )
 
@@ -67,16 +68,11 @@
 
 (declare-rare-rule and_false ((x Bool)) 
   :args (x)
-  :premises ((= (has_false and x) true))
+  :premises ((= (or true true) ($singleton_elim (or true true))))
   :conclusion (= x false)
 )
 
 (declare-rare-rule type_rule ((x Bool)) 
   :args (x)
   :conclusion (= (eo::typeof x) (eo::typeof x))
-)
-
-(declare-rare-rule test_nil_op ((m Int) (x (BitVec m))) 
-  :args (x)
-  :conclusion (= true ($singleton_elim (or true false)))
 )
