@@ -1,16 +1,21 @@
+use egglog::sort::FunctionSort;
 use indexmap::{IndexMap, IndexSet};
 
 use crate::{
     ast::{rare_rules::*, BindingList, PrimitivePool, Rc, Sort, Substitution, Term, TermPool},
-    rare::computational::program::compile_program,
+    rare::{
+        computational::{core::interpret_eunoia, program::compile_program},
+        util::{collect_vars, unify_pattern_bidirectional},
+    },
 };
 
 /// Removes any positional arguments from an application term whose head matches
-/// a program in `programs` and whose signature marks some parameters as higher-order.
+/// a program and its name is equal to defunctionalized_function parameter
+/// and whose signature marks some parameters as higher-order.
 pub fn remove_positional_args(
     pool: &mut PrimitivePool,
     term: &Rc<Term>,
-    programs: &IndexMap<String, Program>,
+    defunctionalized_function: &str,
     positional_signature: &Vec<usize>,
 ) -> Rc<Term> {
     use std::collections::HashSet;
@@ -21,7 +26,7 @@ pub fn remove_positional_args(
     fn visit_sort(
         pool: &mut PrimitivePool,
         s: &Sort,
-        programs: &IndexMap<String, Program>,
+        defunctionalized_function: &str,
         pos_set: &HashSet<usize>,
         shadowed: &HashSet<String>,
     ) -> (bool, Sort) {
@@ -31,7 +36,7 @@ pub fn remove_positional_args(
             let mut any = false;
             let mut out = Vec::with_capacity(v.len());
             for t in v {
-                let nt = visit(pool, t, programs, pos_set, shadowed);
+                let nt = visit(pool, t, defunctionalized_function, pos_set, shadowed);
                 if t != &nt {
                     any = true;
                 }
@@ -60,8 +65,8 @@ pub fn remove_positional_args(
                 }
             }
             Sort::Array(a, b) => {
-                let na = visit(pool, a, programs, pos_set, shadowed);
-                let nb = visit(pool, b, programs, pos_set, shadowed);
+                let na = visit(pool, a, defunctionalized_function, pos_set, shadowed);
+                let nb = visit(pool, b, defunctionalized_function, pos_set, shadowed);
                 if a != &na || b != &nb {
                     (true, Sort::Array(na, nb))
                 } else {
@@ -70,7 +75,7 @@ pub fn remove_positional_args(
             }
             Sort::ParamSort(ts, inner) => {
                 let (c1, nts) = map_terms(ts);
-                let ninner = visit(pool, inner, programs, pos_set, shadowed);
+                let ninner = visit(pool, inner, defunctionalized_function, pos_set, shadowed);
                 let c2 = inner != &ninner;
                 if c1 || c2 {
                     (true, Sort::ParamSort(nts, ninner))
@@ -86,7 +91,7 @@ pub fn remove_positional_args(
     fn visit(
         pool: &mut PrimitivePool,
         term: &Rc<Term>,
-        programs: &IndexMap<String, Program>,
+        defunctionalized_function: &str,
         pos_set: &HashSet<usize>,
         shadowed: &HashSet<String>,
     ) -> Rc<Term> {
@@ -94,7 +99,7 @@ pub fn remove_positional_args(
             Term::Const(_) => term.clone(),
 
             Term::Var(name, sort) => {
-                let nsort = visit(pool, sort, programs, pos_set, shadowed);
+                let nsort = visit(pool, sort, defunctionalized_function, pos_set, shadowed);
                 if sort != &nsort {
                     pool.add(Term::Var(name.clone(), nsort))
                 } else {
@@ -103,7 +108,8 @@ pub fn remove_positional_args(
             }
 
             Term::Sort(s) => {
-                let (changed, ns) = visit_sort(pool, s, programs, pos_set, shadowed);
+                let (changed, ns) =
+                    visit_sort(pool, s, defunctionalized_function, pos_set, shadowed);
                 if changed {
                     pool.add(Term::Sort(ns))
                 } else {
@@ -115,7 +121,7 @@ pub fn remove_positional_args(
                 let mut changed = false;
                 let mut nargs = Vec::with_capacity(args.len());
                 for a in args {
-                    let na = visit(pool, a, programs, pos_set, shadowed);
+                    let na = visit(pool, a, defunctionalized_function, pos_set, shadowed);
                     if a != &na {
                         changed = true;
                     }
@@ -129,12 +135,12 @@ pub fn remove_positional_args(
             }
 
             Term::App(head, args) => {
-                let nhead = visit(pool, head, programs, pos_set, shadowed);
+                let nhead = visit(pool, head, defunctionalized_function, pos_set, shadowed);
                 let mut changed = head != &nhead;
 
                 let mut nargs = Vec::with_capacity(args.len());
                 for a in args {
-                    let na = visit(pool, a, programs, pos_set, shadowed);
+                    let na = visit(pool, a, defunctionalized_function, pos_set, shadowed);
                     if a != &na {
                         changed = true;
                     }
@@ -142,7 +148,9 @@ pub fn remove_positional_args(
                 }
 
                 let should_filter = if let Term::Var(name, _) = &*nhead {
-                    !shadowed.contains(name) && programs.contains_key(name) && !pos_set.is_empty()
+                    !shadowed.contains(name)
+                        && name == &defunctionalized_function
+                        && !pos_set.is_empty()
                 } else {
                     false
                 };
@@ -173,7 +181,7 @@ pub fn remove_positional_args(
 
                 let mut nop_args = Vec::with_capacity(op_args.len());
                 for oa in op_args {
-                    let no = visit(pool, oa, programs, pos_set, shadowed);
+                    let no = visit(pool, oa, defunctionalized_function, pos_set, shadowed);
                     if oa != &no {
                         changed = true;
                     }
@@ -182,7 +190,7 @@ pub fn remove_positional_args(
 
                 let mut nargs = Vec::with_capacity(args.len());
                 for a in args {
-                    let na = visit(pool, a, programs, pos_set, shadowed);
+                    let na = visit(pool, a, defunctionalized_function, pos_set, shadowed);
                     if a != &na {
                         changed = true;
                     }
@@ -204,7 +212,7 @@ pub fn remove_positional_args(
                 let mut changed = false;
                 let mut nbindings = Vec::with_capacity(bindings.0.len());
                 for (name, sort) in bindings.0.iter() {
-                    let nsort = visit(pool, sort, programs, pos_set, shadowed);
+                    let nsort = visit(pool, sort, defunctionalized_function, pos_set, shadowed);
                     if sort != &nsort {
                         changed = true;
                     }
@@ -216,7 +224,13 @@ pub fn remove_positional_args(
                     next_shadow.insert(name.clone());
                 }
 
-                let ninner = visit(pool, inner, programs, pos_set, &next_shadow);
+                let ninner = visit(
+                    pool,
+                    inner,
+                    defunctionalized_function,
+                    pos_set,
+                    &next_shadow,
+                );
                 if inner != &ninner {
                     changed = true;
                 }
@@ -232,7 +246,7 @@ pub fn remove_positional_args(
                 let mut changed = false;
                 let mut nbindings = Vec::with_capacity(bindings.0.len());
                 for (name, value) in bindings.0.iter() {
-                    let nvalue = visit(pool, value, programs, pos_set, shadowed);
+                    let nvalue = visit(pool, value, defunctionalized_function, pos_set, shadowed);
                     if value != &nvalue {
                         changed = true;
                     }
@@ -244,7 +258,7 @@ pub fn remove_positional_args(
                     next_shadow.insert(name.clone());
                 }
 
-                let nbody = visit(pool, body, programs, pos_set, &next_shadow);
+                let nbody = visit(pool, body, defunctionalized_function, pos_set, &next_shadow);
                 if body != &nbody {
                     changed = true;
                 }
@@ -259,158 +273,115 @@ pub fn remove_positional_args(
     }
 
     let shadowed = HashSet::new();
-    visit(pool, term, programs, &pos_set, &shadowed)
+    visit(pool, term, defunctionalized_function, &pos_set, &shadowed)
 }
 
 // This function goes to every subterm search if they correspond to some program and if it program depends on some constant
-// If so, we remove the constant and prepare the defunctionalization
-// Note: This function will return the dependencies of programs even though they are did not have any high-order position
-pub fn defunctionalization(
-    pool: &mut PrimitivePool,
+pub fn search_programs(
     term: &Rc<Term>,
     programs: &IndexMap<String, Program>,
-    decl_consts: &IndexMap<String, DeclConst>,
-) -> (IndexSet<(String, Vec<Rc<Term>>)>, Rc<Term>) {
-    #[inline]
-    fn is_declared_const(arg: &Rc<Term>, decls: &IndexMap<String, DeclConst>) -> bool {
-        matches!(&**arg, Term::Var(name, _) if decls.contains_key(name))
-    }
-
-    fn transform_sort(
-        pool: &mut PrimitivePool,
+) -> IndexSet<(String, Vec<Rc<Term>>)> {
+    fn visit_sort(
         s: &Sort,
-        rules: &IndexMap<String, Program>,
-        decls: &IndexMap<String, DeclConst>,
-        out_calls: &mut IndexSet<(String, Vec<Rc<Term>>)>,
-    ) -> Sort {
+        programs: &IndexMap<String, Program>,
+        out: &mut IndexSet<(String, Vec<Rc<Term>>)>,
+    ) {
         match s {
             Sort::Function(ts) => {
-                let nts = ts
-                    .iter()
-                    .map(|t| transform(pool, t, rules, decls, out_calls))
-                    .collect();
-                Sort::Function(nts)
+                for t in ts {
+                    visit_term(t, programs, out);
+                }
             }
-            Sort::Atom(name, ts) => {
-                let nts = ts
-                    .iter()
-                    .map(|t| transform(pool, t, rules, decls, out_calls))
-                    .collect();
-                Sort::Atom(name.clone(), nts)
+            Sort::Atom(_, ts) => {
+                for t in ts {
+                    visit_term(t, programs, out);
+                }
             }
             Sort::Array(a, b) => {
-                let na = transform(pool, a, rules, decls, out_calls);
-                let nb = transform(pool, b, rules, decls, out_calls);
-                Sort::Array(na, nb)
+                visit_term(a, programs, out);
+                visit_term(b, programs, out);
             }
             Sort::ParamSort(ts, inner) => {
-                let nts = ts
-                    .iter()
-                    .map(|t| transform(pool, t, rules, decls, out_calls))
-                    .collect();
-                let ninner = transform(pool, inner, rules, decls, out_calls);
-                Sort::ParamSort(nts, ninner)
+                for t in ts {
+                    visit_term(t, programs, out);
+                }
+                visit_term(inner, programs, out);
             }
-
-            _ => s.clone(),
+            // Primitive sorts / BitVec width: nothing to traverse
+            Sort::BitVec(_)
+            | Sort::Bool
+            | Sort::Int
+            | Sort::Real
+            | Sort::String
+            | Sort::RegLan
+            | Sort::RareList
+            | Sort::Type
+            | Sort::Var(_) => {}
         }
     }
 
-    fn transform(
-        pool: &mut PrimitivePool,
+    fn visit_term(
         t: &Rc<Term>,
-        rules: &IndexMap<String, Program>,
-        decls: &IndexMap<String, DeclConst>,
-        out_calls: &mut IndexSet<(String, Vec<Rc<Term>>)>,
-    ) -> Rc<Term> {
+        programs: &IndexMap<String, Program>,
+        out: &mut IndexSet<(String, Vec<Rc<Term>>)>,
+    ) {
         match &**t {
             Term::App(head, args) => {
-                let mut removed: Vec<Rc<Term>> = Vec::new();
-                let mut all: Vec<Rc<Term>> = Vec::with_capacity(args.len());
-
+                // Traverse args and collect declared consts
                 for a in args {
-                    let na = transform(pool, a, rules, decls, out_calls);
-                    if is_declared_const(&na, decls) {
-                        removed.push(na.clone());
-                    }
-                    all.push(na);
+                    visit_term(a, programs, out);
                 }
-
+                // Record program call if head is a known program and we found declared const args
                 if let Term::Var(name, _) = &**head {
-                    if rules.contains_key(name) {
-                        out_calls.insert((name.to_owned(), removed.clone()));
+                    if programs.contains_key(name) {
+                        out.insert((name.clone(), args.clone()));
                     }
                 }
-
-                pool.add(Term::App(head.clone(), all))
             }
 
-            Term::Op(op, args) => {
-                let all: Vec<Rc<Term>> = args
-                    .iter()
-                    .map(|a| transform(pool, a, rules, decls, out_calls))
-                    .collect();
-                pool.add(Term::Op(*op, all))
+            Term::Op(_, args) => {
+                for a in args {
+                    visit_term(a, programs, out);
+                }
             }
 
-            Term::ParamOp { op, op_args, args } => {
-                let nop_args: Vec<Rc<Term>> = op_args
-                    .iter()
-                    .map(|oa| transform(pool, oa, rules, decls, out_calls))
-                    .collect();
-                let nargs: Vec<Rc<Term>> = args
-                    .iter()
-                    .map(|a| transform(pool, a, rules, decls, out_calls))
-                    .collect();
-
-                pool.add(Term::ParamOp {
-                    op: *op,
-                    op_args: nop_args,
-                    args: nargs,
-                })
+            Term::ParamOp { op_args, args, .. } => {
+                for oa in op_args {
+                    visit_term(oa, programs, out);
+                }
+                for a in args {
+                    visit_term(a, programs, out);
+                }
             }
 
-            Term::Binder(binder, bindings, inner) => {
-                let nbindings = BindingList(
-                    bindings
-                        .as_ref()
-                        .iter()
-                        .map(|(v, srt)| (v.clone(), transform(pool, srt, rules, decls, out_calls)))
-                        .collect(),
-                );
-                let ninner = transform(pool, inner, rules, decls, out_calls);
-                pool.add(Term::Binder(*binder, nbindings, ninner))
+            Term::Binder(_, bindings, inner) => {
+                for (_, term) in bindings.as_ref() {
+                    visit_term(term, programs, out);
+                }
+                visit_term(inner, programs, out);
             }
 
             Term::Let(bindings, inner) => {
-                let new_bindings = BindingList(
-                    bindings
-                        .as_ref()
-                        .iter()
-                        .map(|(v, val)| (v.clone(), transform(pool, val, rules, decls, out_calls)))
-                        .collect(),
-                );
-                let new_inner = transform(pool, inner, rules, decls, out_calls);
-                pool.add(Term::Let(new_bindings, new_inner))
+                for (_, term) in bindings.as_ref() {
+                    visit_term(term, programs, out);
+                }
+                visit_term(inner, programs, out);
             }
 
-            Term::Var(name, sort) => {
-                let nsort = transform(pool, sort, rules, decls, out_calls);
-                pool.add(Term::Var(name.clone(), nsort))
+            Term::Var(_, sort_term) => {
+                // Sorts can appear freely: traverse the attached sort term
+                visit_term(sort_term, programs, out);
             }
 
-            Term::Sort(s) => {
-                let ns = transform_sort(pool, s, rules, decls, out_calls);
-                pool.add(Term::Sort(ns))
-            }
+            Term::Sort(s) => visit_sort(s, programs, out),
 
-            Term::Const(_) => t.clone(),
+            Term::Const(_) => {}
         }
     }
 
     let mut calls = IndexSet::new();
-    let rewritten = transform(pool, term, programs, decl_consts, &mut calls);
-    (calls, rewritten)
+    visit_term(term, programs, &mut calls);
+    calls
 }
 
 pub fn elaborate_rule(
@@ -419,109 +390,139 @@ pub fn elaborate_rule(
     programs: &IndexMap<String, Program>,
     decl_consts: &IndexMap<String, DeclConst>,
 ) -> Vec<RuleDefinition> {
-    let mut elaborated_rules = vec![];
+    // Gather all instantiations triggered by *this* rule, calling defunc only once per term.
     let mut instations = IndexSet::new();
 
-    for index in 0..rule.premises.len() {
-        let (instation, _) =
-            defunctionalization(pool, &rule.premises[index], programs, decl_consts);
-        if !instation.is_empty() {
-            instations.extend(instation);
-        }
+    // defunctionalization over premises (single pass)
+    for prem in &rule.premises {
+        instations.extend(search_programs(prem, programs));
     }
 
-    let (instation, _) = defunctionalization(pool, &rule.conclusion, programs, decl_consts);
+    instations.extend(search_programs(&rule.conclusion, programs));
 
-    if !instation.is_empty() {
-        instations.extend(instation);
-    }
-
+    // Base case of the saturation: no new programs to specialize; just normalize and return this rule.
     if instations.is_empty() {
-        // If there are no instations, we can just return the original rule
-        elaborated_rules.push(rule.clone());
-        return elaborated_rules;
+        let mut normalized = rule.clone();
+        for p in normalized.premises.iter_mut() {
+            *p = interpret_eunoia(pool, &decl_consts, p.clone());
+        }
+        normalized.conclusion = interpret_eunoia(pool, &decl_consts, normalized.conclusion.clone());
+        return vec![normalized];
     }
 
-    for (program_name, constants) in instations {
-        let program = programs.get(&program_name).unwrap();
-        let mut patterns = vec![];
-        let mut func_args = vec![];
-        let mut parameters = IndexMap::new();
-        let mut signature = vec![];
+    // Otherwise, we *saturate* by:
+    //  1) specializing/compiling programs for each instantiation, and recursively elaborating them;
+    //  2) removing positional args (for that program's HO signature) + interpreting this rule, then recursively elaborating it;
+    // Recursion bottoms out when a branch yields no instations.
+    let mut out: Vec<RuleDefinition> = Vec::new();
 
-        let mut positional_signature = vec![];
-        // Select the high-order parameters
-        for (index, sort) in program.signature.iter().enumerate() {
-            if let Some(Sort::Function(_)) = sort.as_sort() {
-                positional_signature.push(index);
-                continue;
+    for (program_name, args) in instations {
+        let program = match programs.get(&program_name) {
+            Some(p) => p,
+            None => continue, // defensively skip if missing
+        };
+
+        let mut high_order_unifications = vec![];
+
+        // Let's see if we can eliminate high-order parameters
+        for (index, arg) in args.iter().enumerate() {
+            for (lhs, _) in program.patterns.iter() {
+                let Term::App(_, patts) = &**lhs else {
+                    unreachable!()
+                };
+                if let Some(unifier) = unify_pattern_bidirectional(&patts[index], arg) {
+                    let (left, _) = unifier;
+                    let first_unified = left.iter().find_map(|(unified_left, unified_right)| {
+                        if let Term::Sort(Sort::Function(_)) = &*pool.sort(&unified_right) {
+                            Some((unified_left, unified_right))
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(first_unified) = first_unified {
+                        high_order_unifications
+                            .push((first_unified.0.clone(), first_unified.1.clone()));
+                        break;
+                    }
+                }
             }
-            signature.push(sort.clone());
         }
 
-        for param in program.parameters.iter() {
-            if let Some(Sort::Function(_)) = param.1.term.as_sort() {
-                func_args.push(pool.add(Term::Var(param.0.to_owned(), param.1.term.clone())));
-                continue;
-            }
-            parameters.insert(param.0.to_owned(), param.1.clone());
-        }
+        println!("{:?}", high_order_unifications);
 
-        let subs: IndexMap<Rc<Term>, Rc<Term>> =
-            func_args.into_iter().zip(constants.clone()).collect();
+        // Build positional signature (indices of higher-order params) once per program.
+        // let mut positional_signature = Vec::new();
+        // let mut flat_signature = Vec::new();
+        // for (idx, sort) in program.signature.iter().enumerate() {
+        //     if let Some(Sort::Function(_)) = sort.as_sort() {
+        //         positional_signature.push(idx);
+        //     } else {
+        //         flat_signature.push(sort.clone());
+        //     }
+        // }
 
-        let mut substitution = Substitution::new(pool, subs).unwrap();
-        for index in 0..program.patterns.len() {
-            let lhs = remove_positional_args(
-                pool,
-                &program.patterns[index].0,
-                programs,
-                &positional_signature,
-            );
-            let lhs = substitution.apply(pool, &lhs);
+        // // Split params into: function-typed -> func_args (LHS of substitution), others -> parameters.
+        // let mut func_args: Vec<Rc<Term>> = Vec::new();
+        // let mut parameters = IndexMap::new();
+        // for (name, decl) in program.parameters.iter() {
+        //     if let Some(Sort::Function(_)) = decl.term.as_sort() {
+        //         func_args.push(pool.add(Term::Var(name.to_owned(), decl.term.clone())));
+        //     } else {
+        //         parameters.insert(name.to_owned(), decl.clone());
+        //     }
+        // }
 
-            let rhs = remove_positional_args(
-                pool,
-                &program.patterns[index].1,
-                programs,
-                &positional_signature,
-            );
-            let rhs = substitution.apply(pool, &rhs);
+        // // Substitute function-typed parameters with the collected constants.
+        // let subs: IndexMap<Rc<Term>, Rc<Term>> =
+        //     func_args.into_iter().zip(constants.clone()).collect();
+        // let mut substitution = Substitution::new(pool, subs).expect("valid substitution");
 
-            patterns.push((lhs, rhs));
-        }
+        // // Materialize specialized (lhs, rhs) patterns with positional args removed and interpreted.
+        // let mut patterns: Vec<(Rc<Term>, Rc<Term>)> = Vec::with_capacity(program.patterns.len());
+        // for (lhs0, rhs0) in &program.patterns {
+        //     let lhs = remove_positional_args(pool, lhs0, &program_name, &positional_signature);
+        //     let lhs = substitution.apply(pool, &lhs);
 
-        let compiled_programs = compile_program(
-            pool,
-            &Program {
-                name: format!(
-                    "{}_*{}",
-                    program.name,
-                    rule.name
-                ),
-                parameters: parameters,
-                patterns,
-                signature: signature,
-            },
-        );
+        //     let rhs = remove_positional_args(pool, rhs0, &program_name, &positional_signature);
+        //     let rhs = substitution.apply(pool, &rhs);
+        //     let rhs = interpret_eunoia(pool, &decl_consts, rhs);
 
-        for compiled_program in compiled_programs {
-            elaborated_rules.push(compiled_program);
-        }
+        //     patterns.push((lhs, rhs));
+        // }
 
-        let mut rule = rule.clone();
+        // // Compile the specialized program into rules and *recursively elaborate* them to saturation.
+        // let compiled = compile_program(
+        //     pool,
+        //     &Program {
+        //         name: format!("{}@{}", program.name, rule.name),
+        //         parameters,
+        //         patterns,
+        //         signature: flat_signature,
+        //     },
+        // );
 
-        for premise in rule.premises.iter_mut() {
-            let new_premise =
-                remove_positional_args(pool, premise, programs, &positional_signature);
-            *premise = new_premise;
-        }
+        // for r in compiled {
+        //     out.extend(elaborate_rule(pool, &r, programs, decl_consts));
+        // }
 
-        rule.conclusion =
-            remove_positional_args(pool, &rule.conclusion, programs, &positional_signature);
+        // // Also push a version of the *current* rule with positional args removed & interpreted,
+        // // then recursively elaborate *that* as well (this propagates defunc into nested spots).
+        // let mut updated = rule.clone();
+        // for prem in updated.premises.iter_mut() {
+        //     let t = remove_positional_args(pool, prem, &program_name, &positional_signature);
+        //     *prem = interpret_eunoia(pool, &decl_consts, t);
+        // }
+        // let c = remove_positional_args(
+        //     pool,
+        //     &updated.conclusion,
+        //     &program_name,
+        //     &positional_signature,
+        // );
+        // updated.conclusion = interpret_eunoia(pool, &decl_consts,  c);
 
-        elaborated_rules.push(rule);
+        // out.extend(elaborate_rule(pool, &updated, programs, decl_consts));
     }
 
-    elaborated_rules
+    out
 }

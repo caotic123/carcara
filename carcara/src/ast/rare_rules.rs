@@ -77,7 +77,9 @@ pub struct DeclConst {
     pub name: String,
     pub sort: Rc<Term>,
     pub attrs: Vec<DeclAttr>,
+    pub parametrized_params: Vec<ParsedAnnotatedSort>,
     pub ty_params: Vec<ParsedAnnotatedSort>,
+    pub is_parameterized: bool
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +98,7 @@ pub enum RewriteTerm {
     VarEqual(&'static str),
    // Const(Constant), // Merge later
 }
+
 
 #[macro_export]
 macro_rules! pseudo_term {

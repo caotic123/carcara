@@ -121,7 +121,10 @@ pub enum Reserved {
     DeclareRareRule,
 
     // From eunoia programs
-    Program
+    Program,
+
+    // From eunoia parametrized constants
+    DeclareParameterizedConst
 }
 
 impl_str_conversion_traits!(Reserved {
@@ -150,6 +153,7 @@ impl_str_conversion_traits!(Reserved {
     SetLogic: "set-logic",
     DeclareRareRule: "declare-rare-rule",
     Program: "program",
+    DeclareParameterizedConst: "declare-parameterized-const"
 });
 
 /// Represents a position (line and column numbers) in the source input.

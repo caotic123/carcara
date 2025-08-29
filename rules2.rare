@@ -1,17 +1,66 @@
+
+(declare-const eo::typeof (-> (! Type :var A :implicit) A Type))
+(declare-const eo::nil (-> (! Type :var A :implicit) (! Type :var B :implicit) A Type B))
+(declare-const BitVec (-> Int Type))
+(declare-parameterized-const eo::to_bin ((m Int)) (-> Int (BitVec m)))
+
 (declare-const ite (-> (! Type :var A :implicit) Bool A A A))
 (declare-const not (-> Bool Bool))
 (declare-const or (-> Bool Bool Bool) :right-assoc-nil false)
 (declare-const and (-> Bool Bool Bool) :right-assoc-nil true)
 (declare-const => (-> Bool Bool Bool) :right-assoc)
 (declare-const xor (-> Bool Bool Bool) :left-assoc)
+
 (declare-const = (-> (! Type :var A :implicit) A A Bool) :chainable and)
 (declare-const distinct (-> (! Type :var A :implicit) A A Bool) :pairwise and)
-(declare-const eo::nil (-> (! Type :var A :implicit) (! Type :var B :implicit) B))
+
+(declare-parameterized-const bvor ((n Int :implicit))
+    (-> (BitVec n) (BitVec n) (BitVec n))
+    :right-assoc-nil (eo::to_bin n 0)               
+)
+
+(program eo::eq ((T Type) (x T) (y T))
+  :signature (T T) Bool
+  (
+    ((eo::eq x x) true)
+  )
+)
+
+(program eo::ite ((T Type) (c Bool) (x T) (y T))
+  :signature (Bool T T) T
+  (
+    ((eo::ite true x y) x)
+    ((eo::ite false x y) y)
+  )
+)
+
+
+; program: $singleton_elim
+; args:
+; - s S: The term to proces.
+; return: >
+;   The result of applying singleton elimination for s. In particular,
+;   if s is of the form (f x1 x2) where x2 is the nil terminator of f, then we
+;   return x1. Otherwise, we return s unchanged.
+(program $singleton_elim ((f (-> Bool Bool Bool)) (x Bool) (x1 Bool) (x2 Bool))
+  :signature (Bool) Bool
+  (
+    (($singleton_elim (f x1 x2))  (eo::ite (eo::eq x2 (eo::nil f (eo::typeof (f x1 x2)))) x1 (f x1 x2)))
+    (($singleton_elim x)          x)
+  )
+)
+
+(program is_false ((f (-> Bool Bool Bool)) (xs Bool :list))
+  :signature ((-> Bool Bool Bool) Bool) Bool
+  (
+  ((is_false f (f false xs)) true)
+  )
+)
 
 (program has_false ((f (-> Bool Bool Bool)) (xs Bool :list))
   :signature ((-> Bool Bool Bool) Bool) Bool
   (
-  ((has_false f (f false xs)) true)
+  ((has_false f (f false xs)) (is_false f xs))
   ((has_false f (f true xs)) (has_false f xs))
   ((has_false f false) true)
   )
@@ -21,4 +70,14 @@
   :args (x)
   :premises ((= (has_false and x) true))
   :conclusion (= x false)
+)
+
+(declare-rare-rule type_rule ((x Bool)) 
+  :args (x)
+  :conclusion (= (eo::typeof x) (eo::typeof x))
+)
+
+(declare-rare-rule test_nil_op ((m Int) (x (BitVec m))) 
+  :args (x)
+  :conclusion (= true ($singleton_elim (or true false)))
 )

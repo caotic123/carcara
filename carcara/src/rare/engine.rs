@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         rare_rules::{AttributeParameters, DeclAttr, DeclConst, Program, RuleDefinition, Rules},
-        Binder, Constant, Operator, PrimitivePool, ProofNode, Rc, Term,
+        Binder, Constant, Operator, PrimitivePool, ProofNode, Rc, Sort, Term,
     },
     rare::{
         computational::{defunctionalization::elaborate_rule, program::compile_program},
@@ -187,6 +187,20 @@ pub fn to_egg_expr(
     func_cache: &mut EggFunctions,
     collect_functions_shape: bool,
 ) -> Option<EggExpr> {
+    fn build_args_list<I: IntoIterator<Item = EggExpr>>(it: I) -> EggExpr {
+        let v: Vec<EggExpr> = it.into_iter().collect();
+        if v.is_empty() {
+            return EggExpr::Empty();
+        }
+        let mut it = v.into_iter().rev();
+        let first = it.next().unwrap();
+        let mut acc = EggExpr::Args(Box::new(first), Box::new(EggExpr::Empty()));
+        for e in it {
+            acc = EggExpr::Args(Box::new(e), Box::new(acc));
+        }
+        acc
+    }
+
     pub fn encapluse(egg_term: EggExpr) -> EggExpr {
         return EggExpr::Mk(Box::new(egg_term));
     }
@@ -233,38 +247,20 @@ pub fn to_egg_expr(
                 if args.len() == 0 {
                     return to_egg_expr(head, subs, func_cache, collect_functions_shape);
                 }
-                let args: Vec<EggExpr> = args
-                    .clone()
-                    .iter()
-                    .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape))
-                    .rev()
-                    .collect();
-                let mut stream = args.iter();
-                let mut args = EggExpr::Args(
-                    Box::new(stream.next().cloned()?),
-                    Box::new(EggExpr::Empty()),
+                let args = build_args_list(
+                    args.clone()
+                        .iter()
+                        .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape)),
                 );
-                for a in stream {
-                    args = EggExpr::Args(Box::new(a.clone()), Box::new(args));
-                }
 
                 Some(EggExpr::Call(format!("@{}", func_name), vec![args]))
             }
             Term::Op(Operator::RareList, args) => {
-                let args: Vec<EggExpr> = args
-                    .clone()
-                    .iter()
-                    .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape))
-                    .rev()
-                    .collect();
-                let mut stream = args.iter();
-                let mut args = EggExpr::Args(
-                    Box::new(stream.next().cloned()?),
-                    Box::new(EggExpr::Empty()),
+                let args = build_args_list(
+                    args.clone()
+                        .iter()
+                        .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape)),
                 );
-                for a in stream {
-                    args = EggExpr::Args(Box::new(a.clone()), Box::new(args));
-                }
 
                 Some(args)
             }
@@ -283,39 +279,15 @@ pub fn to_egg_expr(
                 func_cache
                     .names
                     .insert(head.to_string(), (true, args.len()));
-                let args: Vec<EggExpr> = args
-                    .clone()
-                    .iter()
-                    .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape))
-                    .rev()
-                    .collect();
-                let mut stream = args.iter();
-                let mut args = EggExpr::Args(
-                    Box::new(stream.next().cloned()?),
-                    Box::new(EggExpr::Empty()),
+                let args = build_args_list(
+                    args.clone()
+                        .iter()
+                        .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape)),
                 );
-                for a in stream {
-                    args = EggExpr::Args(Box::new(a.clone()), Box::new(args));
-                }
 
                 Some(EggExpr::Call(format!("@{0}", head.to_string()), vec![args]))
             }
             Term::Binder(binder, bindings, body) => {
-                // build a right-associated Args list
-                fn build_args_list<I: IntoIterator<Item = EggExpr>>(it: I) -> EggExpr {
-                    let v: Vec<EggExpr> = it.into_iter().collect();
-                    if v.is_empty() {
-                        return EggExpr::Empty();
-                    }
-                    let mut it = v.into_iter().rev();
-                    let first = it.next().unwrap();
-                    let mut acc = EggExpr::Args(Box::new(first), Box::new(EggExpr::Empty()));
-                    for e in it {
-                        acc = EggExpr::Args(Box::new(e), Box::new(acc));
-                    }
-                    acc
-                }
-
                 // map binder enum -> ctor name (now arity = 1)
                 let ctor = match binder {
                     Binder::Forall => "Forall",
@@ -340,6 +312,77 @@ pub fn to_egg_expr(
                 let packed = EggExpr::Args(Box::new(vars_list), Box::new(body_e));
 
                 Some(EggExpr::Call(ctor, vec![packed]))
+            }
+            Term::Sort(sort) => {
+                // Encode a Sort as a Term value (to be wrapped by the "Sort" ctor).
+                fn sort_to_egg(
+                    s: &Sort,
+                    subs: &IndexMap<&String, (EggExpr, AttributeParameters)>,
+                    func_cache: &mut EggFunctions,
+                    collect_shapes: bool,
+                ) -> Option<EggExpr> {
+                    match s {
+                        Sort::Var(name) => Some(EggExpr::Var(name.clone())),
+
+                        Sort::Bool => Some(EggExpr::Var("Bool".to_string())),
+                        Sort::Int => Some(EggExpr::Var("Int".to_string())),
+                        Sort::Real => Some(EggExpr::Var("Real".to_string())),
+                        Sort::String => Some(EggExpr::Var("String".to_string())),
+                        Sort::RegLan => Some(EggExpr::Var("RegLan".to_string())),
+                        Sort::RareList => Some(EggExpr::Var("RareList".to_string())),
+                        Sort::Type => Some(EggExpr::Var("Type".to_string())),
+
+                        Sort::BitVec(w) => {
+                            let tag = EggExpr::Var("BitVec".to_string());
+                            let width = EggExpr::Num(w.clone());
+                            Some(build_args_list(vec![tag, width]))
+                        }
+
+                        Sort::Array(x, y) => {
+                            let tag = EggExpr::Var("Array".to_string());
+                            let xs = to_egg_expr(x, subs, func_cache, collect_shapes)?;
+                            let ys = to_egg_expr(y, subs, func_cache, collect_shapes)?;
+                            Some(build_args_list(vec![tag, xs, ys]))
+                        }
+
+                        Sort::Function(parts) => {
+                            let mut v = Vec::with_capacity(1 + parts.len());
+                            v.push(EggExpr::Var("Function".to_string()));
+                            for p in parts {
+                                v.push(to_egg_expr(p, subs, func_cache, collect_shapes)?);
+                            }
+                            Some(build_args_list(v))
+                        }
+
+                        Sort::Atom(name, args) => {
+                            let mut v = Vec::with_capacity(1 + args.len());
+                            v.push(EggExpr::Var(name.clone()));
+                            for a in args {
+                                v.push(to_egg_expr(a, subs, func_cache, collect_shapes)?);
+                            }
+                            Some(build_args_list(v))
+                        }
+
+                        Sort::ParamSort(vars, inner) => {
+                            // list of vars
+                            let mut vs = Vec::with_capacity(vars.len());
+                            for v in vars {
+                                vs.push(to_egg_expr(v, subs, func_cache, collect_shapes)?);
+                            }
+                            let vars_list = build_args_list(vs);
+
+                            // body sort
+                            let body = to_egg_expr(inner, subs, func_cache, collect_shapes)?;
+
+                            let tag = EggExpr::Var("ParamSort".to_string());
+                            Some(build_args_list(vec![tag, vars_list, body]))
+                        }
+                    }
+                }
+
+                let encoded = sort_to_egg(sort, subs, func_cache, collect_functions_shape)?;
+                // Wrap the encoded sort with the "Sort" constructor (as declared in create_headers)
+                Some(EggExpr::Call("Sort".to_string(), vec![encoded]))
             }
             _ => None,
         }
