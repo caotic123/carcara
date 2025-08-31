@@ -66,10 +66,10 @@
   )
 )
 
-(declare-rare-rule and_false ((x Bool)) 
+(declare-rare-rule and_false ((x Bool) (y Bool :list)) 
   :args (x)
-  :premises ((= (or true true) ($singleton_elim (or true true))))
-  :conclusion (= x false)
+  :premises ((= false ($singleton_elim (or x y))))
+  :conclusion (= (or x y) false)
 )
 
 (declare-rare-rule type_rule ((x Bool)) 

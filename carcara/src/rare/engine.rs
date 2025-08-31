@@ -18,7 +18,7 @@ use egglog::{
     ast::Span,
     constraint::{SimpleTypeConstraint, TypeConstraint},
     sort::{BoolSort, EqSort},
-    ArcSort, EGraph, PrimitiveLike, SimplePrimitive, Value,
+    ArcSort, EGraph, PrimitiveLike, Value,
 };
 use indexmap::{IndexMap, IndexSet};
 use rug::Integer;
@@ -219,6 +219,29 @@ pub fn create_headers() -> EggLanguage {
             vec![],
         ),
     ]
+}
+
+// This function is primarily used to insert premises to egraph
+// But we use the relation Avaliable so we can know each one we added by using our translation
+fn create_avaliable_premise(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<EggStatement> {
+    if term.is_var() {
+        return None;
+    }
+
+    let mut premises = Vec::new();
+    let mut sorted_vars = IndexMap::new();
+    let vars = collect_vars(term, false);
+
+    for (name, _sort) in vars.iter() {
+        let egg_expr = EggExpr::Literal(name.clone());
+        sorted_vars.insert(name, (egg_expr.clone(), AttributeParameters::List));
+        premises.push(EggExpr::Call("Avaliable".to_string(), vec![egg_expr]));
+    }
+
+    Some(EggStatement::Rule(
+        premises,
+        vec![to_egg_expr(term, &sorted_vars, func_cache, false).unwrap()],
+    ))
 }
 
 pub fn to_egg_expr(
@@ -464,10 +487,10 @@ fn construct_premises(
                 ));
             }
 
-            grounds_terms.push(EggStatement::Premise(
-                "Avaliable".to_string(),
-                Box::new(to_egg_expr(&clause, &IndexMap::new(), func_cache, false).unwrap()),
-            ));
+            if let Some(ground) = create_avaliable_premise(&clause, func_cache) {
+                grounds_terms.push(ground)
+            }
+
         }
     }
 
@@ -503,22 +526,44 @@ fn construct_rules(
         for premise in definition.premises.iter() {
             let (op, lhs, rhs) = get_equational_terms(&premise).unwrap();
             match op {
-                Operator::Equals => premises.push(EggExpr::Equal(
-                    Box::new(
+                Operator::Equals => {
+                    if let Some(lhs) = create_avaliable_premise(lhs, func_cache) {
+                        rules.insert(lhs);
+                    }
+
+                    let lhs = Box::new(
                         to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap(),
-                    ),
-                    Box::new(
+                    );
+
+                    if let Some(rhs) = create_avaliable_premise(rhs, func_cache) {
+                        rules.insert(rhs);
+                    }
+                    let rhs = Box::new(
                         to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap(),
-                    ),
-                )),
-                Operator::Distinct => premises.push(EggExpr::Distinct(
-                    Box::new(
+                    );
+
+                    premises.push(EggExpr::Equal(lhs, rhs))
+                }
+
+                Operator::Distinct => {
+                    if let Some(lhs) = create_avaliable_premise(lhs, func_cache) {
+                        rules.insert(lhs);
+                    }
+
+                    let lhs = Box::new(
                         to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap(),
-                    ),
-                    Box::new(
+                    );
+
+                    if let Some(rhs) = create_avaliable_premise(rhs, func_cache) {
+                        rules.insert(rhs);
+                    }
+
+                    let rhs = Box::new(
                         to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap(),
-                    ),
-                )),
+                    );
+
+                    premises.push(EggExpr::Distinct(lhs, rhs));
+                }
                 _ => unreachable!(),
             }
         }
@@ -589,6 +634,8 @@ fn declare_functions(
         ));
 
         if !*is_op {
+            // For now let's remove this part if we feel that we need more power/expression
+            // in the graph we add again
             // ───────────────────────────────────────────────────────────
             // A) merged‐arity rule for non-operators
             //    (rule ((= (Mk __var1) (Mk k1))
@@ -596,26 +643,26 @@ fn declare_functions(
             //            (= (Mk __varN) (Mk kN)))
             //          ((Mk (@func (Args k1 (Args … Empty))))))
             // ───────────────────────────────────────────────────────────
-            for shape in functions.shapes.get(func).unwrap_or(&IndexSet::default()) {
-                let mut premises = Vec::new();
-                let mut sorted_vars = IndexMap::new();
-                let mut vars = collect_vars(shape, false);
-                vars.swap_remove(func);
+            // for shape in functions.shapes.get(func).unwrap_or(&IndexSet::default()) {
+            //     let mut premises = Vec::new();
+            //     let mut sorted_vars = IndexMap::new();
+            //     let mut vars = collect_vars(shape, false);
+            //     vars.swap_remove(func);
 
-                for (name, _sort) in vars.iter() {
-                    let egg_expr = EggExpr::Literal(name.clone());
-                    sorted_vars.insert(name, (egg_expr.clone(), AttributeParameters::List));
-                    premises.push(EggExpr::Call("Avaliable".to_string(), vec![egg_expr]));
-                }
+            //     for (name, _sort) in vars.iter() {
+            //         let egg_expr = EggExpr::Literal(name.clone());
+            //         sorted_vars.insert(name, (egg_expr.clone(), AttributeParameters::List));
+            //         premises.push(EggExpr::Call("Avaliable".to_string(), vec![egg_expr]));
+            //     }
 
-                decls.push(EggStatement::Rule(
-                    premises,
-                    vec![
-                        to_egg_expr(shape, &sorted_vars, &mut EggFunctions::default(), false)
-                            .unwrap(),
-                    ],
-                ));
-            }
+            //     decls.push(EggStatement::Rule(
+            //         premises,
+            //         vec![
+            //             to_egg_expr(shape, &sorted_vars, &mut EggFunctions::default(), false)
+            //                 .unwrap(),
+            //         ],
+            //     ));
+            // }
         } else {
             if let Some(default_val) = constant.get(func) {
                 if let Some(DeclAttr::RightAssocNil(nil)) =
@@ -734,9 +781,7 @@ pub fn reconstruct_rule(
             Arc::new(EqSort { name: Symbol::from("Term") }),
         ],
         output: Arc::new(BoolSort),
-        f: |x| {
-            Some(Value::from(x[0].bits != x[1].bits))
-        },
+        f: |x| Some(Value::from(x[0] != x[1])),
     });
 
     let egglog = lower_egg_language(ast);

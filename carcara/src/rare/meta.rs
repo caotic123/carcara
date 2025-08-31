@@ -106,7 +106,7 @@ fn to_expr(e: EggExpr) -> Expr {
         Call(name, args) => Expr::Call(
             dummy_span(),
             Symbol::from(name),
-            args.into_iter().map(|x | to_expr(x)).collect()
+            args.into_iter().map(|x| to_expr(x)).collect(),
         ),
         Args(x, xs) => Expr::Call(
             dummy_span(),
@@ -121,19 +121,22 @@ fn to_expr(e: EggExpr) -> Expr {
         ),
         Distinct(l, r) => Expr::Call(
             dummy_span(),
-            Symbol::from("ineq"),
-            vec![to_expr(*l), to_expr(*r)],
+            Symbol::from("="),
+            vec![
+                Expr::Call(
+                    dummy_span(),
+                    Symbol::from("ineq"),
+                    vec![to_expr(*l), to_expr(*r)],
+                ),
+                Expr::Lit(dummy_span(), egglog::ast::Literal::Bool(true)),
+            ],
         ),
         Union(l, r) => Expr::Call(
             dummy_span(),
             Symbol::from("union"),
             vec![to_expr(*l), to_expr(*r)],
         ),
-        Empty() => Expr::Call(
-            dummy_span(),
-            Symbol::from("Empty"),
-            vec![],
-        )
+        Empty() => Expr::Call(dummy_span(), Symbol::from("Empty"), vec![]),
     }
 }
 
@@ -143,6 +146,15 @@ fn eggexpr_to_fact(e: EggExpr) -> Fact {
             dummy_span(),
             to_expr(*l), // normal expression conversion
             to_expr(*r),
+        ),
+        EggExpr::Distinct(l, r) => Fact::Eq(
+            dummy_span(),
+            Expr::Call(
+                dummy_span(),
+                Symbol::from("ineq"),
+                vec![to_expr(*l), to_expr(*r)],
+            ),
+            Expr::Lit(dummy_span(), egglog::ast::Literal::Bool(true)),
         ),
         other => Fact::Fact(to_expr(other)),
     }
@@ -172,10 +184,10 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                     name: Symbol::from(name.as_str()),
                     schema: Schema {
                         input: inputs.iter().map(|x| ct_to_sort(x)).collect(),
-                        output: ct_to_sort(&out)
+                        output: ct_to_sort(&out),
                     },
                     cost: None,
-                    unextractable: false
+                    unextractable: false,
                 }],
 
                 /* ------------ datatype ------------- */
@@ -253,7 +265,7 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                         Box::new(Schedule::Run(dummy_span(), rcfg)),
                     );
                     vec![Command::RunSchedule(sched)]
-                },
+                }
                 EggStatement::Let(name, expr) => vec![Command::Action(GenericAction::Let(
                     dummy_span(),
                     Symbol::from(name),
