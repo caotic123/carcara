@@ -66,7 +66,7 @@ pub fn check_rare(
                 .unwrap()
                 .apply(pool, rare_premise);
             let rare_premise =
-                rewrite_meta_terms(pool, rare_premise, &mut IndexMap::new(), &get_rules());
+                rewrite_meta_terms(pool, rare_premise, &get_rules());
 
             if *premise != rare_premise {
                 return Err(CheckerError::RarePremiseAreNotEqual(
@@ -83,7 +83,7 @@ pub fn check_rare(
         for premise in premises {
             let premise = get_premise_term(premise)?;
             let premise_rare =
-                rewrite_meta_terms(pool, premise.clone(), &mut IndexMap::new(), &get_rules());
+                rewrite_meta_terms(pool, premise.clone(), &get_rules());
             if *premise != premise_rare {
                 return Err(CheckerError::RarePremiseAreNotEqual(
                     premise.clone(),
@@ -92,7 +92,7 @@ pub fn check_rare(
             }
         }
 
-        let rule_conclusion = rewrite_meta_terms(pool, got, &mut IndexMap::new(), &get_rules());
+        let rule_conclusion = rewrite_meta_terms(pool, got, &get_rules());
         if rule_conclusion != conclusion[0] {
             return Err(CheckerError::RareConclusionAreNotEqual(
                 rule_conclusion,

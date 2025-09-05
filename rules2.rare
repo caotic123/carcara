@@ -34,6 +34,15 @@
   )
 )
 
+(program contains
+    ((f (-> Bool Bool Bool)) (l Bool) (x Bool) (xs Bool))
+    :signature ((-> Bool Bool Bool) Bool Bool) Bool
+    (
+        ((contains f false l)     false)
+        ((contains f (f l xs) l) true)
+        ((contains f (f x xs) l) (contains f xs l))
+    )
+)
 
 ; program: $singleton_elim
 ; args:
@@ -50,26 +59,15 @@
   )
 )
 
-(program is_false ((f (-> Bool Bool Bool)) (xs Bool :list))
-  :signature ((-> Bool Bool Bool) Bool) Bool
-  (
-  ((is_false f (f false xs)) true)
-  )
+(declare-rare-rule true_elimination ((x Bool) (y Bool :list)) 
+  :args (x y)
+  :conclusion (= (and x y) ($singleton_elim (and x y)))
 )
 
-(program has_false ((f (-> Bool Bool Bool)) (xs Bool :list))
-  :signature ((-> Bool Bool Bool) Bool) Bool
-  (
-  ((has_false f (f false xs)) (is_false f xs))
-  ((has_false f (f true xs)) (has_false f xs))
-  ((has_false f false) true)
-  )
-)
-
-(declare-rare-rule and_false ((x Bool) (y Bool :list)) 
-  :args (x)
-  :premises ((= false ($singleton_elim (or x y))))
-  :conclusion (= (or x y) false)
+(declare-rare-rule or_elim ((x Bool) (y Bool :list)) 
+  :args (x y)
+  :premises ((= (contains or (or x y) true) true))
+  :conclusion (= (or x y) true)
 )
 
 (declare-rare-rule type_rule ((x Bool)) 
