@@ -355,7 +355,11 @@ impl<'a, R: BufRead> Parser<'a, R> {
             }
             Operator::ToInt | Operator::IsInt => {
                 assert_num_args(&args, 1)?;
-                SortError::assert_eq(&Sort::Real, sorts[0])?;
+                if self.config.allow_int_real_subtyping {
+                    SortError::assert_one_of(&[Sort::Real, Sort::Int], sorts[0])?;
+                } else {
+                    SortError::assert_eq(&Sort::Real, sorts[0])?;                    
+                }
             }
             Operator::Select => {
                 assert_num_args(&args, 2)?;

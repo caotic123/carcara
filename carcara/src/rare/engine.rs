@@ -223,7 +223,10 @@ pub fn create_headers() -> EggLanguage {
 
 // This function is primarily used to insert premises to egraph
 // But we use the relation Avaliable so we can know each one we added by using our translation
-fn create_avaliable_premise(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<EggStatement> {
+fn create_avaliable_premise(
+    term: &Rc<Term>,
+    func_cache: &mut EggFunctions,
+) -> Option<EggStatement> {
     if term.is_var() {
         return None;
     }
@@ -447,7 +450,60 @@ pub fn to_egg_expr(
                 // Wrap the encoded sort with the "Sort" constructor (as declared in create_headers)
                 Some(EggExpr::Call("Sort".to_string(), vec![encoded]))
             }
-            _ => None,
+            Term::Let(bindings, body) => {
+                // Build list of variable *names* (ignore bound values here)
+                let vars_list = build_args_list(
+                    bindings
+                        .0
+                        .iter()
+                        .map(|(name, _val)| EggExpr::Var(name.clone())),
+                );
+
+                // Translate the let-body
+                let body_e = to_egg_expr(body, subs, func_cache, collect_functions_shape)?;
+
+                // Make a single-argument constructor call for the Lambda binder:
+                //   Lambda( Args(vars_list, body_e) )
+                let lambda_e = EggExpr::Call(
+                    "Lambda".to_string(),
+                    vec![EggExpr::Args(Box::new(vars_list), Box::new(body_e))],
+                );
+
+                // Now apply the lambda to each bound value using nested `App`:
+                //   App(App(... App(lambda_e, v1), v2), ... vn)
+                let mut applied = lambda_e;
+                for (_name, val_term) in bindings.0.iter() {
+                    let val_e = to_egg_expr(val_term, subs, func_cache, collect_functions_shape)?;
+                    applied = EggExpr::Call("App".to_string(), vec![applied, val_e]);
+                }
+
+                Some(applied)
+            }
+
+            Term::ParamOp { op, op_args, args } => {
+                // Register the symbol; we treat param-ops as operators.
+                // Arity here is "parameters + arguments" because we flatten them below.
+                func_cache
+                    .names
+                    .insert(op.to_string(), (true, op_args.len() + args.len()));
+
+                // Encode parameters (indexed or qualified) *first*,
+                // then the regular arguments, all in a single Args list.
+                let mut flat: Vec<EggExpr> = Vec::with_capacity(op_args.len() + args.len());
+
+                for p in op_args {
+                    flat.push(to_egg_expr(p, subs, func_cache, collect_functions_shape)?);
+                }
+                for a in args {
+                    flat.push(to_egg_expr(a, subs, func_cache, collect_functions_shape)?);
+                }
+
+                let packed = build_args_list(flat);
+
+                // Call as @<param-op> with the single packed argument,
+                // consistent with how Op/App are encoded elsewhere.
+                Some(EggExpr::Call(format!("@{}", op.to_string()), vec![packed]))
+            }
         }
     }
 
@@ -490,7 +546,6 @@ fn construct_premises(
             if let Some(ground) = create_avaliable_premise(&clause, func_cache) {
                 grounds_terms.push(ground)
             }
-
         }
     }
 
@@ -569,6 +624,7 @@ fn construct_rules(
         }
 
         let (_, lhs, rhs) = get_equational_terms(&definition.conclusion).unwrap();
+        println!("{:?} {:?}", lhs, rhs);
         let egg_equations: (Box<EggExpr>, Box<EggExpr>) = (
             Box::new(to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap()),
             Box::new(to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap()),
