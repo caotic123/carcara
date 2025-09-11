@@ -226,6 +226,7 @@ pub fn create_headers() -> EggLanguage {
 fn create_avaliable_premise(
     term: &Rc<Term>,
     func_cache: &mut EggFunctions,
+    recognize_vars: bool,
 ) -> Option<EggStatement> {
     if term.is_var() {
         return None;
@@ -233,7 +234,11 @@ fn create_avaliable_premise(
 
     let mut premises = Vec::new();
     let mut sorted_vars = IndexMap::new();
-    let vars = collect_vars(term, false);
+    let vars = if recognize_vars {
+        collect_vars(term, false)
+    } else {
+        IndexMap::default()
+    };
 
     for (name, _sort) in vars.iter() {
         let egg_expr = EggExpr::Literal(name.clone());
@@ -543,7 +548,7 @@ fn construct_premises(
                 ));
             }
 
-            if let Some(ground) = create_avaliable_premise(&clause, func_cache) {
+            if let Some(ground) = create_avaliable_premise(&clause, func_cache, false) {
                 grounds_terms.push(ground)
             }
         }
@@ -582,7 +587,7 @@ fn construct_rules(
             let (op, lhs, rhs) = get_equational_terms(&premise).unwrap();
             match op {
                 Operator::Equals => {
-                    if let Some(lhs) = create_avaliable_premise(lhs, func_cache) {
+                    if let Some(lhs) = create_avaliable_premise(lhs, func_cache, true) {
                         rules.insert(lhs);
                     }
 
@@ -590,7 +595,7 @@ fn construct_rules(
                         to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap(),
                     );
 
-                    if let Some(rhs) = create_avaliable_premise(rhs, func_cache) {
+                    if let Some(rhs) = create_avaliable_premise(rhs, func_cache,true) {
                         rules.insert(rhs);
                     }
                     let rhs = Box::new(
@@ -601,7 +606,7 @@ fn construct_rules(
                 }
 
                 Operator::Distinct => {
-                    if let Some(lhs) = create_avaliable_premise(lhs, func_cache) {
+                    if let Some(lhs) = create_avaliable_premise(lhs, func_cache, true) {
                         rules.insert(lhs);
                     }
 
@@ -609,7 +614,7 @@ fn construct_rules(
                         to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap(),
                     );
 
-                    if let Some(rhs) = create_avaliable_premise(rhs, func_cache) {
+                    if let Some(rhs) = create_avaliable_premise(rhs, func_cache, true) {
                         rules.insert(rhs);
                     }
 
@@ -624,7 +629,6 @@ fn construct_rules(
         }
 
         let (_, lhs, rhs) = get_equational_terms(&definition.conclusion).unwrap();
-        println!("{:?} {:?}", lhs, rhs);
         let egg_equations: (Box<EggExpr>, Box<EggExpr>) = (
             Box::new(to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap()),
             Box::new(to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap()),
@@ -663,7 +667,7 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
             Box::new(EggExpr::Literal("goal_rhs".to_string())),
         ));
 
-        goal.push(EggStatement::Run(5));
+        goal.push(EggStatement::Run(2));
 
         goal.push(EggStatement::Check(Box::new(EggExpr::Equal(
             Box::new(EggExpr::Literal("goal_lhs".to_string())),
@@ -792,6 +796,7 @@ pub fn reconstruct_rule(
     root: &Rc<ProofNode>,
     database: &Rules,
 ) {
+    println!("Elaborating {:?}", conclusion);
     let mut egg_functions = EggFunctions::default();
 
     let mut rules: Vec<RuleDefinition> = vec![];
@@ -806,9 +811,9 @@ pub fn reconstruct_rule(
         ));
     }
 
-    for rule in rules.iter() {
-        println!("{}", rule);
-    }
+    // for rule in rules.iter() {
+    //     println!("{}", rule);
+    // }
 
     let rules = construct_rules(&rules, &mut egg_functions);
 
