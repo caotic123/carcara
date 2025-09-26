@@ -2,11 +2,12 @@ use std::{iter::once, sync::Arc};
 
 use crate::{
     ast::{
-        rare_rules::{AttributeParameters, DeclAttr, DeclConst, Program, RuleDefinition, Rules},
+        rare_rules::{AttributeParameters, DeclAttr, DeclConst, RuleDefinition, Rules},
         Binder, Constant, Operator, PrimitivePool, ProofNode, Rc, Sort, Term,
     },
+    available_expr, call_expr, mk_expr, push_rewrite,
     rare::{
-        computational::{defunctionalization::elaborate_rule, program::compile_program},
+        computational::{aci_norm, defunctionalization::elaborate_rule},
         language::*,
         meta::lower_egg_language,
         util::{clauses_to_or, collect_vars, get_equational_terms},
@@ -27,6 +28,7 @@ use rug::Integer;
 pub struct EggFunctions {
     names: IndexMap<String, (bool, usize)>,
     shapes: IndexMap<String, IndexSet<Rc<Term>>>,
+    assoc_calls: IndexMap<String, IndexSet<EggExpr>>,
 }
 
 struct CustomPrimitive {
@@ -141,6 +143,16 @@ pub fn create_headers() -> EggLanguage {
                     ),
                 },
             ],
+        ),
+        EggStatement::Sort(
+            "AssocArgs".to_owned(),
+            "Set".to_owned(),
+            Box::new(EggExpr::Literal("Term".to_string())),
+        ),
+        EggStatement::Constructor(
+            "Assoc".to_string(),
+            vec![ConstType::ConstrType("AssocArgs".to_string())],
+            ConstType::ConstrType("Term".to_string()),
         ),
         EggStatement::Relation(
             "Avaliable".to_string(),
@@ -350,13 +362,26 @@ pub fn to_egg_expr(
                 func_cache
                     .names
                     .insert(head.to_string(), (true, args.len()));
-                let args = build_args_list(
+                let args_list = build_args_list(
                     args.clone()
                         .iter()
                         .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape)),
                 );
 
-                Some(EggExpr::Call(format!("@{0}", head.to_string()), vec![args]))
+                if matches!(head, Operator::And | Operator::Or) {
+                    let op_with_at = format!("@{}", head.to_string());
+                    func_cache
+                        .assoc_calls
+                        .entry(op_with_at.clone())
+                        .or_default()
+                        .insert(args_list.clone());
+                    Some(EggExpr::Call(op_with_at, vec![args_list]))
+                } else {
+                    Some(EggExpr::Call(
+                        format!("@{0}", head.to_string()),
+                        vec![args_list],
+                    ))
+                }
             }
             Term::Binder(binder, bindings, body) => {
                 // map binder enum -> ctor name (now arity = 1)
@@ -595,7 +620,7 @@ fn construct_rules(
                         to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap(),
                     );
 
-                    if let Some(rhs) = create_avaliable_premise(rhs, func_cache,true) {
+                    if let Some(rhs) = create_avaliable_premise(rhs, func_cache, true) {
                         rules.insert(rhs);
                     }
                     let rhs = Box::new(
@@ -785,6 +810,15 @@ fn declare_functions(
             )),
             vec![],
         ));
+    }
+
+    for (op, calls) in functions.assoc_calls.iter() {
+        for args_expr in calls.iter() {
+            let lhs = mk_expr!(call_expr!(op.clone(); args_expr.clone()));
+            let rhs = aci_norm::to_assoc_call(op, aci_norm::args_expr_to_vec(op, args_expr));
+            let availability = available_expr!(lhs.clone());
+            push_rewrite!(decls, lhs, rhs; when availability);
+        }
     }
 
     decls

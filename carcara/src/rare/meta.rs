@@ -197,6 +197,12 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                     variants: ctors.into_iter().map(ctor_to_variant).collect(),
                 }],
 
+                EggStatement::Sort(name, sort_symbol, expr) => vec![Command::Sort(
+                    dummy_span(),
+                    Symbol::from(name.as_str()),
+                    Some((Symbol::from(sort_symbol.as_str()), vec![to_expr(*expr)])),
+                )],
+
                 /* ------------ relation ------------- */
                 EggStatement::Relation(con, ctype) => vec![Command::Relation {
                     span: dummy_span(),
