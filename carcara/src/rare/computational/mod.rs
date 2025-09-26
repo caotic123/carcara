@@ -1,3 +1,4 @@
+pub mod aci_norm;
 pub mod core;
-pub mod program;
 pub mod defunctionalization;
+pub mod program;
