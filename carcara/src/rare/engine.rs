@@ -692,7 +692,7 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
             Box::new(EggExpr::Literal("goal_rhs".to_string())),
         ));
 
-        goal.push(EggStatement::Run(2));
+        goal.push(EggStatement::Run(10));
 
         goal.push(EggStatement::Check(Box::new(EggExpr::Equal(
             Box::new(EggExpr::Literal("goal_lhs".to_string())),
@@ -845,9 +845,9 @@ pub fn reconstruct_rule(
         ));
     }
 
-    // for rule in rules.iter() {
-    //     println!("{}", rule);
-    // }
+    for rule in rules.iter() {
+        println!("{}", rule);
+    }
 
     let rules = construct_rules(&rules, &mut egg_functions);
 
