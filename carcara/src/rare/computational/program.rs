@@ -393,8 +393,6 @@ pub fn compile_program(pool: &mut PrimitivePool, program: &Program) -> Vec<RuleD
         let conflicts =
             collect_conflict_clauses(pool, &set, &symbol_table, &matching_clauses, index);
 
-        println!("{:?}", set);
-
         let rhs = handle_eo_lists(pool, &matching_clauses, &program.parameters).apply(pool, &rhs);
         let conclusion = pool.add(Term::Op(Operator::Equals, vec![lhs, rhs]));
 
