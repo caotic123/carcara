@@ -389,7 +389,7 @@ pub fn elaborate_rule(
     rule: &RuleDefinition,
     programs: &IndexMap<String, Program>,
     decl_consts: &IndexMap<String, DeclConst>,
-    name: &str
+    name: &str,
 ) -> Vec<RuleDefinition> {
     // Gather all instantiations triggered by *this* rule, calling defunc only once per term.
     let mut instations = IndexSet::new();
@@ -529,7 +529,13 @@ pub fn elaborate_rule(
         );
 
         for r in compiled {
-            out.extend(elaborate_rule(pool, &r, programs, decl_consts, &program.name));
+            out.extend(elaborate_rule(
+                pool,
+                &r,
+                programs,
+                decl_consts,
+                &program.name,
+            ));
             out.push(r);
         }
 

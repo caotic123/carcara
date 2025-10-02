@@ -65,8 +65,7 @@ pub fn check_rare(
             let rare_premise = Substitution::new(pool, map.clone())
                 .unwrap()
                 .apply(pool, rare_premise);
-            let rare_premise =
-                rewrite_meta_terms(pool, rare_premise, &get_rules());
+            let rare_premise = rewrite_meta_terms(pool, rare_premise, &get_rules());
 
             if *premise != rare_premise {
                 return Err(CheckerError::RarePremiseAreNotEqual(
@@ -82,8 +81,7 @@ pub fn check_rare(
 
         for premise in premises {
             let premise = get_premise_term(premise)?;
-            let premise_rare =
-                rewrite_meta_terms(pool, premise.clone(), &get_rules());
+            let premise_rare = rewrite_meta_terms(pool, premise.clone(), &get_rules());
             if *premise != premise_rare {
                 return Err(CheckerError::RarePremiseAreNotEqual(
                     premise.clone(),

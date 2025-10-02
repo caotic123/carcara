@@ -1,10 +1,10 @@
 use indexmap::IndexMap;
 
-pub mod engine;
-pub mod util;
-pub mod meta;
-pub mod language;
 pub mod computational;
+pub mod engine;
+pub mod language;
+pub mod meta;
+pub mod util;
 
 use crate::{
     ast::{rare_rules::RewriteTerm, Rc, Term, TermPool},

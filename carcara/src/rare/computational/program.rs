@@ -4,7 +4,8 @@ use indexmap::IndexMap;
 
 use crate::{
     ast::{
-        rare_rules::{AttributeParameters, Program, RuleDefinition, TypeParameter}, Operator, PrimitivePool, Rc, Sort, Substitution, Term, TermPool
+        rare_rules::{AttributeParameters, Program, RuleDefinition, TypeParameter},
+        Operator, PrimitivePool, Rc, Sort, Substitution, Term, TermPool,
     },
     rare::util::{collect_vars, unify_pattern},
 };
@@ -73,7 +74,7 @@ fn collect_conflict_clauses(
     ) -> Vec<Rc<Term>> {
         let mut conflicts = vec![];
         for (index, l) in left.iter().zip(right).enumerate() {
-            if l.0 != l.1 && (!l.0.is_var() || (l.0.is_var() && l.1.is_var()))  {
+            if l.0 != l.1 && (!l.0.is_var() || (l.0.is_var() && l.1.is_var())) {
                 let term = pool.add(Term::Var(
                     format! {"_{}", index},
                     fixed_params[index].0.clone(),
@@ -138,7 +139,6 @@ fn transform_to_rare_params<'a>(
     }
     vec
 }
-
 
 // Eunoia list in pattern matching has a akward behavior, where when a parameter is a list, whenever we mention it
 // we need to create a representation such (or x xs) = [xs/(or xs)].
@@ -298,7 +298,6 @@ fn handle_eo_lists<'a>(
 
     Substitution::new(pool, mapping).unwrap()
 }
-
 
 fn compile_conclusion(
     pool: &mut PrimitivePool,

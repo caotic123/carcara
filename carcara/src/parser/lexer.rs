@@ -124,7 +124,7 @@ pub enum Reserved {
     Program,
 
     // From eunoia parametrized constants
-    DeclareParameterizedConst
+    DeclareParameterizedConst,
 }
 
 impl_str_conversion_traits!(Reserved {

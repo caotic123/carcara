@@ -2,12 +2,11 @@ use std::{iter::once, sync::Arc};
 
 use crate::{
     ast::{
-        rare_rules::{AttributeParameters, DeclAttr, DeclConst, RuleDefinition, Rules},
-        Binder, Constant, Operator, PrimitivePool, ProofNode, Rc, Sort, Term,
+        Binder, Constant, Operator, PrimitivePool, ProofNode, Rc, Sort, Term, rare_rules::{AttributeParameters, DeclAttr, DeclConst, RuleDefinition, Rules}
     },
     available_expr, call_expr, mk_expr, push_rewrite,
     rare::{
-        computational::{aci_norm, defunctionalization::elaborate_rule},
+        computational::{aci_norm, core::declare_special_eunoia_eliminations, defunctionalization::elaborate_rule, distinct_elim::{self, declare_logic_operators}},
         language::*,
         meta::lower_egg_language,
         util::{clauses_to_or, collect_vars, get_equational_terms},
@@ -26,9 +25,9 @@ use rug::Integer;
 
 #[derive(Debug, Default)]
 pub struct EggFunctions {
-    names: IndexMap<String, (bool, usize)>,
-    shapes: IndexMap<String, IndexSet<Rc<Term>>>,
-    assoc_calls: IndexMap<String, IndexSet<EggExpr>>,
+    pub names: IndexMap<String, (bool, usize)>,
+    pub shapes: IndexMap<String, IndexSet<Rc<Term>>>,
+    pub assoc_calls: IndexMap<String, IndexSet<EggExpr>>,
 }
 
 struct CustomPrimitive {
@@ -63,7 +62,8 @@ impl PrimitiveLike for CustomPrimitive {
 }
 
 pub fn create_headers() -> EggLanguage {
-    vec![
+    let stmts = vec![
+        EggStatement::Ruleset("list-ruleset".to_string()),
         EggStatement::DataType(
             "Term".to_string(),
             vec![
@@ -156,7 +156,7 @@ pub fn create_headers() -> EggLanguage {
         ),
         EggStatement::Relation(
             "Avaliable".to_string(),
-            ConstType::ConstrType("Term".to_string()),
+            vec![ConstType::ConstrType("Term".to_string())],
         ),
         EggStatement::Rewrite(
             Box::new(EggExpr::Args(
@@ -192,16 +192,17 @@ pub fn create_headers() -> EggLanguage {
             )),
             vec![],
         ),
-        EggStatement::Rule(
-            vec![EggExpr::Equal(
+        EggStatement::Rule {
+            ruleset: None,
+            body: vec![EggExpr::Equal(
                 Box::new(EggExpr::Mk(Box::new(EggExpr::Literal("x".to_string())))),
                 Box::new(EggExpr::Mk(Box::new(EggExpr::Literal("y".to_string())))),
             )],
-            vec![EggExpr::Union(
+            head: vec![EggExpr::Union(
                 Box::new(EggExpr::Literal("x".to_string())),
                 Box::new(EggExpr::Literal("y".to_string())),
             )],
-        ),
+        },
         EggStatement::Rewrite(
             Box::new(EggExpr::Args(
                 Box::new(EggExpr::Literal("t1".to_string())),
@@ -230,7 +231,9 @@ pub fn create_headers() -> EggLanguage {
             )),
             vec![],
         ),
-    ]
+    ];
+
+    stmts
 }
 
 // This function is primarily used to insert premises to egraph
@@ -258,10 +261,11 @@ fn create_avaliable_premise(
         premises.push(EggExpr::Call("Avaliable".to_string(), vec![egg_expr]));
     }
 
-    Some(EggStatement::Rule(
-        premises,
-        vec![to_egg_expr(term, &sorted_vars, func_cache, false).unwrap()],
-    ))
+    Some(EggStatement::Rule {
+        ruleset: None,
+        body: premises,
+        head: vec![to_egg_expr(term, &sorted_vars, func_cache, false).unwrap()],
+    })
 }
 
 pub fn to_egg_expr(
@@ -692,7 +696,11 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
             Box::new(EggExpr::Literal("goal_rhs".to_string())),
         ));
 
-        goal.push(EggStatement::Run(10));
+        goal.push(EggStatement::Saturate {
+            ruleset: Some("list-ruleset".to_string()),
+        });
+
+        goal.push(EggStatement::Run { ruleset: None, iterations: 5 });
 
         goal.push(EggStatement::Check(Box::new(EggExpr::Equal(
             Box::new(EggExpr::Literal("goal_lhs".to_string())),
@@ -705,11 +713,12 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
 }
 
 fn declare_functions(
-    functions: EggFunctions,
+    functions: &mut EggFunctions,
     constant: &IndexMap<String, DeclConst>,
 ) -> Vec<EggStatement> {
     let mut decls = Vec::new();
-
+    declare_logic_operators(functions);
+    
     for (func, (is_op, _arity)) in functions.names.iter() {
         // 1) always declare the function symbol
         decls.push(EggStatement::Constructor(
@@ -774,7 +783,7 @@ fn declare_functions(
         }
     }
 
-    if functions.names.get("@+").is_some() {
+    if functions.names.get("+").is_some() {
         decls.push(EggStatement::Rewrite(
             Box::new(EggExpr::Call(
                 "@+".to_string(),
@@ -812,15 +821,6 @@ fn declare_functions(
         ));
     }
 
-    for (op, calls) in functions.assoc_calls.iter() {
-        for args_expr in calls.iter() {
-            let lhs = mk_expr!(call_expr!(op.clone(); args_expr.clone()));
-            let rhs = aci_norm::to_assoc_call(op, aci_norm::args_expr_to_vec(op, args_expr));
-            let availability = available_expr!(lhs.clone());
-            push_rewrite!(decls, lhs, rhs; when availability);
-        }
-    }
-
     decls
 }
 
@@ -853,10 +853,13 @@ pub fn reconstruct_rule(
 
     let premises = construct_premises(pool, root, &mut egg_functions);
     let goal = set_goal(&conclusion, &mut egg_functions);
-    let declarations = declare_functions(egg_functions, &database.consts);
+
+    let mut declarations = declare_functions(&mut egg_functions, &database.consts);
+
+    declare_special_eunoia_eliminations(&mut declarations, &egg_functions);
 
     let mut ast = create_headers();
-
+    
     ast.extend(declarations);
     ast.extend(rules);
     ast.extend(premises);

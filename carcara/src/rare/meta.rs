@@ -137,6 +137,7 @@ fn to_expr(e: EggExpr) -> Expr {
             vec![to_expr(*l), to_expr(*r)],
         ),
         Empty() => Expr::Call(dummy_span(), Symbol::from("Empty"), vec![]),
+        Set(_, _) => panic!("Set expressions should only be used in rule actions"),
     }
 }
 
@@ -166,6 +167,15 @@ fn facts(es: Vec<EggExpr>) -> Vec<Fact> {
 
 fn eggexpr_to_action(e: EggExpr) -> Action {
     match e {
+        EggExpr::Set(lhs, rhs) => match *lhs {
+            EggExpr::Call(name, args) => Action::Set(
+                dummy_span(),
+                Symbol::from(name.as_str()),
+                args.into_iter().map(to_expr).collect(),
+                to_expr(*rhs),
+            ),
+            other => panic!("Expected function call in set action, got {:?}", other),
+        },
         EggExpr::Union(l, r) => Action::Union(dummy_span(), to_expr(*l), to_expr(*r)),
         other => Action::Expr(dummy_span(), to_expr(other)),
     }
@@ -204,11 +214,27 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                 )],
 
                 /* ------------ relation ------------- */
-                EggStatement::Relation(con, ctype) => vec![Command::Relation {
+                EggStatement::Relation(con, ctypes) => vec![Command::Relation {
                     span: dummy_span(),
                     name: Symbol::from(con.as_str()),
-                    inputs: vec![ct_to_sort(&ctype)],
+                    inputs: ctypes.iter().map(ct_to_sort).collect(),
                 }],
+
+                EggStatement::Function { name, inputs, output, merge } => {
+                    vec![Command::Function {
+                        span: dummy_span(),
+                        name: Symbol::from(name.as_str()),
+                        schema: Schema::new(
+                            inputs.iter().map(ct_to_sort).collect(),
+                            ct_to_sort(&output),
+                        ),
+                        merge: merge.map(to_expr),
+                    }]
+                }
+
+                EggStatement::Ruleset(name) => {
+                    vec![Command::AddRuleset(Symbol::from(name.as_str()))]
+                }
 
                 /* ------------ premise -------------- */
                 EggStatement::Premise(rel, arg) => vec![Command::Action(Action::Expr(
@@ -233,8 +259,8 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                 )],
 
                 /* -------------- rule --------------- */
-                EggStatement::Rule(body, head) => vec![Command::Rule {
-                    ruleset: Symbol::from(""),
+                EggStatement::Rule { ruleset, body, head } => vec![Command::Rule {
+                    ruleset: Symbol::from(ruleset.as_deref().unwrap_or("")),
                     name: Symbol::from(""),
                     rule: Rule {
                         span: dummy_span(),
@@ -249,21 +275,21 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                 }
 
                 /* --------------- run --------------- */
-                EggStatement::Run(n) => {
+                EggStatement::Run { ruleset, iterations } => {
                     let rcfg = RunConfig {
-                        ruleset: Symbol::from(""),
+                        ruleset: Symbol::from(ruleset.as_deref().unwrap_or("")),
                         until: None,
                     };
                     let sched = Schedule::Repeat(
                         dummy_span(),
-                        n as usize,
+                        iterations as usize,
                         Box::new(Schedule::Run(dummy_span(), rcfg)),
                     );
                     vec![Command::RunSchedule(sched)]
                 }
-                EggStatement::Saturare() => {
+                EggStatement::Saturate { ruleset } => {
                     let rcfg = RunConfig {
-                        ruleset: Symbol::from(""),
+                        ruleset: Symbol::from(ruleset.as_deref().unwrap_or("")),
                         until: None,
                     };
                     let sched = Schedule::Saturate(

@@ -14,18 +14,6 @@ fn build_assoc(args: Vec<EggExpr>) -> EggExpr {
     assoc_expr!(set_expr)
 }
 
-pub fn emit_assoc_rewrite_rules(
-    decls: &mut Vec<EggStatement>,
-    op_with_at: &str,
-    args_expr: &EggExpr,
-) {
-    let lhs = mk_expr!(call_expr!(op_with_at.to_string(); args_expr.clone()));
-    let flattened_args = args_expr_to_vec(op_with_at, args_expr);
-    let rhs = to_assoc_call(op_with_at, flattened_args);
-    let availability = available_expr!(lhs.clone());
-    push_rewrite!(decls, lhs, rhs; when availability);
-}
-
 pub fn args_expr_to_vec(op_with_at: &str, expr: &EggExpr) -> Vec<EggExpr> {
     fn collect(op_with_at: &str, expr: &EggExpr, out: &mut Vec<EggExpr>) {
         match expr {

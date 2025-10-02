@@ -1,9 +1,8 @@
 use indexmap::{IndexMap, IndexSet};
 
-use crate::ast::{
-    rare_rules::{DeclAttr, DeclConst},
-    BindingList, PrimitivePool, Rc, Sort, Substitution, Term, TermPool,
-};
+use crate::{ast::{
+    BindingList, PrimitivePool, Rc, Sort, Substitution, Term, TermPool, rare_rules::{DeclAttr, DeclConst}
+}, available_expr, call_expr, mk_expr, push_rewrite, rare::{computational::{aci_norm, distinct_elim}, engine::EggFunctions, language::EggStatement}};
 
 // Add this type alias near the top of the module:
 type Matcher<'a> = dyn Fn(&Rc<Term>, &mut PrimitivePool) -> Option<Rc<Term>> + 'a;
@@ -394,4 +393,20 @@ pub fn interpret_eunoia(
         break;
     }
     term
+}
+
+
+pub fn declare_special_eunoia_eliminations(decls: &mut Vec<EggStatement>, functions: &EggFunctions) {
+    for (op, calls) in functions.assoc_calls.iter() {
+        for args_expr in calls.iter() {
+            let lhs = mk_expr!(call_expr!(op.clone(); args_expr.clone()));
+            let rhs = aci_norm::to_assoc_call(op, aci_norm::args_expr_to_vec(op, args_expr));
+            let availability = available_expr!(lhs.clone());
+            push_rewrite!(decls, lhs, rhs; when availability);
+        }
+    }
+
+    if functions.names.contains_key("distinct") {
+        decls.extend(distinct_elim::distinct_solver_statements());
+    }
 }
