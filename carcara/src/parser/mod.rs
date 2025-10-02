@@ -358,7 +358,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 if self.config.allow_int_real_subtyping {
                     SortError::assert_one_of(&[Sort::Real, Sort::Int], sorts[0])?;
                 } else {
-                    SortError::assert_eq(&Sort::Real, sorts[0])?;                    
+                    SortError::assert_eq(&Sort::Real, sorts[0])?;
                 }
             }
             Operator::Select => {

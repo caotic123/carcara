@@ -35,6 +35,7 @@ pub enum EggExpr {
     Union(Box<EggExpr>, Box<EggExpr>),
     Args(Box<EggExpr>, Box<EggExpr>),
     Call(String, Vec<EggExpr>),
+    Set(Box<EggExpr>, Box<EggExpr>),
     Empty(),
 }
 
@@ -42,17 +43,33 @@ pub enum EggExpr {
 pub enum EggStatement {
     Sort(String, String, Box<EggExpr>),
     DataType(String, Vec<Constructor>),
-    Relation(String, ConstType),
+    Relation(String, Vec<ConstType>),
+    Function {
+        name: String,
+        inputs: Vec<ConstType>,
+        output: ConstType,
+        merge: Option<EggExpr>,
+    },
+    Ruleset(String),
     Premise(String, Box<EggExpr>),
     Let(String, Box<EggExpr>),
     Rewrite(Box<EggExpr>, Box<EggExpr>, Vec<EggExpr>),
     Union(Box<EggExpr>, Box<EggExpr>),
-    Rule(Vec<EggExpr>, Vec<EggExpr>),
+    Rule {
+        ruleset: Option<String>,
+        body: Vec<EggExpr>,
+        head: Vec<EggExpr>,
+    },
     Check(Box<EggExpr>),
     Constructor(String, Vec<ConstType>, ConstType),
     Call(Box<EggExpr>),
-    Run(i16),
-    Saturare(),
+    Run {
+        ruleset: Option<String>,
+        iterations: i16,
+    },
+    Saturate {
+        ruleset: Option<String>,
+    },
 }
 
 pub type EggLanguage = Vec<EggStatement>;

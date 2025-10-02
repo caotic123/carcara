@@ -23,11 +23,9 @@ fn parse_maybe_qualified_symbol<R: BufRead>(parser: &mut Parser<R>) -> CarcaraRe
     Ok(symbol)
 }
 
-
 fn parse_simple_annotated_sort_after_bang<R: BufRead>(
     parser: &mut Parser<R>,
 ) -> CarcaraResult<ParsedAnnotatedSort> {
-
     parser.expect_token(Token::ReservedWord(Reserved::Bang))?;
     let base_sort = parser.parse_sort(true)?;
     let mut var_name: Option<String> = None;
@@ -44,7 +42,10 @@ fn parse_simple_annotated_sort_after_bang<R: BufRead>(
                 // also allow it to appear as a sort variable
                 parser.state.sort_defs.insert(
                     name.clone(),
-                    SortDef { body: base_sort.clone(), params: Vec::new() },
+                    SortDef {
+                        body: base_sort.clone(),
+                        params: Vec::new(),
+                    },
                 );
                 var_name = Some(name);
             }
@@ -64,7 +65,12 @@ fn parse_simple_annotated_sort_after_bang<R: BufRead>(
         }
     }
 
-    Ok(ParsedAnnotatedSort { base_sort, var_name, implicit, requires })
+    Ok(ParsedAnnotatedSort {
+        base_sort,
+        var_name,
+        implicit,
+        requires,
+    })
 }
 
 fn parse_sorted_param_slot<R: BufRead>(
@@ -132,7 +138,6 @@ fn build_function_sort_from_slots<R: BufRead>(
 fn parse_typed_param_entry<R: BufRead>(
     parser: &mut Parser<R>,
 ) -> CarcaraResult<ParsedAnnotatedSort> {
-
     parser.expect_token(Token::OpenParen)?;
     let name = parser.expect_symbol()?;
     let base_sort = parser.parse_sort(true)?;
@@ -141,7 +146,10 @@ fn parse_typed_param_entry<R: BufRead>(
     parser.insert_sorted_var((name.clone(), base_sort.clone()));
     parser.state.sort_defs.insert(
         name.clone(),
-        SortDef { body: base_sort.clone(), params: Vec::new() },
+        SortDef {
+            body: base_sort.clone(),
+            params: Vec::new(),
+        },
     );
 
     let mut implicit = false;
@@ -167,7 +175,12 @@ fn parse_typed_param_entry<R: BufRead>(
     }
     parser.expect_token(Token::CloseParen)?;
 
-    Ok(ParsedAnnotatedSort { base_sort, var_name: Some(name), implicit, requires })
+    Ok(ParsedAnnotatedSort {
+        base_sort,
+        var_name: Some(name),
+        implicit,
+        requires,
+    })
 }
 
 fn parse_decl_attrs<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<Vec<DeclAttr>> {
@@ -282,19 +295,34 @@ fn parse_parameters<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<(String
     // and as sort alias for use in sorts
     parser.state.sort_defs.insert(
         name.clone(),
-        SortDef { body: term.clone(), params: Vec::default() },
+        SortDef {
+            body: term.clone(),
+            params: Vec::default(),
+        },
     );
 
     match &parser.current_token {
         Token::CloseParen => {
             parser.expect_token(Token::CloseParen)?;
-            Ok((name, TypeParameter { term, attribute: AttributeParameters::None }))
+            Ok((
+                name,
+                TypeParameter {
+                    term,
+                    attribute: AttributeParameters::None,
+                },
+            ))
         }
         Token::Keyword(_) => {
             let kind_of_arg = parser.expect_keyword()?;
             parser.expect_token(Token::CloseParen)?;
             if kind_of_arg == "list" {
-                return Ok((name, TypeParameter { term, attribute: AttributeParameters::List }));
+                return Ok((
+                    name,
+                    TypeParameter {
+                        term,
+                        attribute: AttributeParameters::List,
+                    },
+                ));
             }
             Err(Error::Parser(
                 ParserError::InvalidRareArgAttribute(kind_of_arg),
@@ -311,16 +339,16 @@ fn parse_parameters<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<(String
 fn parse_body<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<Body> {
     let qualified_arg: Vec<char> = parser.expect_keyword()?.chars().collect();
     match qualified_arg.as_slice() {
-        ['c','o','n','c','l','u','s','i','o','n', ..] => {
+        ['c', 'o', 'n', 'c', 'l', 'u', 's', 'i', 'o', 'n', ..] => {
             let rewrite_term = parser.parse_term()?;
             Ok(Body::Conclusion(rewrite_term))
         }
-        ['a','r','g','s', ..] => {
+        ['a', 'r', 'g', 's', ..] => {
             parser.expect_token(Token::OpenParen)?;
             let args = parser.parse_sequence(super::Parser::expect_symbol, false)?;
             Ok(Body::Args(args))
         }
-        ['p','r','e','m','i','s','e','s', ..] => {
+        ['p', 'r', 'e', 'm', 'i', 's', 'e', 's', ..] => {
             parser.expect_token(Token::OpenParen)?;
             let terms = parser.parse_sequence(|p| p.parse_term(), false)?;
             Ok(Body::Premise(terms))
@@ -393,7 +421,11 @@ pub fn parse_rule<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<RuleDefin
     parser.expect_token(Token::OpenParen)?;
     let parameters = parser.parse_sequence(|p| parse_parameters(p), false)?;
 
-    let body_definitions = BodyDefinition { args: &vec![], premises: &vec![], conclusion: None };
+    let body_definitions = BodyDefinition {
+        args: &vec![],
+        premises: &vec![],
+        conclusion: None,
+    };
     let body = parser.parse_sequence(|p| parse_body(p), false)?;
     let body = body.iter().fold(body_definitions, |mut body, x| {
         match x {
@@ -412,7 +444,6 @@ pub fn parse_rule<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<RuleDefin
             parser.current_position,
         ));
     }
-
 
     parser.state.symbol_table.pop_scope();
 
@@ -456,8 +487,14 @@ where
     }
 
     Ok(RareStatements {
-        rules: rules.iter().map(|x| (x.name.clone(), (*x).clone())).collect(),
-        programs: programs.iter().map(|x| (x.name.clone(), (*x).clone())).collect(),
+        rules: rules
+            .iter()
+            .map(|x| (x.name.clone(), (*x).clone()))
+            .collect(),
+        programs: programs
+            .iter()
+            .map(|x| (x.name.clone(), (*x).clone()))
+            .collect(),
         consts: decls.into_iter().map(|x| (x.name.clone(), x)).collect(),
     })
 }
