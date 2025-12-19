@@ -98,89 +98,55 @@ impl fmt::Display for Constructor {
 }
 
 #[macro_export]
-macro_rules! literal_expr {
-    ($name:expr) => {
-        $crate::rare::language::EggExpr::Literal(($name).to_string())
-    };
+macro_rules! egg_expr {
+    (@GET_OP _and) => { "@and" };
+    (@GET_OP _or) => { "@or" };
+    (@GET_OP _not) => { "@not" };
+    (@GET_OP _xor) => { "@xor" };
+    (@GET_OP _implies) => { "@=>" };
+    (@GET_OP _eq) => { "@=" };
+    (@GET_OP _distinct) => { "@distinct" };
+    (@GET_OP _lt) => { "@<" };
+    (@GET_OP _gt) => { "@>" };
+    (@GET_OP _le) => { "@<=" };
+    (@GET_OP _ge) => { "@>=" };
+    (@GET_OP _add) => { "@+" };
+    (@GET_OP _sub) => { "@-" };
+    (@GET_OP _mul) => { "@*" };
+    (@GET_OP _div) => { "@/" };
+    (@GET_OP _intdiv) => { "@div" };
+    (@GET_OP _mod) => { "@mod" };
+    (@GET_OP _abs) => { "@abs" };
+    (@GET_OP set_empty) => { "set-empty" };
+    (@GET_OP set_insert) => { "set-insert" };
+    (@GET_OP Assoc) => { "Assoc" };
+    (@GET_OP Available) => { "Available" };
+    (@GET_OP to_formula) => { "to_formula" };
+    (@GET_OP to_formula_rel) => { "to_formula_rel" };
+    (@GET_OP $op:ident) => { stringify!($op) };
+    (@GET_OP $op:literal) => { $op };
+
+    (()) => { $crate::rare::language::EggExpr::Empty() };
+    (true) => { $crate::rare::language::EggExpr::Bool(true) };
+    (false) => { $crate::rare::language::EggExpr::Bool(false) };
+    ($lit:literal) => { $crate::rare::language::EggExpr::Literal(($lit).to_string()) };
+    ({$expr:expr}) => { $expr };
+
+    ((var $name:tt)) => { $crate::rare::language::EggExpr::Var(egg_expr!(@GET_OP $name).to_string()) };
+    ((mk $inner:tt)) => { $crate::rare::language::EggExpr::Mk(Box::new(egg_expr!($inner))) };
+    ((args $head:tt $tail:tt)) => { $crate::rare::language::EggExpr::Args(Box::new(egg_expr!($head)), Box::new(egg_expr!($tail))) };
+    ((= $lhs:tt $rhs:tt)) => { $crate::rare::language::EggExpr::Equal(Box::new(egg_expr!($lhs)), Box::new(egg_expr!($rhs))) };
+    ((== $lhs:tt $rhs:tt)) => { $crate::rare::language::EggExpr::Distinct(Box::new(egg_expr!($lhs)), Box::new(egg_expr!($rhs))) };
+    ((union $lhs:tt $rhs:tt)) => { $crate::rare::language::EggExpr::Union(Box::new(egg_expr!($lhs)), Box::new(egg_expr!($rhs))) };
+    ((set $lhs:tt $rhs:tt)) => { $crate::rare::language::EggExpr::Set(Box::new(egg_expr!($lhs)), Box::new(egg_expr!($rhs))) };
+    ((ground $inner:tt)) => { $crate::rare::language::EggExpr::Ground(Box::new(egg_expr!($inner))) };
+    ((app $func:tt $arg:tt)) => { $crate::rare::language::EggExpr::App(Box::new(egg_expr!($func)), Box::new(egg_expr!($arg))) };
+    (($op:tt)) => { $crate::rare::language::EggExpr::Call(egg_expr!(@GET_OP $op).into(), Vec::new()) };
+    (($op:tt $($args:tt)+)) => { $crate::rare::language::EggExpr::Call(egg_expr!(@GET_OP $op).into(), vec![$(egg_expr!($args)),+]) };
 }
 
 #[macro_export]
-macro_rules! mk_expr {
-    ($inner:expr) => {
-        $crate::rare::language::EggExpr::Mk(Box::new($inner))
-    };
-}
-
-#[macro_export]
-macro_rules! empty_expr {
-    () => {
-        $crate::rare::language::EggExpr::Empty()
-    };
-}
-
-#[macro_export]
-macro_rules! call_expr {
-    ($op:expr) => {
-        $crate::rare::language::EggExpr::Call(($op).into(), Vec::new())
-    };
-    ($op:expr; $($arg:expr),* $(,)?) => {
-        $crate::rare::language::EggExpr::Call(($op).into(), vec![$($arg),*])
-    };
-}
-
-#[macro_export]
-macro_rules! assoc_expr {
-    ($arg:expr) => {
-        $crate::call_expr!("Assoc"; $arg)
-    };
-}
-
-#[macro_export]
-macro_rules! args_chain {
-    ($head:expr; $tail:expr) => {
-        $crate::rare::language::EggExpr::Args(Box::new($head), Box::new($tail))
-    };
-    ($head:expr, $($rest:expr),+; $tail:expr) => {
-        $crate::rare::language::EggExpr::Args(
-            Box::new($head),
-            Box::new($crate::args_chain!($($rest),+; $tail)),
-        )
-    };
-}
-
-#[macro_export]
-macro_rules! list_expr {
-    ($head:expr) => {
-        $crate::args_chain!($head; $crate::empty_expr!())
-    };
-    ($head:expr, $($tail:expr),+ $(,)?) => {
-        $crate::args_chain!($head, $($tail),+; $crate::empty_expr!())
-    };
-}
-
-#[macro_export]
-macro_rules! available_expr {
-    ($term:expr) => {
-        $crate::call_expr!("Avaliable"; $term)
-    };
-}
-
-#[macro_export]
-macro_rules! push_rewrite {
-    ($decls:expr, $lhs:expr, $rhs:expr) => {{
-        $decls.push($crate::rare::language::EggStatement::Rewrite(
-            Box::new($lhs),
-            Box::new($rhs),
-            Vec::new(),
-        ));
-    }};
-    ($decls:expr, $lhs:expr, $rhs:expr; when $($cond:expr),+ $(,)?) => {{
-        let mut conditions = Vec::new();
-        $(conditions.push($cond);)+
-        $decls.push($crate::rare::language::EggStatement::Rewrite(
-            Box::new($lhs),
-            Box::new($rhs),
-            conditions,
-        ));
-    }};
+macro_rules! egg_args {
+    ($elem:tt) => { egg_expr!((args $elem ())) };
+    ($head:tt, $($rest:tt),+ $(,)?) => { $crate::rare::language::EggExpr::Args(Box::new(egg_expr!($head)), Box::new(egg_args!($($rest),+))) };
 }

@@ -1,14 +1,10 @@
 use crate::{
-    args_chain, call_expr, empty_expr, literal_expr, mk_expr,
+    egg_expr,
     rare::{
         engine::EggFunctions,
         language::{ConstType, EggExpr, EggStatement},
     },
 };
-
-fn set_action(call: EggExpr, value: EggExpr) -> EggExpr {
-    EggExpr::Set(Box::new(call), Box::new(value))
-}
 
 pub fn distinct_solver_statements() -> Vec<EggStatement> {
     let term = ConstType::ConstrType("Term".to_string());
@@ -25,172 +21,75 @@ pub fn distinct_solver_statements() -> Vec<EggStatement> {
         ),
     ];
 
+    // Rule 1: base case for to_formula
     stmts.push(EggStatement::Rule {
         ruleset: Some("list-ruleset".to_string()),
-        body: vec![call_expr!(
-            "to_formula_rel";
-            empty_expr!(),
-            literal_expr!("k"),
-            empty_expr!()
-        )],
-        head: vec![set_action(
-            call_expr!("to_formula"; empty_expr!(), literal_expr!("k"), empty_expr!()),
-            empty_expr!(),
-        )],
+        body: vec![egg_expr!(("to_formula_rel" () "k" ()))],
+        head: vec![egg_expr!((set ("to_formula" () "k" ()) ()))],
     });
 
+    // Rule 2: decompose result into (r . rs)
     stmts.push(EggStatement::Rule {
         ruleset: Some("list-ruleset".to_string()),
         body: vec![
-            EggExpr::Equal(
-                Box::new(literal_expr!("res")),
-                Box::new(args_chain!(literal_expr!("r"); literal_expr!("rs"))),
-            ),
-            call_expr!(
-                "to_formula_rel";
-                literal_expr!("res"),
-                literal_expr!("y"),
-                empty_expr!()
-            ),
+            egg_expr!((= "res" (args "r" "rs"))),
+            egg_expr!(("to_formula_rel" "res" "y" ())),
         ],
-        head: vec![call_expr!(
-            "to_formula_rel";
-            literal_expr!("rs"),
-            literal_expr!("r"),
-            literal_expr!("rs")
-        )],
+        head: vec![egg_expr!(("to_formula_rel" "rs" "r" "rs"))],
     });
 
+    // Rule 3: decompose xs into (x . rxs)
     stmts.push(EggStatement::Rule {
         ruleset: Some("list-ruleset".to_string()),
         body: vec![
-            EggExpr::Equal(
-                Box::new(literal_expr!("xs")),
-                Box::new(args_chain!(literal_expr!("x"); literal_expr!("rxs"))),
-            ),
-            call_expr!(
-                "to_formula_rel";
-                literal_expr!("res"),
-                literal_expr!("y"),
-                literal_expr!("xs")
-            ),
+            egg_expr!((= "xs" (args "x" "rxs"))),
+            egg_expr!(("to_formula_rel" "res" "y" "xs")),
         ],
-        head: vec![call_expr!(
-            "to_formula_rel";
-            literal_expr!("res"),
-            literal_expr!("y"),
-            literal_expr!("rxs")
-        )],
+        head: vec![egg_expr!(("to_formula_rel" "res" "y" "rxs"))],
     });
 
-    let args_x_rxs = args_chain!(literal_expr!("x"); literal_expr!("rxs"));
-    let eq_inner = mk_expr!(call_expr!(
-        "@=";
-        args_chain!(literal_expr!("y"), literal_expr!("x"); empty_expr!())
-    ));
-    let not_term = mk_expr!(call_expr!(
-        "@not";
-        args_chain!(eq_inner.clone(); empty_expr!())
-    ));
-    let set_rhs = args_chain!(not_term.clone(); literal_expr!("f"));
+    // Rule 4: build formula with (not (= y x))
+    let args_x_rxs = egg_expr!((args "x" "rxs"));
+    let eq_inner = egg_expr!((mk (_eq (args "y" (args "x" ())))));
+    let not_term = egg_expr!((mk (_not (args {eq_inner.clone()} ()))));
+    let set_rhs = egg_expr!((args {not_term.clone()} "f"));
     stmts.push(EggStatement::Rule {
         ruleset: Some("list-ruleset".to_string()),
         body: vec![
-            call_expr!(
-                "to_formula_rel";
-                literal_expr!("res"),
-                literal_expr!("y"),
-                args_x_rxs.clone()
-            ),
-            EggExpr::Equal(
-                Box::new(call_expr!(
-                    "to_formula";
-                    literal_expr!("res"),
-                    literal_expr!("y"),
-                    literal_expr!("rxs")
-                )),
-                Box::new(literal_expr!("f")),
-            ),
+            egg_expr!(("to_formula_rel" "res" "y" {args_x_rxs.clone()})),
+            egg_expr!((= ("to_formula" "res" "y" "rxs") "f")),
         ],
-        head: vec![set_action(
-            call_expr!(
-                "to_formula";
-                literal_expr!("res"),
-                literal_expr!("y"),
-                args_x_rxs
-            ),
-            set_rhs,
-        )],
+        head: vec![egg_expr!((set ("to_formula" "res" "y" {args_x_rxs}) {set_rhs}))],
     });
 
-    let args_r_res = args_chain!(literal_expr!("r"); literal_expr!("res"));
+    // Rule 5: handle (r . res) case
+    let args_r_res = egg_expr!((args "r" "res"));
     stmts.push(EggStatement::Rule {
         ruleset: Some("list-ruleset".to_string()),
         body: vec![
-            call_expr!(
-                "to_formula_rel";
-                args_r_res.clone(),
-                literal_expr!("y"),
-                empty_expr!()
-            ),
-            EggExpr::Equal(
-                Box::new(call_expr!(
-                    "to_formula";
-                    literal_expr!("res"),
-                    literal_expr!("r"),
-                    literal_expr!("res")
-                )),
-                Box::new(literal_expr!("f")),
-            ),
+            egg_expr!(("to_formula_rel" {args_r_res.clone()} "y" ())),
+            egg_expr!((= ("to_formula" "res" "r" "res") "f")),
         ],
-        head: vec![set_action(
-            call_expr!(
-                "to_formula";
-                args_r_res,
-                literal_expr!("y"),
-                empty_expr!()
-            ),
-            literal_expr!("f"),
-        )],
+        head: vec![egg_expr!((set ("to_formula" {args_r_res} "y" ()) "f"))],
     });
 
-    let distinct_term = mk_expr!(call_expr!(
-        "@distinct";
-        args_chain!(literal_expr!("x"); literal_expr!("xs"))
-    ));
+    // Rule 6: distinct elimination - union with and
+    let distinct_term = egg_expr!((mk (_distinct (args "x" "xs"))));
     stmts.push(EggStatement::Rule {
         ruleset: Some("list-ruleset".to_string()),
         body: vec![
-            call_expr!("Avaliable"; distinct_term.clone()),
-            EggExpr::Equal(
-                Box::new(call_expr!(
-                    "to_formula";
-                    literal_expr!("xs"),
-                    literal_expr!("x"),
-                    literal_expr!("xs")
-                )),
-                Box::new(literal_expr!("f")),
-            ),
+            egg_expr!(("Avaliable" {distinct_term.clone()})),
+            egg_expr!((= ("to_formula" "xs" "x" "xs") "f")),
         ],
-        head: vec![EggExpr::Union(
-            Box::new(mk_expr!(call_expr!("@and"; literal_expr!("f")))),
-            Box::new(distinct_term.clone()),
-        )],
+        head: vec![egg_expr!((union (mk (_and (args "f" ()))) {distinct_term.clone()}))],
     });
 
-    let distinct_term = mk_expr!(call_expr!(
-        "@distinct";
-        args_chain!(literal_expr!("x"); literal_expr!("xs"))
-    ));
+    // Rule 7: trigger to_formula_rel from distinct availability
+    let distinct_term = egg_expr!((mk (_distinct (args "x" "xs"))));
     stmts.push(EggStatement::Rule {
         ruleset: Some("list-ruleset".to_string()),
-        body: vec![call_expr!("Avaliable"; distinct_term.clone())],
-        head: vec![call_expr!(
-            "to_formula_rel";
-            literal_expr!("xs"),
-            literal_expr!("x"),
-            literal_expr!("xs")
-        )],
+        body: vec![egg_expr!(("Avaliable" {distinct_term.clone()}))],
+        head: vec![egg_expr!(("to_formula_rel" "xs" "x" "xs"))],
     });
 
     stmts
