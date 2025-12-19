@@ -4,9 +4,8 @@ use crate::{
     ast::{
         Binder, Constant, Operator, PrimitivePool, ProofNode, Rc, Sort, Term, rare_rules::{AttributeParameters, DeclAttr, DeclConst, RuleDefinition, Rules}
     },
-    available_expr, call_expr, mk_expr, push_rewrite,
     rare::{
-        computational::{aci_norm, core::declare_special_eunoia_eliminations, defunctionalization::elaborate_rule, distinct_elim::{self, declare_logic_operators}},
+        computational::{aci_norm::singleton_operators, core::declare_special_eunoia_eliminations, defunctionalization::elaborate_rule, distinct_elim::declare_logic_operators},
         language::*,
         meta::lower_egg_language,
         util::{clauses_to_or, collect_vars, get_equational_terms},
@@ -372,7 +371,7 @@ pub fn to_egg_expr(
                         .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape)),
                 );
 
-                if matches!(head, Operator::And | Operator::Or) {
+                if singleton_operators(*head).is_some() {
                     let op_with_at = format!("@{}", head.to_string());
                     func_cache
                         .assoc_calls
