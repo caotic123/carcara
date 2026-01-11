@@ -68,7 +68,10 @@ fn to_expr(e: EggExpr) -> Expr {
             Symbol::from("Real"),
             vec![Expr::Lit(
                 dummy_span(),
-                egglog::ast::Literal::Int(r.to_i64_wrapping()),
+                egglog::ast::Literal::Int(r.0.to_i64_wrapping()),
+            ), Expr::Lit(
+                dummy_span(),
+                egglog::ast::Literal::Int(r.1.to_i64_wrapping()),
             )],
         ),
 
