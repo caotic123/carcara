@@ -85,7 +85,7 @@ pub fn create_headers() -> EggLanguage {
                     constr: ("Num".to_string(), vec![ConstType::Integer]),
                 },
                 Constructor {
-                    constr: ("Real".to_string(), vec![ConstType::Integer]),
+                    constr: ("Real".to_string(), vec![ConstType::Integer, ConstType::Integer]),
                 },
                 Constructor {
                     constr: ("Op".to_string(), vec![ConstType::Operator]),
@@ -302,7 +302,7 @@ pub fn to_egg_expr(
                 Constant::Integer(i) => Some(EggExpr::Num(i.clone())),
                 Constant::String(s) => Some(EggExpr::String(s.clone())),
                 Constant::BitVec(i, j) => Some(EggExpr::BitVec(i.clone(), j.clone())),
-                Constant::Real(d) => Some(EggExpr::Real(Integer::from_f64(d.to_f64()).unwrap())),
+                Constant::Real(d) => Some(EggExpr::Real((d.clone().into_numer_denom()))),
             },
             Term::Var(name, _) => {
                 if let Some(argument) = subs.get(name) {
