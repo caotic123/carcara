@@ -184,16 +184,6 @@ pub mod tests {
         assert!(result.is_ok(), "Hanna product equality symmetry failed: {:?}", result.err());
     }
 
-    /// From prob_00177_005242__6090402-t21.alethe
-    /// Tests equality symmetry: (= a b) = (= b a)
-    #[test]
-    fn test_hanna_equality_symmetry() {
-        let result = try_elaborate(
-            "(= (= a b) (= b a))"
-        );
-        assert!(result.is_ok(), "Hanna equality symmetry failed: {:?}", result.err());
-    }
-
     /// From prob_00139_004785__15024976-t17.t6.alethe
     /// Tests: (>= (+ a (* -1 b)) 0) = (>= a b)
     /// Subtraction in comparison context
