@@ -2,7 +2,7 @@ use indexmap::{IndexMap, IndexSet};
 
 use crate::{ast::{
     BindingList, PrimitivePool, Rc, Sort, Substitution, Term, TermPool, rare_rules::{DeclAttr, DeclConst}
-}, egg_expr, rare::{computational::{aci_norm, distinct_elim}, engine::EggFunctions, language::{EggExpr, EggStatement}}};
+}, egg_expr, rare::{computational::{aci_norm, arith_poly_norm, distinct_elim}, engine::EggFunctions, language::{EggExpr, EggStatement}}};
 
 // Add this type alias near the top of the module:
 type Matcher<'a> = dyn Fn(&Rc<Term>, &mut PrimitivePool) -> Option<Rc<Term>> + 'a;
@@ -397,11 +397,22 @@ pub fn interpret_eunoia(
 
 
 pub fn declare_special_eunoia_eliminations(decls: &mut Vec<EggStatement>, functions: &EggFunctions) {
+    // Arithmetic constructors must be declared BEFORE ACI rules,
+    // since ACI patterns from RARE rules may reference arith operators
+    if arith_poly_norm::has_arith_operator(functions) {
+        decls.extend(arith_poly_norm::arith_constructors(functions));
+    }
+
     // Use centralized ACI operator definitions
     for (_, name, op_with_at, identity) in aci_norm::aci_operators() {
         if functions.names.contains_key(name) {
             decls.extend(aci_norm::aci_rules(op_with_at, identity, functions.assoc_calls.get(op_with_at)));
         }
+    }
+
+    // Arithmetic polynomial normalization rules (after constructors are declared)
+    if arith_poly_norm::has_arith_operator(functions) {
+        decls.extend(arith_poly_norm::arith_poly_norm_rules());
     }
 
     if functions.names.contains_key("distinct") {

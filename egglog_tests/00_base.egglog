@@ -1,0 +1,16 @@
+;;;;;;;;;;;;;;;;;;;;;;;
+; Base definitions (include in other tests)
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(datatype Term (App Term Term) (Var i64) (Bool bool) (Num i64) (Real i64 i64) (Op String) (@String String) (Forall Term) (Exists Term) (Lambda Term) (Choice Term) (Sort Term) (Empty) (Args Term Term) (Mk Term))
+
+(relation Avaliable (Term))
+
+; Arith ops
+(constructor @- (Term) Term)
+(constructor @+ (Term) Term)
+(constructor @* (Term) Term)
+(constructor @/ (Term) Term)
+(constructor @/_total (Term) Term)
+(constructor @to_real (Term) Term)
+(constructor @= (Term) Term)

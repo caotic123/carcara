@@ -1,0 +1,43 @@
+;;;;;;;;;;;;;;;;;;;;;;;
+; Test: Addition with zero
+; Rules: 0 + a -> a, a + 0 -> a
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(include "00_base.egglog")
+
+; Rule: 0 + a = a
+(rewrite
+ (Mk (@+ (Args (Mk (Num 0)) (Args (Mk a) (Empty)))))
+ (Mk a))
+
+; Rule: a + 0 = a
+(rewrite
+ (Mk (@+ (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+ (Mk a))
+
+; Test case: 0 + Var 1 = Var 1
+(let test1_lhs (Mk (@+ (Args (Mk (Num 0)) (Args (Mk (Var 1)) (Empty))))))
+(let test1_rhs (Mk (Var 1)))
+(Avaliable test1_lhs)
+(Avaliable test1_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test1_lhs test1_rhs))
+
+; Test case: Var 1 + 0 = Var 1
+(let test2_lhs (Mk (@+ (Args (Mk (Var 1)) (Args (Mk (Num 0)) (Empty))))))
+(let test2_rhs (Mk (Var 1)))
+(Avaliable test2_lhs)
+(Avaliable test2_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test2_lhs test2_rhs))
+
+; Test case: (1*x) + 0 = 1*x
+(let test3_lhs (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                             (Args (Mk (Num 0)) (Empty))))))
+(let test3_rhs (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty))))))
+(Avaliable test3_lhs)
+(Avaliable test3_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test3_lhs test3_rhs))
+
+(print-stats)

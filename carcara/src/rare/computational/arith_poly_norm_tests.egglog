@@ -1,0 +1,499 @@
+
+;;;;;;;;;;;;;;;;;;;;;;;
+; Tests suite
+;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;
+; less_or_equal_var
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(let goal_compare1_lhs (Mk (@$less_or_equal_var 
+                            (Args (Mk (Var 1)) (Args (Mk (Var 2)) (Empty))))))
+(let goal_compare1_rhs (Mk (Bool true)))
+(Avaliable goal_compare1_lhs)
+(Avaliable goal_compare1_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= goal_compare1_lhs goal_compare1_rhs))
+
+(let goal_compare2_lhs (Mk (@$less_or_equal_var 
+                            (Args (Mk (Var 1)) (Args (Mk (Var 3)) (Empty))))))
+(let goal_compare2_rhs (Mk (Bool true)))
+(Avaliable goal_compare2_lhs)
+(Avaliable goal_compare2_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= goal_compare2_lhs goal_compare2_rhs))
+
+(let goal_compare3_lhs (Mk (@$less_or_equal_var 
+                            (Args (Mk (Var 3)) (Args (Mk (Var 1)) (Empty))))))
+(let goal_compare3_rhs (Mk (Bool false)))
+(Avaliable goal_compare3_lhs)
+(Avaliable goal_compare3_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= goal_compare3_lhs goal_compare3_rhs))
+
+(let goal_compare4_lhs (Mk (@$less_or_equal_var 
+                            (Args (Mk (Var 2)) (Args (Mk (Var 1)) (Empty))))))
+(let goal_compare4_rhs (Mk (Bool false)))
+(Avaliable goal_compare4_lhs)
+(Avaliable goal_compare4_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= goal_compare4_lhs goal_compare4_rhs))
+
+(let goal_compare5_lhs (Mk (@$less_or_equal_var 
+                            (Args (Mk (Var 2)) (Args (Mk (Var 5)) (Empty))))))
+(let goal_compare5_rhs (Mk (Bool true)))
+(Avaliable goal_compare5_lhs)
+(Avaliable goal_compare5_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= goal_compare5_lhs goal_compare5_rhs))
+
+;;;;;;;;;;;;;;;;;;;;;;;
+; @$is_not_num
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(let test_is_not_num_1_lhs (Mk (@$is_not_num (Args (Mk (Var 5)) (Empty)))))
+(let test_is_not_num_1_rhs (Mk (Bool true)))
+(Avaliable test_is_not_num_1_lhs)
+(Avaliable test_is_not_num_1_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_is_not_num_1_lhs test_is_not_num_1_rhs))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; semantics of arith ops
+;;;;;;;;;;;;;;;;;;;;;;;;;
+(let arith_op_test_1_lhs (Mk (@+ (Args (Mk (Num 23)) (Args (Mk (Num 43)) (Empty))))))
+(let arith_op_test_1_rhs (Mk (Num (+ 23 43))))
+(Avaliable arith_op_test_1_lhs)
+(Avaliable arith_op_test_1_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= arith_op_test_1_lhs arith_op_test_1_rhs))
+
+;;;;;;;;;;;;;;;;;;;;;;;
+; $get_arith_poly_norm
+;;;;;;;;;;;;;;;;;;;;;;;
+
+; Case (- 0) = 0
+(let test_arith_poly_norm_1_lhs (Mk (@- (Args (Mk (Num 0)) (Empty)))))
+(let test_arith_poly_norm_1_rhs (Mk (Num 0)))
+(Avaliable test_arith_poly_norm_1_lhs)
+(Avaliable test_arith_poly_norm_1_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_1_lhs test_arith_poly_norm_1_rhs))
+
+(let test_arith_poly_norm_2_lhs (Mk (@- (Args (Mk (Real 0 1)) (Empty)))))
+(let test_arith_poly_norm_2_rhs (Mk (Real 0 1)))
+(Avaliable test_arith_poly_norm_2_lhs)
+(Avaliable test_arith_poly_norm_2_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_2_lhs test_arith_poly_norm_2_rhs))
+
+; Case (- (+ a b)) = (+ (- a) (- b))
+(let test_arith_poly_norm_3_lhs 
+     (Mk (@- (Args (Mk (@+ (Args (Mk (Var 1)) (Args (Mk (Var 3)) (Empty))))) (Empty)))))
+(let test_arith_poly_norm_3_rhs 
+     (Mk (@+ 
+    (Args (Mk (@- (Args (Mk (Var 1)) (Empty)))) 
+          (Args (Mk (@- (Args (Mk (Var 3)) (Empty)))) (Empty))))))
+(Avaliable test_arith_poly_norm_3_lhs)
+(Avaliable test_arith_poly_norm_3_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_3_lhs test_arith_poly_norm_3_rhs))
+
+; Case (+ 0 a) = a
+(let test_arith_poly_norm_4_lhs 
+     (Mk (@+ (Args (Mk (Num 0)) (Args (Mk (Var 1)) (Empty))))))
+(let test_arith_poly_norm_4_rhs 
+     (Mk (Var 1)))
+(Avaliable test_arith_poly_norm_4_lhs)
+(Avaliable test_arith_poly_norm_4_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_4_lhs test_arith_poly_norm_4_rhs))
+
+; Case (+ a 0) = a
+(let test_arith_poly_norm_5_lhs 
+  (Mk (@+ (Args (Mk (Var 1)) (Args (Mk (Num 0)) (Empty))))))
+(let test_arith_poly_norm_5_rhs 
+     (Mk (Var 1)))
+(Avaliable test_arith_poly_norm_5_lhs)
+(Avaliable test_arith_poly_norm_5_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_5_lhs test_arith_poly_norm_5_rhs))
+
+; Case (+ (+ (* c1 x) p1) (+ (* c2 x) p2)) = (+ (* (+ c1 c2) x) (+ p1 p2))
+(let test_arith_poly_norm_6_lhs 
+     (Mk (@+ 
+          (Args
+           (Mk (@+ 
+                (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                      (Args (Mk (Num 3)) (Empty)))))
+           (Args
+            (Mk (@+ 
+                 (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 1)) (Empty)))))
+                       (Args (Mk (Num 4)) (Empty)))))
+            (Empty))))))
+(let test_arith_poly_norm_6_rhs 
+     (Mk (@+ 
+          (Args
+           (Mk (@*
+                (Args (Mk (@+ (Args (Mk (Num 1)) (Args (Mk (Num 2)) (Empty)))))
+                      (Args (Mk (Var 1)) (Empty)))))
+           (Args
+            (Mk (@+ 
+                 (Args (Mk (Num 3))
+                       (Args (Mk (Num 4)) (Empty)))))
+            (Empty))))))
+(Avaliable test_arith_poly_norm_6_lhs)
+(Avaliable test_arith_poly_norm_6_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_6_lhs test_arith_poly_norm_6_rhs))
+
+; Case (* p1 (+ p2 p3)) = (+ (* p1 p2) (* p1 p3))
+(let test_arith_poly_norm_7_lhs 
+     (Mk (@*
+          (Args 
+           (Mk (Num 1))
+           (Args (Mk (@+ (Args (Mk (Var 3)) (Args (Mk (Num 12)) (Empty))))) (Empty))))))
+(let test_arith_poly_norm_7_rhs 
+     (Mk (@+
+          (Args 
+           (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 3)) (Empty)))))
+           (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Num 12)) (Empty))))) (Empty))))))
+(Avaliable test_arith_poly_norm_7_lhs)
+(Avaliable test_arith_poly_norm_7_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_7_lhs test_arith_poly_norm_7_rhs))
+
+; TODO: too slow
+; Case (+ (+ (* c1 x) p1) (+ (* c2 y) p2)) = (+ (* c2 y) (+ (+ (* c1 x) p1) p2))
+; when x != y, @$less_or_equal_var y x = true
+(let test_arith_poly_norm_8_lhs 
+     (Mk (@+ 
+          (Args
+           (Mk (@+ 
+                (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 2)) (Empty)))))
+                      (Args (Mk (Num 3)) (Empty)))))
+           (Args
+            (Mk (@+ 
+                 (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 1)) (Empty)))))
+                       (Args (Mk (Num 4)) (Empty)))))
+            (Empty))))))
+(let test_arith_poly_norm_8_rhs 
+     (Mk (@+ 
+          (Args
+           (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 1)) (Empty)))))
+           (Args 
+            (Mk (@+ 
+                 (Args
+                  (Mk (@+ 
+                       (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 2)) (Empty)))))
+                             (Args (Mk (Num 3)) (Empty)))))
+                  (Args (Mk (Num 4)) (Empty)))))
+            (Empty))))))
+(Avaliable (Mk (@$less_or_equal_var (Args (Mk (Var 1)) 
+                                          (Args (Mk (Var 2)) (Empty))))))
+(Avaliable (Mk (Bool true)))
+(Avaliable test_arith_poly_norm_8_lhs)
+(Avaliable test_arith_poly_norm_8_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_8_lhs test_arith_poly_norm_8_rhs))
+
+; TODO: too slow
+; Case (+ (+ (* c1 x) p1) (+ (* c2 y) p2)) = (+ (* c1 x) (+ p1 (+ (* c2 y) p2)))
+; when x != y, @$less_or_equal_var x y = true
+(let test_arith_poly_norm_8b_lhs 
+     (Mk (@+ 
+          (Args
+           (Mk (@+ 
+                (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                      (Args (Mk (Num 3)) (Empty)))))
+           (Args
+            (Mk (@+ 
+                 (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 2)) (Empty)))))
+                       (Args (Mk (Num 4)) (Empty)))))
+            (Empty))))))
+(let test_arith_poly_norm_8b_rhs 
+     (Mk (@+ 
+          (Args
+           (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+           (Args 
+            (Mk (@+ 
+                 (Args
+                  (Mk (Num 3))
+                  (Args (Mk (@+ 
+                             (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 2)) (Empty)))))
+                                   (Args (Mk (Num 4)) (Empty))))) 
+                        (Empty)))))
+            (Empty))))))
+(Avaliable (Mk (@$less_or_equal_var (Args (Mk (Var 1)) 
+                                          (Args (Mk (Var 2)) (Empty))))))
+(Avaliable (Mk (Bool true)))
+(Avaliable test_arith_poly_norm_8b_lhs)
+(Avaliable test_arith_poly_norm_8b_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_8b_lhs test_arith_poly_norm_8b_rhs))
+
+; Case (* 0 a) = 0
+(let test_arith_poly_norm_9_lhs 
+     (Mk (@* (Args (Mk (Num 0)) (Args (Mk (Var 1)) (Empty))))))
+(let test_arith_poly_norm_9_rhs 
+     (Mk (Num 0)))
+(Avaliable test_arith_poly_norm_9_lhs)
+(Avaliable test_arith_poly_norm_9_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_9_lhs test_arith_poly_norm_9_rhs))
+
+(let test_arith_poly_norm_10_lhs 
+     (Mk (@* (Args (Mk (Real 0 1)) (Args (Mk (Var 1)) (Empty))))))
+(let test_arith_poly_norm_10_rhs 
+     (Mk (Real 0 1)))
+(Avaliable test_arith_poly_norm_10_lhs)
+(Avaliable test_arith_poly_norm_10_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_10_lhs test_arith_poly_norm_10_rhs))
+
+; Case (* a 0) = 0
+(let test_arith_poly_norm_11_lhs 
+     (Mk (@* (Args (Mk (Var 1)) (Args (Mk (Num 0)) (Empty))))))
+(let test_arith_poly_norm_11_rhs 
+     (Mk (Num 0)))
+(Avaliable test_arith_poly_norm_11_lhs)
+(Avaliable test_arith_poly_norm_11_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_11_lhs test_arith_poly_norm_11_rhs))
+
+(let test_arith_poly_norm_12_lhs 
+     (Mk (@* (Args (Mk (Var 1)) (Args (Mk (Real 0 1)) (Empty))))))
+(let test_arith_poly_norm_12_rhs 
+     (Mk (Real 0 1)))
+(Avaliable test_arith_poly_norm_12_lhs)
+(Avaliable test_arith_poly_norm_12_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_12_lhs test_arith_poly_norm_12_rhs))
+
+; Case (/ a (Num x)) = (* (* 1 1/x) a)
+(let test_arith_poly_norm_13_lhs 
+     (Mk (@/ (Args (Mk (Var 1)) (Args (Mk (Num 2)) (Empty))))))
+(let test_arith_poly_norm_13_rhs 
+     (Mk (@* (Args (Mk (@* (Args (Mk (Num 1)) 
+                             (Args (Mk (Real 1 2)) (Empty))))) 
+               (Args (Mk (Var 1)) (Empty))))))
+(Avaliable test_arith_poly_norm_13_lhs)
+(Avaliable test_arith_poly_norm_13_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_13_lhs test_arith_poly_norm_13_rhs))
+
+(let test_arith_poly_norm_14_lhs 
+     (Mk (@/ (Args (Mk (Var 1)) (Args (Mk (Real 2 3)) (Empty))))))
+(let test_arith_poly_norm_14_rhs 
+     (Mk (@* (Args (Mk (@* (Args (Mk (Num 1)) 
+                             (Args (Mk (Real 3 2)) (Empty))))) 
+               (Args (Mk (Var 1)) (Empty))))))
+(Avaliable test_arith_poly_norm_14_lhs)
+(Avaliable test_arith_poly_norm_14_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_14_lhs test_arith_poly_norm_14_rhs))
+
+; Case (/ a 0) = (* 1 (/ a 0))
+(let test_arith_poly_norm_15_lhs 
+     (Mk (@/ (Args (Mk (Var 1)) (Args (Mk (Num 0)) (Empty))))))
+(let test_arith_poly_norm_15_rhs 
+     (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/ (Args (Mk (Var 1)) (Args (Mk (Num 0)) (Empty))))) (Empty))))))
+(Avaliable test_arith_poly_norm_15_lhs)
+(Avaliable test_arith_poly_norm_15_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_15_lhs test_arith_poly_norm_15_rhs))
+
+(let test_arith_poly_norm_16_lhs 
+     (Mk (@/ (Args (Mk (Var 1)) (Args (Mk (Real 0 1)) (Empty))))))
+(let test_arith_poly_norm_16_rhs 
+     (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/ (Args (Mk (Var 1)) (Args (Mk (Real 0 1)) (Empty))))) (Empty))))))
+(Avaliable test_arith_poly_norm_16_lhs)
+(Avaliable test_arith_poly_norm_16_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_16_lhs test_arith_poly_norm_16_rhs))
+
+; Case (/ a b) = (* 1 (/ a b)), b not num
+(let test_arith_poly_norm_17_lhs 
+     (Mk (@/ (Args (Mk (Var 1)) (Args (Mk (Var 2)) (Empty))))))
+(let test_arith_poly_norm_17_rhs 
+     (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/ (Args (Mk (Var 1)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+(Avaliable (Mk (@$is_not_num (Args (Mk (Var 2)) (Empty)))))
+(Avaliable (Mk (Bool true)))
+(Avaliable test_arith_poly_norm_17_lhs)
+(Avaliable test_arith_poly_norm_17_rhs)
+(run-schedule (repeat 4 (run)))
+(check (= test_arith_poly_norm_17_lhs test_arith_poly_norm_17_rhs))
+
+; Case (/ a (Num x)) = (* (* 1 1/x) a)
+(let test_arith_poly_norm_18_lhs 
+     (Mk (@/_total (Args (Mk (Var 1)) (Args (Mk (Num 2)) (Empty))))))
+(let test_arith_poly_norm_18_rhs 
+     (Mk (@* (Args (Mk (@* (Args (Mk (Num 1)) 
+                             (Args (Mk (Real 1 2)) (Empty))))) 
+               (Args (Mk (Var 1)) (Empty))))))
+(Avaliable test_arith_poly_norm_18_lhs)
+(Avaliable test_arith_poly_norm_18_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_18_lhs test_arith_poly_norm_18_rhs))
+
+(let test_arith_poly_norm_19_lhs 
+     (Mk (@/_total (Args (Mk (Var 1)) (Args (Mk (Real 2 3)) (Empty))))))
+(let test_arith_poly_norm_19_rhs 
+     (Mk (@* (Args (Mk (@* (Args (Mk (Num 1)) 
+                             (Args (Mk (Real 3 2)) (Empty))))) 
+               (Args (Mk (Var 1)) (Empty))))))
+(Avaliable test_arith_poly_norm_19_lhs)
+(Avaliable test_arith_poly_norm_19_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_19_lhs test_arith_poly_norm_19_rhs))
+
+; Case (/ a 0) = (* 1 (/ a 0))
+(let test_arith_poly_norm_20_lhs 
+     (Mk (@/_total (Args (Mk (Var 1)) (Args (Mk (Num 0)) (Empty))))))
+(let test_arith_poly_norm_20_rhs 
+     (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/_total (Args (Mk (Var 1)) (Args (Mk (Num 0)) (Empty))))) (Empty))))))
+(Avaliable test_arith_poly_norm_20_lhs)
+(Avaliable test_arith_poly_norm_20_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_20_lhs test_arith_poly_norm_20_rhs))
+
+(let test_arith_poly_norm_21_lhs 
+     (Mk (@/_total (Args (Mk (Var 1)) (Args (Mk (Real 0 1)) (Empty))))))
+(let test_arith_poly_norm_21_rhs 
+     (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/_total (Args (Mk (Var 1)) (Args (Mk (Real 0 1)) (Empty))))) (Empty))))))
+(Avaliable test_arith_poly_norm_21_lhs)
+(Avaliable test_arith_poly_norm_21_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_21_lhs test_arith_poly_norm_21_rhs))
+
+; Case (/ a b) = (* 1 (/ a b)), b not num
+(let test_arith_poly_norm_22_lhs 
+     (Mk (@/_total (Args (Mk (Var 1)) (Args (Mk (Var 2)) (Empty))))))
+(let test_arith_poly_norm_22_rhs 
+     (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/_total (Args (Mk (Var 1)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+(Avaliable (Mk (@$is_not_num (Args (Mk (Var 2)) (Empty)))))
+(Avaliable (Mk (Bool true)))
+(Avaliable test_arith_poly_norm_22_lhs)
+(Avaliable test_arith_poly_norm_22_rhs)
+(run-schedule (repeat 4 (run)))
+(check (= test_arith_poly_norm_22_lhs test_arith_poly_norm_22_rhs))
+
+; Case (to_real a1)) = a1
+(let test_arith_poly_norm_23_lhs 
+      (Mk (@to_real 
+           (Args (Mk (@/_total (Args (Mk (Var 1)) (Args (Mk (Real 0 1)) (Empty)))))
+                 (Empty)))))
+(let test_arith_poly_norm_23_rhs 
+     (Mk (@/_total (Args (Mk (Var 1)) (Args (Mk (Real 0 1)) (Empty))))))
+(Avaliable test_arith_poly_norm_23_lhs)
+(Avaliable test_arith_poly_norm_23_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_23_lhs test_arith_poly_norm_23_rhs))
+
+; Case (Var x)) = (+ (* 1 (Var x)) 0)
+(let test_arith_poly_norm_24_lhs 
+      (Mk (Var 1)))
+(let test_arith_poly_norm_24_rhs 
+     (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                   (Args (Mk (Num 0)) (Empty))))))
+(Avaliable test_arith_poly_norm_24_lhs)
+(Avaliable test_arith_poly_norm_24_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_arith_poly_norm_24_lhs test_arith_poly_norm_24_rhs))
+
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ; equivalence through arith_poly_norm
+;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(let test_equiv_arith_poly_norm_1_lhs 
+     (Mk (@+ (Args (Mk (Var 1)) (Args (Mk (Var 2)) (Empty))))))
+(let test_equiv_arith_poly_norm_1_rhs 
+     (Mk (@+ (Args (Mk (Var 2)) (Args (Mk (Var 1)) (Empty))))))
+(Avaliable test_equiv_arith_poly_norm_1_lhs)
+(Avaliable test_equiv_arith_poly_norm_1_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test_equiv_arith_poly_norm_1_lhs test_equiv_arith_poly_norm_1_rhs))
+
+(let test_equiv_arith_poly_norm_2_lhs 
+     (Mk (@+ (Args (Mk (Var 1))
+                   (Args (Mk (@+ (Args (Mk (Var 2)) 
+                                       (Args (Mk (Var 3)) (Empty)))))
+                         (Empty))))))
+(let test_equiv_arith_poly_norm_2_rhs 
+     (Mk (@+ (Args (Mk (Var 1))
+                   (Args (Mk (@+ (Args (Mk (Var 3)) 
+                                       (Args (Mk (Var 2)) (Empty)))))
+                         (Empty))))))
+(Avaliable (Mk (@$less_or_equal_var (Args (Mk (Var 2)) 
+                                          (Args (Mk (Var 3)) (Empty))))))
+(Avaliable (Mk (Bool true)))
+(Avaliable test_equiv_arith_poly_norm_2_lhs)
+(Avaliable test_equiv_arith_poly_norm_2_rhs)
+(run-schedule (repeat 4 (run)))
+(check (= test_equiv_arith_poly_norm_2_lhs test_equiv_arith_poly_norm_2_rhs))
+
+(let test_equiv_arith_poly_norm_3_lhs 
+  (Mk (@+ (Args (Mk (Var 1)) (Args (Mk (Var 1)) (Empty))))))
+(let test_equiv_arith_poly_norm_3_rhs 
+  (Mk (@+ (Args (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) 
+                                            (Args (Mk (Var 1)) (Empty)))))
+                   (Args (Mk (Num 0)) (Empty))))) 
+                (Args (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) 
+                                                  (Args (Mk (Var 1)) (Empty)))))
+                   (Args (Mk (Num 0)) (Empty))))) (Empty))))))
+(Avaliable test_equiv_arith_poly_norm_3_lhs)
+(Avaliable test_equiv_arith_poly_norm_3_rhs)
+(run-schedule (repeat 3 (run)))
+(check (= test_equiv_arith_poly_norm_3_lhs test_equiv_arith_poly_norm_3_rhs))
+
+(let test_equiv_arith_poly_norm_4_lhs 
+  (Mk (@+ (Args (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) 
+                                            (Args (Mk (Var 1)) (Empty)))))
+                   (Args (Mk (Num 0)) (Empty))))) 
+                (Args (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) 
+                                                  (Args (Mk (Var 1)) (Empty)))))
+                   (Args (Mk (Num 0)) (Empty))))) (Empty))))))
+(let test_equiv_arith_poly_norm_4_rhs 
+  (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                      (Empty))))))
+(Avaliable test_equiv_arith_poly_norm_4_lhs)
+(Avaliable test_equiv_arith_poly_norm_4_rhs)
+(run-schedule (repeat 4 (run)))
+(check (= test_equiv_arith_poly_norm_4_lhs test_equiv_arith_poly_norm_3_rhs))
+
+(let test_equiv_arith_poly_norm_5_lhs 
+  (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                      (Empty))))))
+(let test_equiv_arith_poly_norm_5_rhs 
+  (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 1)) (Empty))))))
+(Avaliable test_equiv_arith_poly_norm_5_lhs)
+(Avaliable test_equiv_arith_poly_norm_5_rhs)
+(run-schedule (repeat 5 (run)))
+(check (= test_equiv_arith_poly_norm_5_lhs test_equiv_arith_poly_norm_3_rhs))
+
+
+(let test_equiv_arith_poly_norm_6_lhs 
+     (Mk (@+ (Args (Mk (Var 1))
+                   (Args (Mk (@+ (Args (Mk (Var 2)) 
+                                       (Args (Mk (Var 1)) (Empty)))))
+                         (Empty))))))
+(let test_equiv_arith_poly_norm_6_rhs 
+     (Mk (@+ (Args (Mk (Var 1))
+                   (Args (Mk (@+ (Args (Mk (Var 1)) 
+                                       (Args (Mk (Var 2)) (Empty)))))
+                         (Empty))))))
+(Avaliable (Mk (@$less_or_equal_var (Args (Mk (Var 1)) 
+                                          (Args (Mk (Var 2)) (Empty))))))
+(Avaliable (Mk (Bool true)))
+(Avaliable test_equiv_arith_poly_norm_6_lhs)
+(Avaliable test_equiv_arith_poly_norm_6_rhs)
+(run-schedule (repeat 4 (run)))
+(check (= test_equiv_arith_poly_norm_6_lhs test_equiv_arith_poly_norm_6_rhs))

@@ -1,4 +1,4 @@
-use std::{iter::once, sync::Arc};
+use std::{collections::HashMap, iter::once, sync::Arc};
 
 use crate::{
     ast::{
@@ -8,7 +8,7 @@ use crate::{
         computational::{aci_norm::singleton_operators, core::declare_special_eunoia_eliminations, defunctionalization::elaborate_rule, distinct_elim::declare_logic_operators},
         language::*,
         meta::lower_egg_language,
-        util::{clauses_to_or, collect_vars, get_equational_terms},
+        util::{clauses_to_or, collect_vars, get_equational_terms, hash_var_name},
     },
 };
 use egg::Symbol;
@@ -240,6 +240,7 @@ pub fn create_headers() -> EggLanguage {
 fn create_avaliable_premise(
     term: &Rc<Term>,
     func_cache: &mut EggFunctions,
+    var_map: &mut HashMap<String, u64>,
     recognize_vars: bool,
 ) -> Option<EggStatement> {
     if term.is_var() {
@@ -263,7 +264,7 @@ fn create_avaliable_premise(
     Some(EggStatement::Rule {
         ruleset: None,
         body: premises,
-        head: vec![to_egg_expr(term, &sorted_vars, func_cache, false).unwrap()],
+        head: vec![to_egg_expr(term, &sorted_vars, func_cache, var_map, false).unwrap()],
     })
 }
 
@@ -271,6 +272,7 @@ pub fn to_egg_expr(
     term_rc: &Rc<Term>,
     subs: &IndexMap<&String, (EggExpr, AttributeParameters)>,
     func_cache: &mut EggFunctions,
+    var_map: &mut HashMap<String, u64>,
     collect_functions_shape: bool,
 ) -> Option<EggExpr> {
     fn build_args_list<I: IntoIterator<Item = EggExpr>>(it: I) -> EggExpr {
@@ -295,6 +297,7 @@ pub fn to_egg_expr(
         term_rc: &Rc<Term>,
         subs: &IndexMap<&String, (EggExpr, AttributeParameters)>,
         func_cache: &mut EggFunctions,
+        var_map: &mut HashMap<String, u64>,
         collect_functions_shape: bool,
     ) -> Option<EggExpr> {
         match &**term_rc {
@@ -308,7 +311,7 @@ pub fn to_egg_expr(
                 if let Some(argument) = subs.get(name) {
                     Some(argument.0.clone())
                 } else {
-                    Some(EggExpr::Var(name.clone()))
+                    Some(EggExpr::Var(hash_var_name(var_map, name)))
                 }
             }
             Term::App(head, args) => {
@@ -331,12 +334,12 @@ pub fn to_egg_expr(
                 }
 
                 if args.len() == 0 {
-                    return to_egg_expr(head, subs, func_cache, collect_functions_shape);
+                    return to_egg_expr(head, subs, func_cache, var_map, collect_functions_shape);
                 }
                 let args = build_args_list(
                     args.clone()
                         .iter()
-                        .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape)),
+                        .flat_map(|x| to_egg_expr(x, subs, func_cache, var_map, collect_functions_shape)),
                 );
 
                 Some(EggExpr::Call(format!("@{}", func_name), vec![args]))
@@ -345,7 +348,7 @@ pub fn to_egg_expr(
                 let args = build_args_list(
                     args.clone()
                         .iter()
-                        .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape)),
+                        .flat_map(|x| to_egg_expr(x, subs, func_cache, var_map, collect_functions_shape)),
                 );
 
                 Some(args)
@@ -368,7 +371,7 @@ pub fn to_egg_expr(
                 let args_list = build_args_list(
                     args.clone()
                         .iter()
-                        .flat_map(|x| to_egg_expr(x, subs, func_cache, collect_functions_shape)),
+                        .flat_map(|x| to_egg_expr(x, subs, func_cache, var_map, collect_functions_shape)),
                 );
 
                 if singleton_operators(*head).is_some() {
@@ -401,11 +404,11 @@ pub fn to_egg_expr(
                     bindings
                         .0
                         .iter()
-                        .map(|(name, _sort)| EggExpr::Var(name.clone())),
+                        .map(|(name, _sort)| EggExpr::Var(hash_var_name(var_map, name))),
                 );
 
                 // encode the body
-                let body_e = to_egg_expr(body, subs, func_cache, collect_functions_shape)?;
+                let body_e = to_egg_expr(body, subs, func_cache, var_map, collect_functions_shape)?;
 
                 // single Term parameter: Args(vars_list, body_e)
                 let packed = EggExpr::Args(Box::new(vars_list), Box::new(body_e));
@@ -418,46 +421,46 @@ pub fn to_egg_expr(
                     s: &Sort,
                     subs: &IndexMap<&String, (EggExpr, AttributeParameters)>,
                     func_cache: &mut EggFunctions,
+                    var_map: &mut HashMap<String, u64>,
                     collect_shapes: bool,
                 ) -> Option<EggExpr> {
                     match s {
-                        Sort::Var(name) => Some(EggExpr::Var(name.clone())),
-
-                        Sort::Bool => Some(EggExpr::Var("Bool".to_string())),
-                        Sort::Int => Some(EggExpr::Var("Int".to_string())),
-                        Sort::Real => Some(EggExpr::Var("Real".to_string())),
-                        Sort::String => Some(EggExpr::Var("String".to_string())),
-                        Sort::RegLan => Some(EggExpr::Var("RegLan".to_string())),
-                        Sort::RareList => Some(EggExpr::Var("RareList".to_string())),
-                        Sort::Type => Some(EggExpr::Var("Type".to_string())),
+                        Sort::Var(name) => Some(EggExpr::Var(hash_var_name(var_map, name))),
+                        Sort::Bool => Some(EggExpr::Const("Bool".to_string())),
+                        Sort::Int => Some(EggExpr::Const("Int".to_string())),
+                        Sort::Real => Some(EggExpr::Const("Real".to_string())),
+                        Sort::String => Some(EggExpr::Const("String".to_string())),
+                        Sort::RegLan => Some(EggExpr::Const("RegLan".to_string())),
+                        Sort::RareList => Some(EggExpr::Const("RareList".to_string())),
+                        Sort::Type => Some(EggExpr::Const("Type".to_string())),
 
                         Sort::BitVec(w) => {
-                            let tag = EggExpr::Var("BitVec".to_string());
+                            let tag = EggExpr::Const("BitVec".to_string());
                             let width = EggExpr::Num(w.clone());
                             Some(build_args_list(vec![tag, width]))
                         }
 
                         Sort::Array(x, y) => {
-                            let tag = EggExpr::Var("Array".to_string());
-                            let xs = to_egg_expr(x, subs, func_cache, collect_shapes)?;
-                            let ys = to_egg_expr(y, subs, func_cache, collect_shapes)?;
+                            let tag = EggExpr::Const("Array".to_string());
+                            let xs = to_egg_expr(x, subs, func_cache, var_map, collect_shapes)?;
+                            let ys = to_egg_expr(y, subs, func_cache, var_map, collect_shapes)?;
                             Some(build_args_list(vec![tag, xs, ys]))
                         }
 
                         Sort::Function(parts) => {
                             let mut v = Vec::with_capacity(1 + parts.len());
-                            v.push(EggExpr::Var("Function".to_string()));
+                            v.push(EggExpr::Const("Function".to_string()));
                             for p in parts {
-                                v.push(to_egg_expr(p, subs, func_cache, collect_shapes)?);
+                                v.push(to_egg_expr(p, subs, func_cache, var_map, collect_shapes)?);
                             }
                             Some(build_args_list(v))
                         }
 
                         Sort::Atom(name, args) => {
                             let mut v = Vec::with_capacity(1 + args.len());
-                            v.push(EggExpr::Var(name.clone()));
+                            v.push(EggExpr::Const(name.clone()));
                             for a in args {
-                                v.push(to_egg_expr(a, subs, func_cache, collect_shapes)?);
+                                v.push(to_egg_expr(a, subs, func_cache, var_map, collect_shapes)?);
                             }
                             Some(build_args_list(v))
                         }
@@ -466,20 +469,20 @@ pub fn to_egg_expr(
                             // list of vars
                             let mut vs = Vec::with_capacity(vars.len());
                             for v in vars {
-                                vs.push(to_egg_expr(v, subs, func_cache, collect_shapes)?);
+                                vs.push(to_egg_expr(v, subs, func_cache, var_map, collect_shapes)?);
                             }
                             let vars_list = build_args_list(vs);
 
                             // body sort
-                            let body = to_egg_expr(inner, subs, func_cache, collect_shapes)?;
+                            let body = to_egg_expr(inner, subs, func_cache, var_map, collect_shapes)?;
 
-                            let tag = EggExpr::Var("ParamSort".to_string());
+                            let tag = EggExpr::Const("ParamSort".to_string());
                             Some(build_args_list(vec![tag, vars_list, body]))
                         }
                     }
                 }
 
-                let encoded = sort_to_egg(sort, subs, func_cache, collect_functions_shape)?;
+                let encoded = sort_to_egg(sort,  subs, func_cache, var_map, collect_functions_shape)?;
                 // Wrap the encoded sort with the "Sort" constructor (as declared in create_headers)
                 Some(EggExpr::Call("Sort".to_string(), vec![encoded]))
             }
@@ -489,11 +492,11 @@ pub fn to_egg_expr(
                     bindings
                         .0
                         .iter()
-                        .map(|(name, _val)| EggExpr::Var(name.clone())),
+                        .map(|(name, _val)| EggExpr::Var(hash_var_name(var_map, name))),
                 );
 
                 // Translate the let-body
-                let body_e = to_egg_expr(body, subs, func_cache, collect_functions_shape)?;
+                let body_e = to_egg_expr(body, subs, func_cache, var_map, collect_functions_shape)?;
 
                 // Make a single-argument constructor call for the Lambda binder:
                 //   Lambda( Args(vars_list, body_e) )
@@ -506,7 +509,7 @@ pub fn to_egg_expr(
                 //   App(App(... App(lambda_e, v1), v2), ... vn)
                 let mut applied = lambda_e;
                 for (_name, val_term) in bindings.0.iter() {
-                    let val_e = to_egg_expr(val_term, subs, func_cache, collect_functions_shape)?;
+                    let val_e = to_egg_expr(val_term, subs, func_cache, var_map, collect_functions_shape)?;
                     applied = EggExpr::Call("App".to_string(), vec![applied, val_e]);
                 }
 
@@ -525,10 +528,10 @@ pub fn to_egg_expr(
                 let mut flat: Vec<EggExpr> = Vec::with_capacity(op_args.len() + args.len());
 
                 for p in op_args {
-                    flat.push(to_egg_expr(p, subs, func_cache, collect_functions_shape)?);
+                    flat.push(to_egg_expr(p, subs, func_cache, var_map, collect_functions_shape)?);
                 }
                 for a in args {
-                    flat.push(to_egg_expr(a, subs, func_cache, collect_functions_shape)?);
+                    flat.push(to_egg_expr(a, subs, func_cache, var_map, collect_functions_shape)?);
                 }
 
                 let packed = build_args_list(flat);
@@ -540,7 +543,7 @@ pub fn to_egg_expr(
         }
     }
 
-    return to_raw_egg(term_rc, subs, func_cache, collect_functions_shape).map(|x| {
+    return to_raw_egg(term_rc, subs, func_cache, var_map, collect_functions_shape).map(|x| {
         match &x {
             EggExpr::Literal(name) => {
                 if let Some(argument) = subs.get(&name) {
@@ -561,6 +564,7 @@ pub fn to_egg_expr(
 fn construct_premises(
     pool: &mut PrimitivePool,
     premises: &Rc<ProofNode>,
+    var_map: &mut HashMap<String, u64>,
     func_cache: &mut EggFunctions,
 ) -> EggLanguage {
     let mut grounds_terms = vec![];
@@ -571,12 +575,12 @@ fn construct_premises(
             let expr = get_equational_terms(&clause);
             if let Some((Operator::Equals, lhs, rhs)) = expr {
                 grounds_terms.push(EggStatement::Union(
-                    Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache, false).unwrap()),
-                    Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache, false).unwrap()),
+                    Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache, var_map, false).unwrap()),
+                    Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache, var_map, false).unwrap()),
                 ));
             }
 
-            if let Some(ground) = create_avaliable_premise(&clause, func_cache, false) {
+            if let Some(ground) = create_avaliable_premise(&clause, func_cache, var_map, false) {
                 grounds_terms.push(ground)
             }
         }
@@ -588,6 +592,7 @@ fn construct_premises(
 fn construct_rules(
     database: &[RuleDefinition],
     func_cache: &mut EggFunctions,
+    var_map: &mut HashMap<String, u64>,
 ) -> IndexSet<EggStatement> {
     let mut rules = IndexSet::new();
     for definition in database {
@@ -615,39 +620,51 @@ fn construct_rules(
             let (op, lhs, rhs) = get_equational_terms(&premise).unwrap();
             match op {
                 Operator::Equals => {
-                    if let Some(lhs) = create_avaliable_premise(lhs, func_cache, true) {
+                    if let Some(lhs) =
+                        create_avaliable_premise(lhs, func_cache, var_map, true)
+                    {
                         rules.insert(lhs);
                     }
 
                     let lhs = Box::new(
-                        to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap(),
+                        to_egg_expr(lhs, &subs, func_cache, var_map, definition.is_elaborated)
+                            .unwrap(),
                     );
 
-                    if let Some(rhs) = create_avaliable_premise(rhs, func_cache, true) {
+                    if let Some(rhs) =
+                        create_avaliable_premise(rhs, func_cache, var_map, true)
+                    {
                         rules.insert(rhs);
                     }
                     let rhs = Box::new(
-                        to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap(),
+                        to_egg_expr(rhs, &subs, func_cache, var_map, definition.is_elaborated)
+                            .unwrap(),
                     );
 
                     premises.push(EggExpr::Equal(lhs, rhs))
                 }
 
                 Operator::Distinct => {
-                    if let Some(lhs) = create_avaliable_premise(lhs, func_cache, true) {
+                    if let Some(lhs) =
+                        create_avaliable_premise(lhs, func_cache, var_map, true)
+                    {
                         rules.insert(lhs);
                     }
 
                     let lhs = Box::new(
-                        to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap(),
+                        to_egg_expr(lhs, &subs, func_cache, var_map, definition.is_elaborated)
+                            .unwrap(),
                     );
 
-                    if let Some(rhs) = create_avaliable_premise(rhs, func_cache, true) {
+                    if let Some(rhs) =
+                        create_avaliable_premise(rhs, func_cache, var_map, true)
+                    {
                         rules.insert(rhs);
                     }
 
                     let rhs = Box::new(
-                        to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap(),
+                        to_egg_expr(rhs, &subs, func_cache, var_map, definition.is_elaborated)
+                            .unwrap(),
                     );
 
                     premises.push(EggExpr::Distinct(lhs, rhs));
@@ -658,8 +675,12 @@ fn construct_rules(
 
         let (_, lhs, rhs) = get_equational_terms(&definition.conclusion).unwrap();
         let egg_equations: (Box<EggExpr>, Box<EggExpr>) = (
-            Box::new(to_egg_expr(lhs, &subs, func_cache, definition.is_elaborated).unwrap()),
-            Box::new(to_egg_expr(rhs, &subs, func_cache, definition.is_elaborated).unwrap()),
+            Box::new(
+                to_egg_expr(lhs, &subs, func_cache, var_map, definition.is_elaborated).unwrap(),
+            ),
+            Box::new(
+                to_egg_expr(rhs, &subs, func_cache, var_map, definition.is_elaborated).unwrap(),
+            ),
         );
 
         rules.insert(EggStatement::Rewrite(
@@ -671,18 +692,18 @@ fn construct_rules(
     rules
 }
 
-fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggStatement>> {
+fn set_goal(term: &Rc<Term>, var_map: &mut HashMap<String, u64>, func_cache: &mut EggFunctions) -> Option<Vec<EggStatement>> {
     let mut goal = vec![];
     let expr = get_equational_terms(term);
     if let Some((_, lhs, rhs)) = expr {
         goal.push(EggStatement::Let(
             "goal_lhs".to_string(),
-            Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache, false).unwrap()),
+            Box::new(to_egg_expr(lhs, &IndexMap::new(), func_cache, var_map, false).unwrap()),
         ));
 
         goal.push(EggStatement::Let(
             "goal_rhs".to_string(),
-            Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache, false).unwrap()),
+            Box::new(to_egg_expr(rhs, &IndexMap::new(), func_cache, var_map, false).unwrap()),
         ));
 
         goal.push(EggStatement::Premise(
@@ -714,11 +735,26 @@ fn set_goal(term: &Rc<Term>, func_cache: &mut EggFunctions) -> Option<Vec<EggSta
 fn declare_functions(
     functions: &mut EggFunctions,
     constant: &IndexMap<String, DeclConst>,
+    var_map: &mut HashMap<String, u64>
 ) -> Vec<EggStatement> {
+    use super::computational::arith_poly_norm;
+
     let mut decls = Vec::new();
     declare_logic_operators(functions);
-    
+
+    // Collect arith operator names to skip (they're declared in arith_poly_norm.egglog)
+    let arith_ops: std::collections::HashSet<&str> = if arith_poly_norm::has_arith_operator(functions) {
+        arith_poly_norm::arith_operators().map(|(name, _)| name).collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
     for (func, (is_op, _arity)) in functions.names.iter() {
+        // Skip arith operators - they're declared in arith_poly_norm.egglog
+        if arith_ops.contains(func.as_str()) {
+            continue;
+        }
+
         // 1) always declare the function symbol
         decls.push(EggStatement::Constructor(
             format!("@{}", func),
@@ -771,6 +807,7 @@ fn declare_functions(
                                 nil,
                                 &IndexMap::default(),
                                 &mut EggFunctions::default(),
+                                var_map,
                                 false,
                             )
                             .unwrap(),
@@ -782,55 +819,19 @@ fn declare_functions(
         }
     }
 
-    if functions.names.get("+").is_some() {
-        decls.push(EggStatement::Rewrite(
-            Box::new(EggExpr::Call(
-                "@+".to_string(),
-                vec![EggExpr::Args(
-                    Box::new(EggExpr::Call(
-                        "Num".to_string(),
-                        vec![EggExpr::Literal("t1".to_string())],
-                    )),
-                    Box::new(EggExpr::Args(
-                        Box::new(EggExpr::Call(
-                            "Num".to_string(),
-                            vec![EggExpr::Literal("t2".to_string())],
-                        )),
-                        Box::new(EggExpr::Empty()),
-                    )),
-                )],
-            )),
-            Box::new(EggExpr::Call(
-                "@+".to_string(),
-                vec![EggExpr::Args(
-                    Box::new(EggExpr::Call(
-                        "Num".to_string(),
-                        vec![EggExpr::Call(
-                            "+".to_string(),
-                            vec![
-                                EggExpr::Literal("t1".to_string()),
-                                EggExpr::Literal("t2".to_string()),
-                            ],
-                        )],
-                    )),
-                    Box::new(EggExpr::Empty()),
-                )],
-            )),
-            vec![],
-        ));
-    }
+    // Note: @+ computation rule is now in arith_poly_norm.egglog
 
     decls
 }
 
-pub fn reconstruct_rule(
+pub fn run_egglog(
     pool: &mut PrimitivePool,
     conclusion: Rc<Term>,
     root: &Rc<ProofNode>,
     database: &Rules,
-) {
-    println!("Elaborating {:?}", conclusion);
+) -> Result<EGraph, String> {
     let mut egg_functions = EggFunctions::default();
+    let mut var_map = HashMap::new();
 
     let mut rules: Vec<RuleDefinition> = vec![];
 
@@ -844,28 +845,29 @@ pub fn reconstruct_rule(
         ));
     }
 
-    for rule in rules.iter() {
-        println!("{}", rule);
-    }
+    let rules = construct_rules(&rules, &mut egg_functions, &mut var_map);
 
-    let rules = construct_rules(&rules, &mut egg_functions);
+    let premises = construct_premises(pool, root, &mut var_map, &mut egg_functions);
+    let goal = set_goal(&conclusion, &mut var_map, &mut egg_functions);
 
-    let premises = construct_premises(pool, root, &mut egg_functions);
-    let goal = set_goal(&conclusion, &mut egg_functions);
-
-    let mut declarations = declare_functions(&mut egg_functions, &database.consts);
+    let mut declarations = declare_functions(&mut egg_functions, &database.consts, &mut var_map);
 
     declare_special_eunoia_eliminations(&mut declarations, &egg_functions);
 
+    // Partition declarations: constructors first, then everything else
+    let (constructors, other_decls): (Vec<_>, Vec<_>) = declarations
+        .into_iter()
+        .partition(|stmt| matches!(stmt, EggStatement::Constructor(_, _, _)));
+
     let mut ast = create_headers();
-    
-    ast.extend(declarations);
+
+    ast.extend(constructors);
+    ast.extend(other_decls);
     ast.extend(rules);
     ast.extend(premises);
 
     if goal.is_none() {
-        println!("Elaboration failed");
-        return;
+        return Err("Failed to set goal".to_string());
     }
 
     ast.append(&mut goal.unwrap());
@@ -883,15 +885,24 @@ pub fn reconstruct_rule(
 
     let egglog = lower_egg_language(ast);
 
-    for rule in egglog.iter() {
-        println!("{}", rule);
-    }
+    // for rule in egglog.iter() {
+    //     println!("{}", rule);
+    // }
 
-    let result = egraph.run_program(egglog);
+    egraph.run_program(egglog).map_err(|e| e.to_string())?;
+    Ok(egraph)
+}
+
+pub fn reconstruct_rule(
+    pool: &mut PrimitivePool,
+    conclusion: Rc<Term>,
+    root: &Rc<ProofNode>,
+    database: &Rules,
+) {
+    println!("Elaborating {:?}", conclusion);
+    let result = run_egglog(pool, conclusion, root, database);
     match result {
-        Ok(r) => {
-            println!("Elaboration successed");
-        }
-        Err(error) => println!("{0}", error),
+        Ok(_) => println!("Elaboration succeeded"),
+        Err(error) => println!("Elaboration failed: {}", error),
     }
 }

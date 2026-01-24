@@ -1,0 +1,359 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; Base theory (needed for parser context)
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(datatype Term (App Term Term) (Var i64) (Bool bool) (Num i64) (Real i64 i64) (Op String) (@String String) (Forall Term) (Exists Term) (Lambda Term) (Choice Term) (Sort Term) (Empty) (Args Term Term) (Mk Term))
+
+; Arith ops required
+(constructor @- (Term) Term)
+(constructor @+ (Term) Term)
+(constructor @* (Term) Term)
+(constructor @/ (Term) Term)
+(constructor @/_total (Term) Term)
+(constructor @to_real (Term) Term)
+
+; Comparison
+(constructor @= (Term) Term)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Minimal theory about arith ops
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rewrite 
+(Mk (@+ (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+(Mk (Num (+ x y))))
+
+(rewrite 
+(Mk (@+ (Args (Mk (Real num1 den1)) (Args (Mk (Real num2 den2)) (Empty)))))
+(Mk (Real (+ (* num1 den2) (* num2 den1)) (* den1 den2))))
+
+(rewrite 
+(Mk (@* (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+(Mk (Num (* x y))))
+
+(rewrite 
+(Mk (@* (Args (Mk (Real num1 den1)) (Args (Mk (Real num2 den2)) (Empty)))))
+(Mk (Real (* num1 num2) (* den1 den2))))
+
+;;;;;;;;;;;;;;;;;;;;;;;
+; @$less_or_equal_var
+;;;;;;;;;;;;;;;;;;;;;;;
+
+; Comparison of variables.
+(constructor @$less_or_equal_var (Term) Term)
+
+; Minimal rewriting theory of @$less_or_equal_var.
+(rewrite 
+(Mk (@$less_or_equal_var (Args (Mk (Var a)) (Args (Mk (Var b)) (Empty)))))
+(Mk (Bool true))
+:when ((<= a b)))
+
+(rewrite 
+(Mk (@$less_or_equal_var (Args (Mk (Var a)) (Args (Mk (Var b)) (Empty)))))
+(Mk (Bool false))
+:when ((> a b)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;
+; @$is_not_num
+;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Simple predicate to recognice arith expressions that are not plain numerical
+; literals.
+(constructor @$is_not_num (Term) Term)
+
+(rewrite 
+(Mk (@$is_not_num (Args (Mk (Var x)) (Empty))))
+(Mk (Bool true)))
+
+(rewrite 
+(Mk (@$is_not_num (Args (Mk (@- (Args (Mk a) (Empty)))) (Empty))))
+(Mk (Bool true)))
+
+(rewrite 
+(Mk (@$is_not_num (Args (Mk (@+ (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (Bool true)))
+
+(rewrite 
+(Mk (@$is_not_num (Args (Mk (@- (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (Bool true)))
+
+(rewrite 
+(Mk (@$is_not_num (Args (Mk (@* (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (Bool true)))
+
+(rewrite 
+(Mk (@$is_not_num (Args (Mk (@/ (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (Bool true)))
+
+(rewrite 
+(Mk (@$is_not_num (Args (Mk (@/_total (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (Bool true)))
+
+(rewrite 
+(Mk (@$is_not_num (Args (Mk (@to_real (Args (Mk a) (Empty)))) (Empty))))
+(Mk (@$is_not_num (Args (Mk a) (Empty)))))
+
+(rewrite 
+(Mk (@$is_not_num (Args (Mk (Num x)) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_not_num (Args (Mk (Real num den)) (Empty))))
+(Mk (Bool false)))
+
+;;;;;;;;;;;;;;;;;;;;;;;
+; $get_arith_poly_norm
+;;;;;;;;;;;;;;;;;;;;;;;
+
+; Case (- 0) = 0
+(rewrite
+(Mk (@- (Args (Mk (Num 0)) (Empty))))
+(Mk (Num 0)))
+
+(rewrite
+(Mk (@- (Args (Mk (Real 0 1)) (Empty))))
+(Mk (Real 0 1)))
+
+; Case (- (+ a b)) = (+ (- a) (- b))
+(rewrite
+(Mk (@- (Args (Mk (@+ (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (@+ 
+    (Args (Mk (@- (Args (Mk a) (Empty)))) 
+          (Args (Mk (@- (Args (Mk b) (Empty)))) (Empty))))))
+
+; Case (+ 0 a) = a
+(rewrite
+(Mk (@+ (Args (Mk (Num 0)) (Args (Mk a) (Empty)))))
+(Mk a))
+
+; Case (+ a 0) = a
+(rewrite
+(Mk (@+ (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+(Mk a))
+
+; Case (+ (+ (* c1 x) p1) (+ (* c2 x) p2)) = (+ (* (+ c1 c2) x) (+ p1 p2))
+(rewrite
+(Mk (@+ 
+    (Args
+     (Mk (@+ 
+          (Args (Mk (@* (Args (Mk c1) (Args (Mk x) (Empty)))))
+                (Args (Mk p1) (Empty)))))
+     (Args
+      (Mk (@+ 
+           (Args (Mk (@* (Args (Mk c2) (Args (Mk x) (Empty)))))
+                 (Args (Mk p2) (Empty)))))
+      (Empty)))))
+(Mk (@+ 
+    (Args
+     (Mk (@*
+          (Args (Mk (@+ (Args (Mk c1) (Args (Mk c2) (Empty)))))
+                (Args (Mk x) (Empty)))))
+     (Args
+      (Mk (@+ 
+           (Args (Mk p1)
+                 (Args (Mk p2) (Empty)))))
+      (Empty))))))
+
+; Case (+ (+ (* c1 x) p1) (+ (* c2 y) p2)) = (+ (* c2 y) (+ (+ (* c1 x) p1) p2))
+; when x != y, @$less_or_equal_var y x = true
+(rewrite
+(Mk (@+ 
+    (Args
+     (Mk (@+ 
+          (Args (Mk (@* (Args (Mk c1) (Args (Mk (Var x)) (Empty)))))
+                (Args (Mk p1) (Empty)))))
+     (Args
+      (Mk (@+ 
+           (Args (Mk (@* (Args (Mk c2) (Args (Mk (Var y)) (Empty)))))
+                 (Args (Mk p2) (Empty)))))
+      (Empty)))))
+(Mk (@+ 
+    (Args
+     (Mk (@* (Args (Mk c2) (Args (Mk (Var y)) (Empty)))))
+    (Args 
+     (Mk (@+ 
+          (Args
+           (Mk (@+ 
+                (Args (Mk (@* (Args (Mk c1) (Args (Mk (Var x)) (Empty)))))
+                      (Args (Mk p1) (Empty)))))
+           (Args (Mk p2) (Empty)))))
+      (Empty)))))
+:when ((!= x y)
+       (= (Mk (@$less_or_equal_var (Args (Mk (Var y)) 
+                                         (Args (Mk (Var x)) (Empty))))) 
+          (Mk (Bool true)))))
+
+; Case (+ (+ (* c1 x) p1) (+ (* c2 y) p2)) = (+ (* c1 x) (+ p1 (+ (* c2 y) p2)))
+; when x != y, @$less_or_equal_var x y = true
+(rewrite
+(Mk (@+ 
+    (Args
+     (Mk (@+ 
+          (Args (Mk (@* (Args (Mk c1) (Args (Mk (Var x)) (Empty)))))
+                (Args (Mk p1) (Empty)))))
+     (Args
+      (Mk (@+ 
+           (Args (Mk (@* (Args (Mk c2) (Args (Mk (Var y)) (Empty)))))
+                 (Args (Mk p2) (Empty)))))
+      (Empty)))))
+(Mk (@+ 
+    (Args
+     (Mk (@* (Args (Mk c1) (Args (Mk (Var x)) (Empty)))))
+    (Args 
+     (Mk (@+ 
+          (Args
+           (Mk p1)
+           (Args (Mk (@+ 
+                      (Args (Mk (@* (Args (Mk c2) (Args (Mk (Var y)) (Empty)))))
+                            (Args (Mk p2) (Empty))))) 
+                 (Empty)))))
+      (Empty)))))
+:when ((!= x y)
+       (= (Mk (@$less_or_equal_var (Args (Mk (Var x)) 
+                                         (Args (Mk (Var y)) (Empty))))) 
+          (Mk (Bool true)))))
+
+; Case (* p1 (+ p2 p3)) = (+ (* p1 p2) (* p1 p3))
+(rewrite
+(Mk (@*
+    (Args 
+        (Mk p1)
+        (Args (Mk (@+ (Args (Mk p2) (Args (Mk p3) (Empty))))) (Empty)))))
+(Mk (@+
+    (Args 
+        (Mk (@* (Args (Mk p1) (Args (Mk p2) (Empty)))))
+            (Args (Mk (@* (Args (Mk p1) (Args (Mk p3) (Empty))))) (Empty))))))
+
+; Case (* 0 a) = 0
+(rewrite
+ (Mk (@* (Args (Mk (Num 0)) (Args (Mk a) (Empty)))))
+ (Mk (Num 0)))
+
+(rewrite
+ (Mk (@* (Args (Mk (Real 0 1)) (Args (Mk a) (Empty)))))
+ (Mk (Real 0 1)))
+
+; Case (* a 0) = a
+(rewrite
+ (Mk (@* (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+ (Mk (Num 0)))
+
+(rewrite
+ (Mk (@* (Args (Mk a) (Args (Mk (Real 0 1)) (Empty)))))
+ (Mk (Real 0 1)))
+
+; Case (/ a (Num x)) = (* (* 1 1/x) a)
+(rewrite
+ (Mk (@/ (Args (Mk a) (Args (Mk (Num b)) (Empty)))))
+ (Mk (@* (Args (Mk (@* (Args (Mk (Num 1)) 
+                             (Args (Mk (Real 1 b)) (Empty))))) 
+               (Args (Mk a) (Empty)))))
+ :when ((!= b 0)))
+
+; Case (/ a (Real num den)) = (* (* 1 (Real den num)) a)
+(rewrite
+ (Mk (@/ (Args (Mk a) (Args (Mk (Real num den)) (Empty)))))
+ (Mk (@* (Args (Mk (@* (Args (Mk (Num 1)) 
+                             (Args (Mk (Real den num)) (Empty))))) 
+               (Args (Mk a) (Empty)))))
+ :when ((!= num 0)
+        (!= den 0)))
+
+; Case (/ a b) = (* 1 (/ a b)), b not num
+(rewrite
+ (Mk (@/ (Args (Mk a) (Args (Mk b) (Empty)))))
+ (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/ (Args (Mk a) (Args (Mk b) (Empty))))) (Empty)))))
+ :when ((= (Mk (@$is_not_num (Args (Mk b) (Empty))))
+           (Mk (Bool true))))
+)
+
+; Case (/ a 0) = (* 1 (/ a 0))
+(rewrite
+ (Mk (@/ (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+ (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/ (Args (Mk a) (Args (Mk (Num 0)) (Empty))))) (Empty))))))
+
+(rewrite
+ (Mk (@/ (Args (Mk a) (Args (Mk (Real 0 1)) (Empty)))))
+ (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/ (Args (Mk a) (Args (Mk (Real 0 1)) (Empty))))) (Empty))))))
+
+; Case (/ a (Num x)) = (* (* 1 1/x) a)
+(rewrite
+ (Mk (@/_total (Args (Mk a) (Args (Mk (Num b)) (Empty)))))
+ (Mk (@* (Args (Mk (@* (Args (Mk (Num 1)) 
+                             (Args (Mk (Real 1 b)) (Empty))))) 
+               (Args (Mk a) (Empty)))))
+ :when ((!= b 0)))
+
+; Case (/ a (Real num den)) = (* (* 1 (Real den num)) a)
+(rewrite
+ (Mk (@/_total (Args (Mk a) (Args (Mk (Real num den)) (Empty)))))
+ (Mk (@* (Args (Mk (@* (Args (Mk (Num 1)) 
+                             (Args (Mk (Real den num)) (Empty))))) 
+               (Args (Mk a) (Empty)))))
+ :when ((!= num 0)
+        (!= den 0)))
+
+; Case (/ a b) = (* 1 (/ a b)), b not num
+(rewrite
+ (Mk (@/_total (Args (Mk a) (Args (Mk b) (Empty)))))
+ (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/_total (Args (Mk a) (Args (Mk b) (Empty))))) (Empty)))))
+ :when ((= (Mk (@$is_not_num (Args (Mk b) (Empty))))
+           (Mk (Bool true))))
+)
+
+; Case (/ a 0) = (* 1 (/ a 0))
+(rewrite
+ (Mk (@/_total (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+ (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/_total (Args (Mk a) (Args (Mk (Num 0)) (Empty))))) (Empty))))))
+
+(rewrite
+ (Mk (@/_total (Args (Mk a) (Args (Mk (Real 0 1)) (Empty)))))
+ (Mk (@* (Args (Mk (Num 1))
+               (Args (Mk (@/_total (Args (Mk a) (Args (Mk (Real 0 1)) (Empty))))) (Empty))))))
+
+
+; Case (to_real a1)) = a1
+(rewrite 
+ (Mk (@to_real (Args (Mk x) (Empty))))
+ (Mk x))
+
+; Case (Var x)) = (+ (* 1 (Var x)) 0)
+(rewrite 
+ (Mk (Var x))
+ (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var x)) (Empty)))))
+               (Args (Mk (Num 0)) (Empty))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; arith_poly_norm
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; (declare-rule arith_poly_norm ((U Type) (a U) (b U))
+;   :args ((= a b))
+;   :requires ((($get_arith_poly_norm a) ($get_arith_poly_norm b)))
+;   :conclusion (= a b)
+; )
+; (rewrite
+; (Mk poly1)
+; (Mk poly2)
+; :when ((= (@$get_arith_poly_norm (Args (Mk poly1) (Empty)))
+;           (@$get_arith_poly_norm (Args (Mk poly2) (Empty))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; Coefficient reordering
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; Case x * (c * y) = c * (x * y) where c is Num
+; This rule pulls numeric coefficients to the front of nested products,
+; enabling equalities like x * (2 * y) = 2 * (x * y) to be proven.
+(rewrite
+ (Mk (@* (Args (Mk x) (Args (Mk (@* (Args (Mk (Num c)) (Args (Mk y) (Empty))))) (Empty)))))
+ (Mk (@* (Args (Mk (Num c)) (Args (Mk (@* (Args (Mk x) (Args (Mk y) (Empty))))) (Empty))))))
+
+; Case (c * x) * y = c * (x * y) where c is Num
+; This rule handles the symmetric case where the coefficient is on the left.
+(rewrite
+ (Mk (@* (Args (Mk (@* (Args (Mk (Num c)) (Args (Mk x) (Empty))))) (Args (Mk y) (Empty)))))
+ (Mk (@* (Args (Mk (Num c)) (Args (Mk (@* (Args (Mk x) (Args (Mk y) (Empty))))) (Empty))))))

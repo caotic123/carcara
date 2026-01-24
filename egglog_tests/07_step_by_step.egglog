@@ -1,0 +1,126 @@
+;;;;;;;;;;;;;;;;;;;;;;;
+; Test: Step-by-step trace of x * (2 * y) normalization
+; Goal: x * (2 * y) = 2 * (x * y)
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(include "00_base.egglog")
+
+;;; All rules from arith_poly_norm.egglog ;;;
+
+; Numeric multiplication
+(rewrite
+ (Mk (@* (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (* x y))))
+
+; Numeric addition
+(rewrite
+ (Mk (@+ (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (+ x y))))
+
+; 0 + a = a
+(rewrite
+ (Mk (@+ (Args (Mk (Num 0)) (Args (Mk a) (Empty)))))
+ (Mk a))
+
+; a + 0 = a
+(rewrite
+ (Mk (@+ (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+ (Mk a))
+
+; Distributivity: p1 * (p2 + p3) = (p1*p2) + (p1*p3)
+(rewrite
+ (Mk (@*
+     (Args
+         (Mk p1)
+         (Args (Mk (@+ (Args (Mk p2) (Args (Mk p3) (Empty))))) (Empty)))))
+ (Mk (@+
+     (Args
+         (Mk (@* (Args (Mk p1) (Args (Mk p2) (Empty)))))
+             (Args (Mk (@* (Args (Mk p1) (Args (Mk p3) (Empty))))) (Empty))))))
+
+; 0 * a = 0
+(rewrite
+ (Mk (@* (Args (Mk (Num 0)) (Args (Mk a) (Empty)))))
+ (Mk (Num 0)))
+
+; a * 0 = 0
+(rewrite
+ (Mk (@* (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+ (Mk (Num 0)))
+
+; Variable normalization: Var x = (1*x + 0)
+(rewrite
+ (Mk (Var x))
+ (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var x)) (Empty)))))
+               (Args (Mk (Num 0)) (Empty))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Step 1: Test variable normalization alone
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(let step1_x (Mk (Var 1)))
+(let step1_x_norm (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                                (Args (Mk (Num 0)) (Empty))))))
+(Avaliable step1_x)
+(Avaliable step1_x_norm)
+(run-schedule (repeat 2 (run)))
+(check (= step1_x step1_x_norm))
+(print-function Mk 100)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Step 2: Test 2 * (1*y + 0) with distributivity
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(let step2_lhs (Mk (@* (Args (Mk (Num 2))
+                             (Args (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 2)) (Empty)))))
+                                                 (Args (Mk (Num 0)) (Empty))))) (Empty))))))
+; After distributivity: (2 * (1*y)) + (2 * 0)
+(let step2_after_dist (Mk (@+ (Args (Mk (@* (Args (Mk (Num 2))
+                                                  (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 2)) (Empty))))) (Empty)))))
+                                    (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Num 0)) (Empty))))) (Empty))))))
+(Avaliable step2_lhs)
+(Avaliable step2_after_dist)
+(run-schedule (repeat 3 (run)))
+(check (= step2_lhs step2_after_dist))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Step 3: Test that 2*0 simplifies to 0
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(let step3_lhs (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Num 0)) (Empty))))))
+(let step3_rhs (Mk (Num 0)))
+(Avaliable step3_lhs)
+(Avaliable step3_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= step3_lhs step3_rhs))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Step 4: Test that (2*(1*y)) + 0 = 2*(1*y)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(let step4_lhs (Mk (@+ (Args (Mk (@* (Args (Mk (Num 2))
+                                          (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 2)) (Empty))))) (Empty)))))
+                             (Args (Mk (Num 0)) (Empty))))))
+(let step4_rhs (Mk (@* (Args (Mk (Num 2))
+                             (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+(Avaliable step4_lhs)
+(Avaliable step4_rhs)
+(run-schedule (repeat 3 (run)))
+(check (= step4_lhs step4_rhs))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Step 5: HERE IS WHERE IT BREAKS!
+; Test that 2 * (1*y) = 2*y
+; This requires the MISSING coefficient combination rule
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(let step5_lhs (Mk (@* (Args (Mk (Num 2))
+                             (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+(let step5_rhs (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 2)) (Empty))))))
+(Avaliable step5_lhs)
+(Avaliable step5_rhs)
+(run-schedule (repeat 5 (run)))
+; This check will FAIL without the coefficient combination rule
+(check (= step5_lhs step5_rhs))
+
+(print-stats)
