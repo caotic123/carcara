@@ -885,12 +885,78 @@ pub fn run_egglog(
 
     let egglog = lower_egg_language(ast);
 
-    // for rule in egglog.iter() {
-    //     println!("{}", rule);
-    // }
-
     egraph.run_program(egglog).map_err(|e| e.to_string())?;
     Ok(egraph)
+}
+
+/// Run egglog and return the generated code as a string for debugging
+pub fn run_egglog_debug(
+    pool: &mut PrimitivePool,
+    conclusion: Rc<Term>,
+    root: &Rc<ProofNode>,
+    database: &Rules,
+) -> (Result<EGraph, String>, String) {
+    let mut egg_functions = EggFunctions::default();
+    let mut var_map = HashMap::new();
+
+    let mut rules: Vec<RuleDefinition> = vec![];
+
+    for (_, rule) in database.rules.iter() {
+        rules.extend(elaborate_rule(
+            pool,
+            rule,
+            &database.programs,
+            &database.consts,
+            &rule.name,
+        ));
+    }
+
+    let rules = construct_rules(&rules, &mut egg_functions, &mut var_map);
+
+    let premises = construct_premises(pool, root, &mut var_map, &mut egg_functions);
+    let goal = set_goal(&conclusion, &mut var_map, &mut egg_functions);
+
+    let mut declarations = declare_functions(&mut egg_functions, &database.consts, &mut var_map);
+
+    declare_special_eunoia_eliminations(&mut declarations, &egg_functions);
+
+    // Partition declarations: constructors first, then everything else
+    let (constructors, other_decls): (Vec<_>, Vec<_>) = declarations
+        .into_iter()
+        .partition(|stmt| matches!(stmt, EggStatement::Constructor(_, _, _)));
+
+    let mut ast = create_headers();
+
+    ast.extend(constructors);
+    ast.extend(other_decls);
+    ast.extend(rules);
+    ast.extend(premises);
+
+    if goal.is_none() {
+        return (Err("Failed to set goal".to_string()), String::new());
+    }
+
+    ast.append(&mut goal.unwrap());
+
+    let egglog = lower_egg_language(ast);
+
+    // Generate debug string
+    let code_str = egglog.iter().map(|cmd| cmd.to_string()).collect::<Vec<_>>().join("\n");
+
+    let mut egraph = EGraph::default();
+
+    egraph.add_primitive(CustomPrimitive {
+        name: Symbol::from("ineq"),
+        input: vec![
+            Arc::new(EqSort { name: Symbol::from("Term") }),
+            Arc::new(EqSort { name: Symbol::from("Term") }),
+        ],
+        output: Arc::new(BoolSort),
+        f: |x| Some(Value::from(x[0] != x[1])),
+    });
+
+    let result = egraph.run_program(egglog).map_err(|e| e.to_string());
+    (result.map(|_| egraph), code_str)
 }
 
 pub fn reconstruct_rule(

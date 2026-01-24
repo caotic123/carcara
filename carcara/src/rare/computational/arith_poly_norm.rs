@@ -68,8 +68,14 @@ pub mod tests {
     use crate::ast::rare_rules::RareStatements;
     use crate::ast::{ProofNode, Rc, StepNode};
     use crate::parser::{Config, Parser};
-    use crate::rare::engine::run_egglog;
+    use crate::rare::engine::run_egglog_debug;
     use indexmap::IndexMap;
+
+    /// Returns true if debug-egglog feature is enabled
+    /// Run with: cargo test --features debug-egglog <test_name> -- --nocapture
+    fn debug_egglog() -> bool {
+        cfg!(feature = "debug-egglog")
+    }
 
     const DEFINITIONS: &str = r#"
         (declare-sort Int 0)
@@ -126,13 +132,22 @@ pub mod tests {
     }
 
     /// Try to elaborate a conclusion term using run_egglog
+    /// Set DEBUG_EGGLOG=1 env var to print generated egglog code
     fn try_elaborate(conclusion_str: &str) -> Result<(), String> {
+        try_elaborate_with_debug(conclusion_str, debug_egglog())
+    }
+
+    /// Try to elaborate with explicit debug flag
+    fn try_elaborate_with_debug(conclusion_str: &str, debug: bool) -> Result<(), String> {
         let mut pool = PrimitivePool::new();
         let conclusion = parse_term(&mut pool, conclusion_str);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        run_egglog(&mut pool, conclusion, &root, &rules)
-            .map(|_| ())
+        let (result, code) = run_egglog_debug(&mut pool, conclusion, &root, &rules);
+        if debug {
+            println!("\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n", code);
+        }
+        result.map(|_| ())
     }
 
     /// Test case from Alethe proof step t2: (= (* (* 2 x) y) (* 2 (* x y)))

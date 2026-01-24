@@ -23,6 +23,9 @@ rug = { version = "1.21.0", default-features = false, features = [
 ] }
 thiserror = "1.0.47"
 
+[features]
+debug-egglog = []
+
 [dev-dependencies]
 test-generator = { path = "../test-generator" }
 rand = "0.8.5"
