@@ -1,0 +1,32 @@
+;;;;;;;;;;;;;;;;;;;;;;;
+; Test: Variable normalization
+; Rule: Var x -> (1*x + 0)
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(include "00_base.egglog")
+
+; Rule: variable normalization
+(rewrite
+ (Mk (Var x))
+ (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var x)) (Empty)))))
+               (Args (Mk (Num 0)) (Empty))))))
+
+; Test case: Var 1 = (1 * Var 1) + 0
+(let test1_lhs (Mk (Var 1)))
+(let test1_rhs (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                             (Args (Mk (Num 0)) (Empty))))))
+(Avaliable test1_lhs)
+(Avaliable test1_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test1_lhs test1_rhs))
+
+; Test case: Var 42 = (1 * Var 42) + 0
+(let test2_lhs (Mk (Var 42)))
+(let test2_rhs (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 42)) (Empty)))))
+                             (Args (Mk (Num 0)) (Empty))))))
+(Avaliable test2_lhs)
+(Avaliable test2_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test2_lhs test2_rhs))
+
+(print-stats)

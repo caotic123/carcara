@@ -1,0 +1,45 @@
+;;;;;;;;;;;;;;;;;;;;;;;
+; Test: Distributivity
+; Rule: p1 * (p2 + p3) = (p1*p2) + (p1*p3)
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(include "00_base.egglog")
+
+; Rule: distributivity
+(rewrite
+ (Mk (@*
+     (Args
+         (Mk p1)
+         (Args (Mk (@+ (Args (Mk p2) (Args (Mk p3) (Empty))))) (Empty)))))
+ (Mk (@+
+     (Args
+         (Mk (@* (Args (Mk p1) (Args (Mk p2) (Empty)))))
+             (Args (Mk (@* (Args (Mk p1) (Args (Mk p3) (Empty))))) (Empty))))))
+
+; Rule: numeric multiplication (needed for simplification)
+(rewrite
+ (Mk (@* (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (* x y))))
+
+; Test case: 2 * (x + y) = (2*x) + (2*y)
+(let test1_lhs (Mk (@* (Args (Mk (Num 2))
+                             (Args (Mk (@+ (Args (Mk (Var 1)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+(let test1_rhs (Mk (@+ (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 1)) (Empty)))))
+                             (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+(Avaliable test1_lhs)
+(Avaliable test1_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test1_lhs test1_rhs))
+
+; Test case: 2 * (1*y + 0) = (2*(1*y)) + (2*0)
+(let test2_lhs (Mk (@* (Args (Mk (Num 2))
+                             (Args (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                                                 (Args (Mk (Num 0)) (Empty))))) (Empty))))))
+(let test2_rhs (Mk (@+ (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty))))) (Empty)))))
+                             (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Num 0)) (Empty))))) (Empty))))))
+(Avaliable test2_lhs)
+(Avaliable test2_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test2_lhs test2_rhs))
+
+(print-stats)

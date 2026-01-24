@@ -1,0 +1,4 @@
+(declare-rare-rule eq-symm ((@T0 Type ) (@T1 Type ) (t1 @T0 ) (s1 @T1 ) )
+  :args (t1 s1 )
+  :premises ()
+  :conclusion (= (= t1 s1) (= s1 t1)))

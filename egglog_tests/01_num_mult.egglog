@@ -1,0 +1,37 @@
+;;;;;;;;;;;;;;;;;;;;;;;
+; Test: Numeric multiplication
+; Rule: (Num x) * (Num y) -> Num(x*y)
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(include "00_base.egglog")
+
+; Rule: numeric multiplication
+(rewrite
+ (Mk (@* (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (* x y))))
+
+; Test case: 2 * 3 = 6
+(let test1_lhs (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Num 3)) (Empty))))))
+(let test1_rhs (Mk (Num 6)))
+(Avaliable test1_lhs)
+(Avaliable test1_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test1_lhs test1_rhs))
+
+; Test case: 2 * 0 = 0
+(let test2_lhs (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Num 0)) (Empty))))))
+(let test2_rhs (Mk (Num 0)))
+(Avaliable test2_lhs)
+(Avaliable test2_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test2_lhs test2_rhs))
+
+; Test case: 1 * 1 = 1
+(let test3_lhs (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Num 1)) (Empty))))))
+(let test3_rhs (Mk (Num 1)))
+(Avaliable test3_lhs)
+(Avaliable test3_rhs)
+(run-schedule (repeat 2 (run)))
+(check (= test3_lhs test3_rhs))
+
+(print-stats)

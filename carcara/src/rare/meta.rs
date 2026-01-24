@@ -1,5 +1,5 @@
 use crate::rare::language::*;
-use egglog::{ast::*, span};
+use egglog::{ast::*, span, EGraph};
 
 type EggLanguage = Vec<EggStatement>;
 
@@ -10,7 +10,7 @@ fn dummy_span() -> Span {
 
 fn ct_to_sort(ct: &ConstType) -> Symbol {
     match ct {
-        ConstType::Var => Symbol::from("String"),
+        ConstType::Var => Symbol::from("i64"),
         ConstType::Bool => Symbol::from("bool"),
         ConstType::Integer => Symbol::from("i64"),
         ConstType::Operator => Symbol::from("String"),
@@ -36,7 +36,7 @@ fn to_expr(e: EggExpr) -> Expr {
             Symbol::from("Var"),
             vec![Expr::Lit(
                 dummy_span(),
-                egglog::ast::Literal::String(v.into()),
+                egglog::ast::Literal::Int(v as i64),
             )],
         ),
 
@@ -315,6 +315,24 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                     to_expr(*expr),
                     to_expr(*expr2),
                 ))],
+
+                EggStatement::Raw(code) => {
+                    // Parse raw egglog code into commands
+                    let mut egraph = EGraph::default();
+                    match egraph.parser.get_program_from_string(None, &code) {
+                        Ok(commands) => {
+                            // Filter out datatype and constructor declarations
+                            // (already declared in main program by create_headers and arith_constructors)
+                            commands.into_iter().filter(|cmd| {
+                                !matches!(cmd, Command::Datatype { .. } | Command::Constructor { .. })
+                            }).collect()
+                        },
+                        Err(e) => {
+                            eprintln!("Error parsing raw egglog code: {}", e);
+                            vec![]
+                        }
+                    }
+                }
             }
         })
         .collect()

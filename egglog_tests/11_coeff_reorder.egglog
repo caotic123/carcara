@@ -1,0 +1,74 @@
+;;;;;;;;;;;;;;;;;;;;;;;
+; Test: Coefficient reordering
+; Rule: x * (c * y) = c * (x * y) where c is a Num
+; This should prove x * (2*y) = 2 * (x*y)
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(include "00_base.egglog")
+
+; Numeric multiplication
+(rewrite
+ (Mk (@* (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (* x y))))
+
+; 0 + a = a
+(rewrite
+ (Mk (@+ (Args (Mk (Num 0)) (Args (Mk a) (Empty)))))
+ (Mk a))
+
+; a + 0 = a
+(rewrite
+ (Mk (@+ (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+ (Mk a))
+
+; RIGHT Distributivity
+(rewrite
+ (Mk (@*
+     (Args
+         (Mk p1)
+         (Args (Mk (@+ (Args (Mk p2) (Args (Mk p3) (Empty))))) (Empty)))))
+ (Mk (@+
+     (Args
+         (Mk (@* (Args (Mk p1) (Args (Mk p2) (Empty)))))
+             (Args (Mk (@* (Args (Mk p1) (Args (Mk p3) (Empty))))) (Empty))))))
+
+; 0 * a = 0
+(rewrite
+ (Mk (@* (Args (Mk (Num 0)) (Args (Mk a) (Empty)))))
+ (Mk (Num 0)))
+
+; a * 0 = 0
+(rewrite
+ (Mk (@* (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+ (Mk (Num 0)))
+
+; Variable normalization
+(rewrite
+ (Mk (Var x))
+ (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var x)) (Empty)))))
+               (Args (Mk (Num 0)) (Empty))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; NEW RULE: Coefficient reordering
+; x * (c * y) = c * (x * y)  where c is Num
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rewrite
+ (Mk (@* (Args (Mk x) (Args (Mk (@* (Args (Mk (Num c)) (Args (Mk y) (Empty))))) (Empty)))))
+ (Mk (@* (Args (Mk (Num c)) (Args (Mk (@* (Args (Mk x) (Args (Mk y) (Empty))))) (Empty))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Test: x * (2 * y) = 2 * (x * y)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(let test1_lhs (Mk (@* (Args (Mk (Var 1)) (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+(let test1_rhs (Mk (@* (Args (Mk (Num 2)) (Args (Mk (@* (Args (Mk (Var 1)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+
+(Avaliable test1_lhs)
+(Avaliable test1_rhs)
+
+(run-schedule (repeat 5 (run)))
+
+(check (= test1_lhs test1_rhs))
+
+(print-stats)

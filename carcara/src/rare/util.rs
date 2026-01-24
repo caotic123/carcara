@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::DefaultHasher};
+use std::hash::{Hash, Hasher};
 
 use indexmap::IndexMap;
 
@@ -27,17 +28,10 @@ pub fn get_equational_terms(term: &Rc<Term>) -> Option<(Operator, &Rc<Term>, &Rc
 }
 
 #[inline]
-// 32-bit FNV-1a hash for small strings
-pub fn str_to_u32(input: &str) -> u32 {
-    const OFFSET_BASIS: u32 = 0x811c_9dc5;
-    const PRIME: u32 = 0x0100_0193;
-
-    let mut hash = OFFSET_BASIS;
-    for byte in input.as_bytes().as_ref() {
-        hash ^= *byte as u32;
-        hash = hash.wrapping_mul(PRIME);
-    }
-    hash
+pub fn str_to_u64(input: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    input.hash(&mut hasher);
+    hasher.finish()
 }
 
 pub fn collect_vars(root: &Rc<Term>, collect_functions: bool) -> IndexMap<String, Rc<Term>> {
@@ -335,4 +329,14 @@ pub fn unify_pattern_bidirectional(
 
 pub fn unify_pattern(pat: &Rc<Term>, val: &Rc<Term>) -> bool {
     return unify_pattern_bidirectional(pat, val).is_some();
+}
+
+pub fn hash_var_name(map: &mut HashMap<String, u64>, name: &str) -> u64 {
+    if let Some(h) = map.get(name) {
+        return *h;
+    }
+
+    let h = str_to_u64(name);
+    map.insert(name.to_string(), h);
+    h
 }

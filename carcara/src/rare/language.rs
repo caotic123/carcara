@@ -20,11 +20,11 @@ pub struct Constructor {
 pub enum EggExpr {
     App(Box<EggExpr>, Box<EggExpr>),
     Op(String),
-    Var(String),
+    Var(u64),
+    Const(String),
     Bool(bool),
     Num(Integer),
     String(String),
-    Const(String),
     Real((Integer, Integer)),
     Mk(Box<EggExpr>),
     BitVec(Integer, Integer),
@@ -70,6 +70,8 @@ pub enum EggStatement {
     Saturate {
         ruleset: Option<String>,
     },
+    /// Raw egglog code to be parsed and included directly
+    Raw(String),
 }
 
 pub type EggLanguage = Vec<EggStatement>;
@@ -77,7 +79,7 @@ pub type EggLanguage = Vec<EggStatement>;
 impl fmt::Display for ConstType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConstType::Var => write!(f, "String"),
+            ConstType::Var => write!(f, "i32"),
             ConstType::Bool => write!(f, "bool"),
             ConstType::Integer => write!(f, "i64"),
             ConstType::Operator => write!(f, "String"),
@@ -117,6 +119,10 @@ macro_rules! egg_expr {
     (@GET_OP _intdiv) => { "@div" };
     (@GET_OP _mod) => { "@mod" };
     (@GET_OP _abs) => { "@abs" };
+    (@GET_OP _div_total) => { "@/_total" };
+    (@GET_OP _to_real) => { "@to_real" };
+    (@GET_OP _less_or_equal_var) => { "@$less_or_equal_var" };
+    (@GET_OP _is_not_num) => { "@$is_not_num" };
     (@GET_OP set_empty) => { "set-empty" };
     (@GET_OP set_insert) => { "set-insert" };
     (@GET_OP Assoc) => { "Assoc" };

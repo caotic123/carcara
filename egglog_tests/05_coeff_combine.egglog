@@ -1,0 +1,30 @@
+;;;;;;;;;;;;;;;;;;;;;;;
+; Test: Coefficient combination (MISSING RULE)
+; Expected Rule: n * (m * x) = (n*m) * x
+; This test should FAIL without the rule
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(include "00_base.egglog")
+
+; Rule: numeric multiplication
+(rewrite
+ (Mk (@* (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (* x y))))
+
+; MISSING RULE - uncomment to fix:
+; (rewrite
+;  (Mk (@* (Args (Mk (Num a))
+;                (Args (Mk (@* (Args (Mk (Num b)) (Args (Mk x) (Empty))))) (Empty)))))
+;  (Mk (@* (Args (Mk (Num (* a b))) (Args (Mk x) (Empty))))))
+
+; Test case: 2 * (1 * x) should equal 2 * x
+; Without the rule, this will FAIL
+(let test1_lhs (Mk (@* (Args (Mk (Num 2))
+                             (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty))))) (Empty))))))
+(let test1_rhs (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 1)) (Empty))))))
+(Avaliable test1_lhs)
+(Avaliable test1_rhs)
+(run-schedule (repeat 5 (run)))
+(check (= test1_lhs test1_rhs))
+
+(print-stats)

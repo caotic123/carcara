@@ -1,0 +1,38 @@
+;;;;;;;;;;;;;;;;;;;;;;;
+; Test: Coefficient combination (WITH RULE)
+; Rule: n * (m * x) = (n*m) * x
+; This test should PASS with the rule
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(include "00_base.egglog")
+
+; Rule: numeric multiplication
+(rewrite
+ (Mk (@* (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (* x y))))
+
+; NEW RULE: coefficient combination
+(rewrite
+ (Mk (@* (Args (Mk (Num a))
+               (Args (Mk (@* (Args (Mk (Num b)) (Args (Mk x) (Empty))))) (Empty)))))
+ (Mk (@* (Args (Mk (Num (* a b))) (Args (Mk x) (Empty))))))
+
+; Test case: 2 * (1 * x) = 2 * x
+(let test1_lhs (Mk (@* (Args (Mk (Num 2))
+                             (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty))))) (Empty))))))
+(let test1_rhs (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 1)) (Empty))))))
+(Avaliable test1_lhs)
+(Avaliable test1_rhs)
+(run-schedule (repeat 5 (run)))
+(check (= test1_lhs test1_rhs))
+
+; Test case: 3 * (4 * x) = 12 * x
+(let test2_lhs (Mk (@* (Args (Mk (Num 3))
+                             (Args (Mk (@* (Args (Mk (Num 4)) (Args (Mk (Var 1)) (Empty))))) (Empty))))))
+(let test2_rhs (Mk (@* (Args (Mk (Num 12)) (Args (Mk (Var 1)) (Empty))))))
+(Avaliable test2_lhs)
+(Avaliable test2_rhs)
+(run-schedule (repeat 5 (run)))
+(check (= test2_lhs test2_rhs))
+
+(print-stats)

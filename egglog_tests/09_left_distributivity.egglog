@@ -1,0 +1,122 @@
+;;;;;;;;;;;;;;;;;;;;;;;
+; Test: Left distributivity
+; Rule: (p1 + p2) * p3 = (p1*p3) + (p2*p3)
+;;;;;;;;;;;;;;;;;;;;;;;
+
+(include "00_base.egglog")
+
+;;; All rules from arith_poly_norm.egglog ;;;
+
+; Numeric multiplication
+(rewrite
+ (Mk (@* (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (* x y))))
+
+; Numeric addition
+(rewrite
+ (Mk (@+ (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (+ x y))))
+
+; 0 + a = a
+(rewrite
+ (Mk (@+ (Args (Mk (Num 0)) (Args (Mk a) (Empty)))))
+ (Mk a))
+
+; a + 0 = a
+(rewrite
+ (Mk (@+ (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+ (Mk a))
+
+; RIGHT Distributivity: p1 * (p2 + p3) = (p1*p2) + (p1*p3)
+(rewrite
+ (Mk (@*
+     (Args
+         (Mk p1)
+         (Args (Mk (@+ (Args (Mk p2) (Args (Mk p3) (Empty))))) (Empty)))))
+ (Mk (@+
+     (Args
+         (Mk (@* (Args (Mk p1) (Args (Mk p2) (Empty)))))
+             (Args (Mk (@* (Args (Mk p1) (Args (Mk p3) (Empty))))) (Empty))))))
+
+; LEFT Distributivity: (p1 + p2) * p3 = (p1*p3) + (p2*p3) - MISSING IN ORIGINAL!
+(rewrite
+ (Mk (@*
+     (Args
+         (Mk (@+ (Args (Mk p1) (Args (Mk p2) (Empty)))))
+         (Args (Mk p3) (Empty)))))
+ (Mk (@+
+     (Args
+         (Mk (@* (Args (Mk p1) (Args (Mk p3) (Empty)))))
+             (Args (Mk (@* (Args (Mk p2) (Args (Mk p3) (Empty))))) (Empty))))))
+
+; 0 * a = 0
+(rewrite
+ (Mk (@* (Args (Mk (Num 0)) (Args (Mk a) (Empty)))))
+ (Mk (Num 0)))
+
+; a * 0 = 0
+(rewrite
+ (Mk (@* (Args (Mk a) (Args (Mk (Num 0)) (Empty)))))
+ (Mk (Num 0)))
+
+; Variable normalization: Var x = (1*x + 0)
+(rewrite
+ (Mk (Var x))
+ (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var x)) (Empty)))))
+               (Args (Mk (Num 0)) (Empty))))))
+
+; Combine like terms: (c1*x + p1) + (c2*x + p2) = (c1+c2)*x + (p1+p2)
+(rewrite
+ (Mk (@+
+     (Args
+      (Mk (@+
+           (Args (Mk (@* (Args (Mk c1) (Args (Mk x) (Empty)))))
+                 (Args (Mk p1) (Empty)))))
+      (Args
+       (Mk (@+
+            (Args (Mk (@* (Args (Mk c2) (Args (Mk x) (Empty)))))
+                  (Args (Mk p2) (Empty)))))
+       (Empty)))))
+ (Mk (@+
+     (Args
+      (Mk (@*
+           (Args (Mk (@+ (Args (Mk c1) (Args (Mk c2) (Empty)))))
+                 (Args (Mk x) (Empty)))))
+      (Args
+       (Mk (@+
+            (Args (Mk p1)
+                  (Args (Mk p2) (Empty)))))
+       (Empty))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Test: (1*x + 0) * y should expand to (1*x)*y + 0*y
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(let test1_lhs (Mk (@* (Args (Mk (@+ (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                                          (Args (Mk (Num 0)) (Empty)))))
+                             (Args (Mk (Var 2)) (Empty))))))
+(let test1_rhs (Mk (@+ (Args (Mk (@* (Args (Mk (@* (Args (Mk (Num 1)) (Args (Mk (Var 1)) (Empty)))))
+                                          (Args (Mk (Var 2)) (Empty)))))
+                             (Args (Mk (@* (Args (Mk (Num 0)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+(Avaliable test1_lhs)
+(Avaliable test1_rhs)
+(run-schedule (repeat 3 (run)))
+(check (= test1_lhs test1_rhs))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; THE FULL GOAL: x * (2 * y) = 2 * (x * y)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(let goal_lhs (Mk (@* (Args (Mk (Var 1)) (Args (Mk (@* (Args (Mk (Num 2)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+(let goal_rhs (Mk (@* (Args (Mk (Num 2)) (Args (Mk (@* (Args (Mk (Var 1)) (Args (Mk (Var 2)) (Empty))))) (Empty))))))
+
+(Avaliable goal_lhs)
+(Avaliable goal_rhs)
+
+(run-schedule (repeat 15 (run)))
+
+(print-function Mk 100)
+
+(check (= goal_lhs goal_rhs))
+
+(print-stats)
