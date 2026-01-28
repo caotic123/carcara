@@ -397,11 +397,6 @@ pub fn interpret_eunoia(
 
 
 pub fn declare_special_eunoia_eliminations(decls: &mut Vec<EggStatement>, functions: &EggFunctions) {
-    // Arithmetic constructors must be declared BEFORE ACI rules,
-    // since ACI patterns from RARE rules may reference arith operators
-    if arith_poly_norm::has_arith_operator(functions) {
-        decls.extend(arith_poly_norm::arith_constructors(functions));
-    }
 
     // Use centralized ACI operator definitions
     for (_, name, op_with_at, identity) in aci_norm::aci_operators() {
@@ -410,11 +405,7 @@ pub fn declare_special_eunoia_eliminations(decls: &mut Vec<EggStatement>, functi
         }
     }
 
-    // Arithmetic polynomial normalization rules (after constructors are declared)
-    if arith_poly_norm::has_arith_operator(functions) {
-        decls.extend(arith_poly_norm::arith_poly_norm_rules());
-    }
-
+    decls.extend(arith_poly_norm::arith_poly_norm_rules());
     if functions.names.contains_key("distinct") {
         decls.extend(distinct_elim::distinct_solver_statements());
     }

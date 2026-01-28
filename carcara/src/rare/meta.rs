@@ -320,13 +320,7 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                     // Parse raw egglog code into commands
                     let mut egraph = EGraph::default();
                     match egraph.parser.get_program_from_string(None, &code) {
-                        Ok(commands) => {
-                            // Filter out datatype and constructor declarations
-                            // (already declared in main program by create_headers and arith_constructors)
-                            commands.into_iter().filter(|cmd| {
-                                !matches!(cmd, Command::Datatype { .. } | Command::Constructor { .. })
-                            }).collect()
-                        },
+                        Ok(commands) => commands,
                         Err(e) => {
                             eprintln!("Error parsing raw egglog code: {}", e);
                             vec![]

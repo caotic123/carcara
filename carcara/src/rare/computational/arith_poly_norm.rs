@@ -1,60 +1,6 @@
-use crate::rare::engine::EggFunctions;
-use crate::rare::language::{ConstType, EggStatement};
+use crate::rare::language::EggStatement;
 
-/// Arithmetic operators for polynomial normalization.
-/// Returns: (string name, @-prefixed name)
-pub fn arith_operators() -> impl Iterator<Item = (&'static str, &'static str)> {
-    [
-        ("-", "@-"),
-        ("+", "@+"),
-        ("*", "@*"),
-        ("/", "@/"),
-        ("/_total", "@/_total"),
-        ("to_real", "@to_real"),
-        // Note: "=" is NOT included here - it's a general operator declared by declare_functions
-    ]
-    .into_iter()
-}
 
-/// Helper predicates used by polynomial normalization rules
-fn helper_predicates() -> impl Iterator<Item = &'static str> {
-    ["@$less_or_equal_var", "@$is_not_num"].into_iter()
-}
-
-/// Check if any arithmetic operator is present in the function cache.
-pub fn has_arith_operator(functions: &EggFunctions) -> bool {
-    arith_operators().any(|(name, _)| functions.names.contains_key(name))
-}
-
-/// Generate constructor declarations for all arithmetic operators and helper predicates.
-/// declare_functions() skips arith operators, so we declare them all here.
-pub fn arith_constructors(_functions: &EggFunctions) -> Vec<EggStatement> {
-    let term = ConstType::ConstrType("Term".to_string());
-    let mut decls = Vec::new();
-
-    // Declare all arithmetic operators
-    for (_, op_with_at) in arith_operators() {
-        decls.push(EggStatement::Constructor(
-            op_with_at.to_string(),
-            vec![term.clone()],
-            term.clone(),
-        ));
-    }
-
-    // Declare helper predicates used by polynomial normalization rules
-    for pred in helper_predicates() {
-        decls.push(EggStatement::Constructor(
-            pred.to_string(),
-            vec![term.clone()],
-            term.clone(),
-        ));
-    }
-
-    decls
-}
-
-/// Generate all polynomial normalization rules by including the egglog file.
-/// The egglog file must include the datatype and constructor declarations for parsing.
 pub fn arith_poly_norm_rules() -> Vec<EggStatement> {
     // Include the egglog file content at compile time
     let egglog_content = include_str!("arith_poly_norm.egglog");
@@ -150,6 +96,17 @@ pub mod tests {
         result.map(|_| ())
     }
 
+    /// Just print the generated egglog code without running it
+    #[allow(dead_code)]
+    fn print_egglog_code(conclusion_str: &str) {
+        let mut pool = PrimitivePool::new();
+        let conclusion = parse_term(&mut pool, conclusion_str);
+        let rules = empty_rules();
+        let root = dummy_proof_node(&mut pool, conclusion.clone());
+        let (_, code) = run_egglog_debug(&mut pool, conclusion, &root, &rules);
+        println!("\n=== Generated egglog code for: {} ===\n{}\n=== End ===\n", conclusion_str, code);
+    }
+
     /// Test case from Alethe proof step t2: (= (* (* 2 x) y) (* 2 (* x y)))
     /// This tests coefficient reordering: (2 * x) * y should equal 2 * (x * y)
     #[test]
@@ -164,6 +121,70 @@ pub mod tests {
     fn test_t3_coeff_reorder_right() {
         let result = try_elaborate("(= (* x (* 2 y)) (* 2 (* x y)))");
         assert!(result.is_ok(), "t3 elaboration failed: {:?}", result.err());
+    }
+
+    // ============ Step-by-step tests for difference of squares ============
+
+    /// Step 1: Test that (- 0 1) works (should be -1)
+    #[test]
+    fn test_dos_step1_negation_constant() {
+        let result = try_elaborate("(= (- 0 1) (- 0 1))");
+        assert!(result.is_ok(), "Step 1 failed: {:?}", result.err());
+    }
+
+    /// Step 2: Test simple variable squaring: a*a = a*a
+    #[test]
+    fn test_dos_step2_var_squared() {
+        let result = try_elaborate("(= (* a a) (* a a))");
+        assert!(result.is_ok(), "Step 2 failed: {:?}", result.err());
+    }
+
+    /// Step 3: Test negation times variable: (-1)*a = (-1)*a
+    #[test]
+    fn test_dos_step3_neg_times_var() {
+        let result = try_elaborate("(= (* (- 0 1) a) (* (- 0 1) a))");
+        assert!(result.is_ok(), "Step 3 failed: {:?}", result.err());
+    }
+
+    /// Step 4: Test simple addition: a + b = a + b
+    #[test]
+    fn test_dos_step4_simple_add() {
+        let result = try_elaborate("(= (+ a b) (+ a b))");
+        assert!(result.is_ok(), "Step 4 failed: {:?}", result.err());
+    }
+
+    /// Debug: just print the egglog code for step 4
+    #[test]
+    fn test_dos_step4_print_code() {
+        print_egglog_code("(= (+ a b) (+ a b))");
+    }
+
+    /// Step 5: Test addition with negation: a + (-1)*b = a + (-1)*b
+    #[test]
+    fn test_dos_step5_add_with_neg() {
+        let result = try_elaborate("(= (+ a (* (- 0 1) b)) (+ a (* (- 0 1) b)))");
+        assert!(result.is_ok(), "Step 5 failed: {:?}", result.err());
+    }
+
+    /// Step 6: Test (a+b)*(a+b) multiplication
+    #[test]
+    fn test_dos_step6_sum_times_sum() {
+        let result = try_elaborate("(= (* (+ a b) (+ a b)) (* (+ a b) (+ a b)))");
+        assert!(result.is_ok(), "Step 6 failed: {:?}", result.err());
+    }
+
+    /// Step 7: Test LHS only: a² + (-1)*b² = a² + (-1)*b²
+    #[test]
+    fn test_dos_step7_lhs_only() {
+        let result = try_elaborate("(= (+ (* a a) (* (- 0 1) (* b b))) (+ (* a a) (* (- 0 1) (* b b))))");
+        assert!(result.is_ok(), "Step 7 (LHS) failed: {:?}", result.err());
+    }
+
+    /// Step 8: Test RHS only: (a+b)*(a+(-1)*b) = (a+b)*(a+(-1)*b)
+    #[test]
+    fn test_dos_step8_rhs_only() {
+        let result = try_elaborate("(= (* (+ a b) (+ a (* (- 0 1) b))) (* (+ a b) (+ a (* (- 0 1) b))))");
+        assert!(result.is_ok(), "Step 8 (RHS) failed: {:?}", result.err());
     }
 
     /// From prob_00076_002539__14169734-t86.t149.t10.alethe
