@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::once, sync::Arc};
+use std::{collections::{HashMap, HashSet}, iter::once, sync::Arc};
 
 use crate::{
     ast::{
@@ -720,7 +720,7 @@ fn set_goal(term: &Rc<Term>, var_map: &mut HashMap<String, u64>, func_cache: &mu
             ruleset: Some("list-ruleset".to_string()),
         });
 
-        goal.push(EggStatement::Run { ruleset: None, iterations: 5 });
+        goal.push(EggStatement::Run { ruleset: None, iterations: 6});
 
         goal.push(EggStatement::Check(Box::new(EggExpr::Equal(
             Box::new(EggExpr::Literal("goal_lhs".to_string())),
@@ -737,24 +737,11 @@ fn declare_functions(
     constant: &IndexMap<String, DeclConst>,
     var_map: &mut HashMap<String, u64>
 ) -> Vec<EggStatement> {
-    use super::computational::arith_poly_norm;
 
     let mut decls = Vec::new();
     declare_logic_operators(functions);
 
-    // Collect arith operator names to skip (they're declared in arith_poly_norm.egglog)
-    let arith_ops: std::collections::HashSet<&str> = if arith_poly_norm::has_arith_operator(functions) {
-        arith_poly_norm::arith_operators().map(|(name, _)| name).collect()
-    } else {
-        std::collections::HashSet::new()
-    };
-
     for (func, (is_op, _arity)) in functions.names.iter() {
-        // Skip arith operators - they're declared in arith_poly_norm.egglog
-        if arith_ops.contains(func.as_str()) {
-            continue;
-        }
-
         // 1) always declare the function symbol
         decls.push(EggStatement::Constructor(
             format!("@{}", func),
@@ -920,15 +907,9 @@ pub fn run_egglog_debug(
 
     declare_special_eunoia_eliminations(&mut declarations, &egg_functions);
 
-    // Partition declarations: constructors first, then everything else
-    let (constructors, other_decls): (Vec<_>, Vec<_>) = declarations
-        .into_iter()
-        .partition(|stmt| matches!(stmt, EggStatement::Constructor(_, _, _)));
-
     let mut ast = create_headers();
 
-    ast.extend(constructors);
-    ast.extend(other_decls);
+    ast.extend(declarations);
     ast.extend(rules);
     ast.extend(premises);
 
@@ -939,6 +920,12 @@ pub fn run_egglog_debug(
     ast.append(&mut goal.unwrap());
 
     let egglog = lower_egg_language(ast);
+
+    let mut seen = std::collections::HashSet::new();
+    let egglog: Vec<_> = egglog
+        .into_iter()
+        .filter(|cmd| seen.insert(cmd.to_string()))
+        .collect();
 
     // Generate debug string
     let code_str = egglog.iter().map(|cmd| cmd.to_string()).collect::<Vec<_>>().join("\n");

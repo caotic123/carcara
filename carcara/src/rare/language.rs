@@ -39,7 +39,7 @@ pub enum EggExpr {
     Empty(),
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub enum EggStatement {
     Sort(String, String, Box<EggExpr>),
     DataType(String, Vec<Constructor>),
@@ -70,7 +70,6 @@ pub enum EggStatement {
     Saturate {
         ruleset: Option<String>,
     },
-    /// Raw egglog code to be parsed and included directly
     Raw(String),
 }
 
