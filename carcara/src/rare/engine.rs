@@ -718,12 +718,12 @@ fn set_goal(term: &Rc<Term>, var_map: &mut HashMap<String, u64>, func_cache: &mu
 
         goal.push(EggStatement::Union(
             Box::new(EggExpr::Literal("goal_lhs".to_string())),
-                    Box::new(egg_expr!((get_arith_poly_norm {EggExpr::Literal("goal_lhs".to_string())}))),
+            Box::new(EggExpr::Mk((Box::new(egg_expr!((get_arith_poly_norm {EggExpr::Literal("goal_lhs".to_string())})))))),
         ));
                 
         goal.push(EggStatement::Union(
             Box::new(EggExpr::Literal("goal_rhs".to_string())),
-            Box::new(egg_expr!((get_arith_poly_norm {EggExpr::Literal("goal_rhs".to_string())}))),
+            Box::new(EggExpr::Mk((Box::new(egg_expr!((get_arith_poly_norm {EggExpr::Literal("goal_rhs".to_string())})))))),
         ));
 
         goal.push(EggStatement::Saturate {
