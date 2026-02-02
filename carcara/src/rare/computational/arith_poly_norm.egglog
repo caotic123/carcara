@@ -1317,10 +1317,3 @@
        (= (Mk (@$get_arith_poly_norm (Args (Mk poly1) (Empty))))
           (Mk (@$get_arith_poly_norm (Args (Mk poly2) (Empty)))))))
 
-;(rule ((Mk term)) ((Mk (@$is_arith_exp (Args (Mk term) (Empty))))))
-
-;(rule ((= (Mk (@$is_arith_exp (Args (Mk term) (Empty)))) (Mk (Bool true)))) 
-      ((Mk (@$get_arith_poly_norm (Args (Mk term) (Empty))))))
-
-; (rule ((Mk term)) 
-      ((Mk (@$get_arith_poly_norm (Args (Mk term) (Empty))))))
