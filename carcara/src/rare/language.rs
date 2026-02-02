@@ -145,6 +145,7 @@ macro_rules! egg_expr {
     ((union $lhs:tt $rhs:tt)) => { $crate::rare::language::EggExpr::Union(Box::new(egg_expr!($lhs)), Box::new(egg_expr!($rhs))) };
     ((set $lhs:tt $rhs:tt)) => { $crate::rare::language::EggExpr::Set(Box::new(egg_expr!($lhs)), Box::new(egg_expr!($rhs))) };
     ((ground $inner:tt)) => { $crate::rare::language::EggExpr::Ground(Box::new(egg_expr!($inner))) };
+    ((get_arith_poly_norm $inner:tt)) => { $crate::rare::language::EggExpr::Call("@$get_arith_poly_norm".into(), vec![egg_expr!($inner)]) };
     ((app $func:tt $arg:tt)) => { $crate::rare::language::EggExpr::App(Box::new(egg_expr!($func)), Box::new(egg_expr!($arg))) };
     (($op:tt)) => { $crate::rare::language::EggExpr::Call(egg_expr!(@GET_OP $op).into(), Vec::new()) };
     (($op:tt $($args:tt)+)) => { $crate::rare::language::EggExpr::Call(egg_expr!(@GET_OP $op).into(), vec![$(egg_expr!($args)),+]) };
