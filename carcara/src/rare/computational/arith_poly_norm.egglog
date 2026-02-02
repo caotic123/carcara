@@ -2,11 +2,6 @@
 ; Base theory
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;(datatype Term (App Term Term) (Var i64) (Bool bool) (Num i64) (Real i64 i64) (Op String) (@String String) (Forall Term) (Exists Term) (Lambda Term) (Choice Term) (Sort Term) (Empty) (Args Term Term) (Mk Term))
-
-;(relation Avaliable (Term))
-
-
 ; Arith ops required
 (constructor @- (Term) Term)
 (constructor @+ (Term) Term)
@@ -53,6 +48,14 @@
  (Mk (Num (* x y))))
 
 (rewrite 
+ (Mk (@* (Args (Mk (Num x)) (Args (Mk (Real num den)) (Empty)))))
+ (Mk (@* (Args (Mk (Real x 1)) (Args (Mk (Real num den)) (Empty))))))
+
+(rewrite 
+ (Mk (@* (Args (Mk (Real num den)) (Args (Mk (Num x)) (Empty)))))
+ (Mk (@* (Args (Mk (Real num den)) (Args (Mk (Real x 1)) (Empty))))))
+
+(rewrite 
  (Mk (@* (Args (Mk (Real num1 den1)) (Args (Mk (Real num2 den2)) (Empty)))))
  (Mk (Real (* num1 num2) (* den1 den2))))
 
@@ -84,15 +87,80 @@
 (constructor @poly (Term) Term)
 (constructor @to_real (Term) Term)
 
+;;;;;;;;;;;;;;;;;;;;;;;;
+; @$is_product
+;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Simple predicate to recognice product expressions.
+(constructor @$is_product (Term) Term)
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (@- (Args (Mk a) (Empty)))) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (@+ (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (@- (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (@* (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (Bool true)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (@/ (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (@/_total (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (@to_real (Args (Mk a) (Empty)))) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (@poly (Args (Mk m) (Args (Mk p) (Empty))))) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (@poly_zero)) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (Var x)) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (Num x)) (Empty))))
+(Mk (Bool false)))
+
+(rewrite 
+(Mk (@$is_product (Args (Mk (Real num den)) (Empty))))
+(Mk (Bool false)))
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;
 ; @$less_or_equal_var
 ;;;;;;;;;;;;;;;;;;;;;;;
 
-; Comparison of variables.
+; Comparison of variables (allowing for other kind of terms to appear 
+; multiplying a variable)
 (constructor @$less_or_equal_var (Term) Term)
 
-; TODO: minimal rewriting theory of @$less_or_equal_var, for testing purposes, 
-;       assuming that variables are just numbers
+(rewrite 
+(Mk (@$less_or_equal_var (Args (Mk (Num a)) (Args (Mk (Num b)) (Empty)))))
+(Mk (Bool true))
+:when ((<= a b)))
+
+(rewrite 
+(Mk (@$less_or_equal_var (Args (Mk (Num a)) (Args (Mk (Num b)) (Empty)))))
+(Mk (Bool false))
+:when ((> a b)))
+
 (rewrite 
 (Mk (@$less_or_equal_var (Args (Mk (Var a)) (Args (Mk (Var b)) (Empty)))))
 (Mk (Bool true))
@@ -108,6 +176,10 @@
 (Mk (Bool true)))
 
 (rewrite 
+(Mk (@$less_or_equal_var (Args (Mk (Var a)) (Args (Mk (Num b)) (Empty)))))
+(Mk (Bool false)))
+
+(rewrite 
 (Mk (@$less_or_equal_var (Args (Mk (Real num den)) (Args (Mk (Var b)) (Empty)))))
 (Mk (Bool true)))
 
@@ -118,8 +190,58 @@
             (Args (Mk (@* (Args (Mk b1) 
                                 (Args (Mk b2) (Empty))))) 
                   (Empty)))))
-(Mk (@$less_or_equal_var 
-      (Args (Mk a1) (Args (Mk b1) (Empty))))))
+(Mk (@and (Args (Mk (@$less_or_equal_var 
+                     (Args (Mk a1) (Args (Mk b1) (Empty)))))
+                (Args (Mk (@$less_or_equal_var 
+                           (Args (Mk a2) (Args (Mk b2) (Empty)))))
+                      (Empty))))))
+
+(rewrite 
+ (Mk (@$less_or_equal_var 
+      (Args (Mk (@* (Args (Mk a1) 
+                          (Args (Mk a2) (Empty)))))
+            (Args (Mk b1) (Empty)))))
+(Mk (@and (Args (Mk (@$less_or_equal_var 
+                     (Args (Mk a1) (Args (Mk b1) (Empty)))))
+                (Args (Mk (@$less_or_equal_var 
+                           (Args (Mk a2) (Args (Mk b1) (Empty)))))
+                      (Empty)))))
+:when (
+       (= (Mk (@$is_product (Args (Mk b1) (Empty))))
+          (Mk (Bool false)))
+       ))
+
+; To guarantee that we can reason about the previous side-condition.
+(rule ((Mk (@$less_or_equal_var 
+            (Args (Mk (@* (Args (Mk a1) 
+                                (Args (Mk a2) (Empty)))))
+                  (Args (Mk b1) (Empty)))))) 
+      ((Mk (@$is_product (Args (Mk b1) (Empty))))))
+
+
+(rewrite 
+ (Mk (@$less_or_equal_var 
+      (Args (Mk b1)
+            (Args (Mk (@* (Args (Mk a1) 
+                                (Args (Mk a2) (Empty))))) (Empty)))))
+(Mk (@and (Args (Mk (@$less_or_equal_var 
+                     (Args (Mk b1) (Args (Mk a1) (Empty)))))
+                (Args (Mk (@$less_or_equal_var 
+                           (Args (Mk b1) (Args (Mk a2) (Empty)))))
+                      (Empty)))))
+:when (
+       (= (Mk (@$is_product (Args (Mk b1) (Empty))))
+          (Mk (Bool false)))
+       ))
+
+; To guarantee that we can reason about the previous side-condition.
+(rule ((Mk (@$less_or_equal_var 
+            (Args (Mk b1)
+                  (Args (Mk (@* (Args (Mk a1) 
+                                      (Args (Mk a2) (Empty))))) 
+                        (Empty))))))
+      ((Mk (@$is_product (Args (Mk b1) (Empty))))))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;
 ; @$is_arith_exp
@@ -1098,7 +1220,8 @@
 ; Case (($get_arith_poly_norm (+ a1 a2))
 ;      ($poly_add ($get_arith_poly_norm a1) ($get_arith_poly_norm a2)))
 (rewrite
-(Mk (@$get_arith_poly_norm (Args (Mk (@+ (Args (Mk a1) (Args (Mk a2) (Empty))))) (Empty))))
+(Mk (@$get_arith_poly_norm (Args (Mk (@+ (Args (Mk a1) (Args (Mk a2) (Empty))))) 
+                                 (Empty))))
 (Mk (@$poly_add (Args (Mk (@$get_arith_poly_norm (Args (Mk a1) (Empty))))
                       (Args (Mk (@$get_arith_poly_norm (Args (Mk a2) (Empty))))
                             (Empty))))))
@@ -1186,13 +1309,10 @@
 ;   :requires ((($get_arith_poly_norm a) ($get_arith_poly_norm b)))
 ;   :conclusion (= a b)
 ; )
-
-; Trigger polynomial normalization for Avaliable terms
-(rule ((Avaliable (Mk expr)))
-      ((Mk (@$get_arith_poly_norm (Args (Mk expr) (Empty))))))
-
-(rewrite
+(rewrite 
 (Mk poly1)
 (Mk poly2)
-:when ((= (Mk (@$get_arith_poly_norm (Args (Mk poly1) (Empty))))
+:when ((= (Mk (@$is_arith_exp (Args (Mk poly1) (Empty)))) (Mk (Bool true)))
+       (= (Mk (@$is_arith_exp (Args (Mk poly2) (Empty)))) (Mk (Bool true)))
+       (= (Mk (@$get_arith_poly_norm (Args (Mk poly1) (Empty))))
           (Mk (@$get_arith_poly_norm (Args (Mk poly2) (Empty)))))))
