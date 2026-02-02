@@ -1316,4 +1316,3 @@
        (= (Mk (@$is_arith_exp (Args (Mk poly2) (Empty)))) (Mk (Bool true)))
        (= (Mk (@$get_arith_poly_norm (Args (Mk poly1) (Empty))))
           (Mk (@$get_arith_poly_norm (Args (Mk poly2) (Empty)))))))
-
