@@ -1,0 +1,456 @@
+(ruleset evaluation)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; Boolean Operations
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; not
+(constructor @not (Term) Term)
+
+(rewrite
+ (Mk (@not (Args (Mk (Bool x)) (Empty))))
+ (Mk (Bool (not x)))
+ :ruleset evaluation)
+
+; and
+(constructor @and (Term) Term)
+
+(rewrite
+ (Mk (@and (Args (Mk (Bool x)) (Args (Mk (Bool y)) (Empty)))))
+ (Mk (Bool (and x y)))
+ :ruleset evaluation)
+
+; or
+(constructor @or (Term) Term)
+
+(rewrite
+ (Mk (@or (Args (Mk (Bool x)) (Args (Mk (Bool y)) (Empty)))))
+ (Mk (Bool (or x y)))
+ :ruleset evaluation)
+
+; xor
+(constructor @xor (Term) Term)
+
+(rewrite
+ (Mk (@xor (Args (Mk (Bool x)) (Args (Mk (Bool y)) (Empty)))))
+ (Mk (Bool (xor x y)))
+ :ruleset evaluation)
+
+; implies (no native =>, use: x => y ≡ ¬x ∨ y)
+(constructor @=> (Term) Term)
+
+(rewrite
+ (Mk (@=> (Args (Mk (Bool x)) (Args (Mk (Bool y)) (Empty)))))
+ (Mk (Bool (or (not x) y)))
+ :ruleset evaluation)
+
+; ite
+(constructor @ite (Term) Term)
+
+; ite true x y = x
+(rewrite
+ (Mk (@ite (Args (Mk (Bool true)) (Args (Mk x) (Args (Mk y) (Empty))))))
+ (Mk x)
+ :ruleset evaluation)
+
+; ite false x y = y
+(rewrite
+ (Mk (@ite (Args (Mk (Bool false)) (Args (Mk x) (Args (Mk y) (Empty))))))
+ (Mk y)
+ :ruleset evaluation)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; Equality
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(constructor @= (Term) Term)
+
+; = for integers: equal case
+(rewrite
+ (Mk (@= (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Bool true))
+ :when ((= x y))
+ :ruleset evaluation)
+
+; = for integers: not equal case
+(rewrite
+ (Mk (@= (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Bool false))
+ :when ((!= x y))
+ :ruleset evaluation)
+
+; = for booleans: equal case
+(rewrite
+ (Mk (@= (Args (Mk (Bool x)) (Args (Mk (Bool y)) (Empty)))))
+ (Mk (Bool true))
+ :when ((= x y))
+ :ruleset evaluation)
+
+; = for booleans: not equal case
+(rewrite
+ (Mk (@= (Args (Mk (Bool x)) (Args (Mk (Bool y)) (Empty)))))
+ (Mk (Bool false))
+ :when ((!= x y))
+ :ruleset evaluation)
+
+; = for rationals: n1/d1 == n2/d2 ⟺ n1*d2 == n2*d1 (equal case)
+(rewrite
+ (Mk (@= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Bool true))
+ :when ((= (* n1 d2) (* n2 d1)))
+ :ruleset evaluation)
+
+; = for rationals: not equal case
+(rewrite
+ (Mk (@= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Bool false))
+ :when ((!= (* n1 d2) (* n2 d1)))
+ :ruleset evaluation)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; Arithmetic Comparisons
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; < (less than)
+(constructor @< (Term) Term)
+
+; < for integers: true case
+(rewrite
+ (Mk (@< (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Bool true))
+ :when ((< x y))
+ :ruleset evaluation)
+
+; < for integers: false case
+(rewrite
+ (Mk (@< (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Bool false))
+ :when ((>= x y))
+ :ruleset evaluation)
+
+; < for rationals: n1/d1 < n2/d2 ⟺ n1*d2 < n2*d1 (assuming positive denominators)
+(rewrite
+ (Mk (@< (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Bool true))
+ :when ((< (* n1 d2) (* n2 d1)))
+ :ruleset evaluation)
+
+(rewrite
+ (Mk (@< (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Bool false))
+ :when ((>= (* n1 d2) (* n2 d1)))
+ :ruleset evaluation)
+
+; <= (less than or equal)
+(constructor @<= (Term) Term)
+
+; <= for integers: true case
+(rewrite
+ (Mk (@<= (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Bool true))
+ :when ((<= x y))
+ :ruleset evaluation)
+
+; <= for integers: false case
+(rewrite
+ (Mk (@<= (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Bool false))
+ :when ((> x y))
+ :ruleset evaluation)
+
+; <= for rationals
+(rewrite
+ (Mk (@<= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Bool true))
+ :when ((<= (* n1 d2) (* n2 d1)))
+ :ruleset evaluation)
+
+(rewrite
+ (Mk (@<= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Bool false))
+ :when ((> (* n1 d2) (* n2 d1)))
+ :ruleset evaluation)
+
+; > (greater than)
+(constructor @> (Term) Term)
+
+; > for integers: true case (x > y ⟺ y < x)
+(rewrite
+ (Mk (@> (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Bool true))
+ :when ((> x y))
+ :ruleset evaluation)
+
+; > for integers: false case
+(rewrite
+ (Mk (@> (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Bool false))
+ :when ((<= x y))
+ :ruleset evaluation)
+
+; > for rationals
+(rewrite
+ (Mk (@> (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Bool true))
+ :when ((> (* n1 d2) (* n2 d1)))
+ :ruleset evaluation)
+
+(rewrite
+ (Mk (@> (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Bool false))
+ :when ((<= (* n1 d2) (* n2 d1)))
+ :ruleset evaluation)
+
+; >= (greater than or equal)
+(constructor @>= (Term) Term)
+
+; >= for integers: true case
+(rewrite
+ (Mk (@>= (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Bool true))
+ :when ((>= x y))
+ :ruleset evaluation)
+
+; >= for integers: false case
+(rewrite
+ (Mk (@>= (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Bool false))
+ :when ((< x y))
+ :ruleset evaluation)
+
+; >= for rationals
+(rewrite
+ (Mk (@>= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Bool true))
+ :when ((>= (* n1 d2) (* n2 d1)))
+ :ruleset evaluation)
+
+(rewrite
+ (Mk (@>= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Bool false))
+ :when ((< (* n1 d2) (* n2 d1)))
+ :ruleset evaluation)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; Arithmetic Operations
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; + (addition)
+(constructor @+ (Term) Term)
+
+; + for integers
+(rewrite
+ (Mk (@+ (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (+ x y)))
+ :ruleset evaluation)
+
+; + for rationals: n1/d1 + n2/d2 = (n1*d2 + n2*d1) / (d1*d2)
+(rewrite
+ (Mk (@+ (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Real (+ (* n1 d2) (* n2 d1)) (* d1 d2)))
+ :ruleset evaluation)
+
+; - (subtraction, binary)
+(constructor @- (Term) Term)
+
+; - for integers (binary)
+(rewrite
+ (Mk (@- (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (- x y)))
+ :ruleset evaluation)
+
+; - for rationals: n1/d1 - n2/d2 = (n1*d2 - n2*d1) / (d1*d2)
+(rewrite
+ (Mk (@- (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Real (- (* n1 d2) (* n2 d1)) (* d1 d2)))
+ :ruleset evaluation)
+
+; - (unary negation)
+(rewrite
+ (Mk (@- (Args (Mk (Num x)) (Empty))))
+ (Mk (Num (- 0 x)))
+ :ruleset evaluation)
+
+; - (unary negation for rationals)
+(rewrite
+ (Mk (@- (Args (Mk (Real n d)) (Empty))))
+ (Mk (Real (- 0 n) d))
+ :ruleset evaluation)
+
+; * (multiplication)
+(constructor @* (Term) Term)
+
+; * for integers
+(rewrite
+ (Mk (@* (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (* x y)))
+ :ruleset evaluation)
+
+; * for rationals: (n1/d1) * (n2/d2) = (n1*n2) / (d1*d2)
+(rewrite
+ (Mk (@* (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Real (* n1 n2) (* d1 d2)))
+ :ruleset evaluation)
+
+; / (division, returns rational)
+(constructor @/ (Term) Term)
+
+; / for integers: x / y = x / y as rational
+(rewrite
+ (Mk (@/ (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Real x y))
+ :when ((!= y 0))
+ :ruleset evaluation)
+
+; / for rationals: (n1/d1) / (n2/d2) = (n1*d2) / (d1*n2)
+(rewrite
+ (Mk (@/ (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Real (* n1 d2) (* d1 n2)))
+ :when ((!= n2 0))
+ :ruleset evaluation)
+
+; /_total (total division, returns 0/1 for division by zero)
+(constructor @/_total (Term) Term)
+
+; /_total for integers: returns 0/1 when y = 0
+(rewrite
+ (Mk (@/_total (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Real 0 1))
+ :when ((= y 0))
+ :ruleset evaluation)
+
+; /_total for integers: normal case
+(rewrite
+ (Mk (@/_total (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Real x y))
+ :when ((!= y 0))
+ :ruleset evaluation)
+
+; /_total for rationals: returns 0/1 when n2 = 0
+(rewrite
+ (Mk (@/_total (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Real 0 1))
+ :when ((= n2 0))
+ :ruleset evaluation)
+
+; /_total for rationals: normal case
+(rewrite
+ (Mk (@/_total (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (Real (* n1 d2) (* d1 n2)))
+ :when ((!= n2 0))
+ :ruleset evaluation)
+
+; div (integer division, floor)
+(constructor @div (Term) Term)
+
+; div for integers: floor(x / y)
+(rewrite
+ (Mk (@div (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (/ x y)))
+ :when ((!= y 0))
+ :ruleset evaluation)
+
+; Note: div_total is not a standard SMT-LIB operator
+
+; mod (modulo)
+(constructor @mod (Term) Term)
+
+; mod for integers
+(rewrite
+ (Mk (@mod (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
+ (Mk (Num (% x y)))
+ :when ((!= y 0))
+ :ruleset evaluation)
+
+; Note: mod_total is not a standard SMT-LIB operator
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; Arithmetic Conversions & Predicates
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; to_real (convert integer to rational)
+(constructor @to_real (Term) Term)
+
+; to_real for integers: x -> x/1
+(rewrite
+ (Mk (@to_real (Args (Mk (Num x)) (Empty))))
+ (Mk (Real x 1))
+ :ruleset evaluation)
+
+; to_real for rationals: identity
+(rewrite
+ (Mk (@to_real (Args (Mk (Real n d)) (Empty))))
+ (Mk (Real n d))
+ :ruleset evaluation)
+
+; to_int (floor of rational to integer)
+(constructor @to_int (Term) Term)
+
+; to_int for integers: identity
+(rewrite
+ (Mk (@to_int (Args (Mk (Num x)) (Empty))))
+ (Mk (Num x))
+ :ruleset evaluation)
+
+; to_int for rationals: floor(n/d) = n / d (integer division)
+(rewrite
+ (Mk (@to_int (Args (Mk (Real n d)) (Empty))))
+ (Mk (Num (/ n d)))
+ :ruleset evaluation)
+
+; is_int (check if value is integer)
+(constructor @is_int (Term) Term)
+
+; is_int for integers: always true
+(rewrite
+ (Mk (@is_int (Args (Mk (Num x)) (Empty))))
+ (Mk (Bool true))
+ :ruleset evaluation)
+
+; is_int for rationals: true if n mod d == 0
+(rewrite
+ (Mk (@is_int (Args (Mk (Real n d)) (Empty))))
+ (Mk (Bool true))
+ :when ((= (% n d) 0))
+ :ruleset evaluation)
+
+; is_int for rationals: false if n mod d != 0
+(rewrite
+ (Mk (@is_int (Args (Mk (Real n d)) (Empty))))
+ (Mk (Bool false))
+ :when ((!= (% n d) 0))
+ :ruleset evaluation)
+
+; abs (absolute value)
+(constructor @abs (Term) Term)
+
+; abs for integers: positive case
+(rewrite
+ (Mk (@abs (Args (Mk (Num x)) (Empty))))
+ (Mk (Num x))
+ :when ((>= x 0))
+ :ruleset evaluation)
+
+; abs for integers: negative case
+(rewrite
+ (Mk (@abs (Args (Mk (Num x)) (Empty))))
+ (Mk (Num (- 0 x)))
+ :when ((< x 0))
+ :ruleset evaluation)
+
+; abs for rationals: positive case (n/d >= 0 when n and d have same sign)
+; For simplicity, assuming positive denominators (standard form)
+(rewrite
+ (Mk (@abs (Args (Mk (Real n d)) (Empty))))
+ (Mk (Real n d))
+ :when ((>= n 0))
+ :ruleset evaluation)
+
+; abs for rationals: negative case
+(rewrite
+ (Mk (@abs (Args (Mk (Real n d)) (Empty))))
+ (Mk (Real (- 0 n) d))
+ :when ((< n 0))
+ :ruleset evaluation)
+
+; Note: int.log2, int.pow2, int.ispow2 are not standard SMT-LIB operators

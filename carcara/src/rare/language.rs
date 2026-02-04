@@ -120,6 +120,8 @@ macro_rules! egg_expr {
     (@GET_OP _abs) => { "@abs" };
     (@GET_OP _div_total) => { "@/_total" };
     (@GET_OP _to_real) => { "@to_real" };
+    (@GET_OP _to_int) => { "@to_int" };
+    (@GET_OP _is_int) => { "@is_int" };
     (@GET_OP _less_or_equal_var) => { "@$less_or_equal_var" };
     (@GET_OP _is_not_num) => { "@$is_not_num" };
     (@GET_OP set_empty) => { "set-empty" };

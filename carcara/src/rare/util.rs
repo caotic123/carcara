@@ -340,3 +340,37 @@ pub fn hash_var_name(map: &mut HashMap<String, u64>, name: &str) -> u64 {
     map.insert(name.to_string(), h);
     h
 }
+
+/// Collect all equality subterms from a term (including nested equalities)
+pub fn collect_equality_subterms(term: &Rc<Term>) -> Vec<Rc<Term>> {
+    let mut result = Vec::new();
+    collect_equality_subterms_helper(term, &mut result);
+    result
+}
+
+fn collect_equality_subterms_helper(term: &Rc<Term>, result: &mut Vec<Rc<Term>>) {
+    match term.as_ref() {
+        Term::Op(Operator::Equals, args) if args.len() == 2 => {
+            // This is an equality - add it and recurse into arguments
+            result.push(term.clone());
+            collect_equality_subterms_helper(&args[0], result);
+            collect_equality_subterms_helper(&args[1], result);
+        }
+        Term::Op(_, args) => {
+            // Other operators - recurse into arguments
+            for arg in args {
+                collect_equality_subterms_helper(arg, result);
+            }
+        }
+        Term::App(func, args) => {
+            collect_equality_subterms_helper(func, result);
+            for arg in args {
+                collect_equality_subterms_helper(arg, result);
+            }
+        }
+        Term::Binder(_, _, inner) => {
+            collect_equality_subterms_helper(inner, result);
+        }
+        _ => {}
+    }
+}
