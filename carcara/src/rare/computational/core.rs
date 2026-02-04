@@ -2,7 +2,7 @@ use indexmap::{IndexMap, IndexSet};
 
 use crate::{ast::{
     BindingList, PrimitivePool, Rc, Sort, Substitution, Term, TermPool, rare_rules::{DeclAttr, DeclConst}
-}, egg_expr, rare::{computational::{aci_norm, arith_poly_norm, distinct_elim}, engine::EggFunctions, language::{EggExpr, EggStatement}}};
+}, egg_expr, rare::{computational::{aci_norm, arith_poly_norm, distinct_elim, evaluation}, engine::EggFunctions, language::{EggExpr, EggStatement}}};
 
 // Add this type alias near the top of the module:
 type Matcher<'a> = dyn Fn(&Rc<Term>, &mut PrimitivePool) -> Option<Rc<Term>> + 'a;
@@ -406,6 +406,7 @@ pub fn declare_special_eunoia_eliminations(decls: &mut Vec<EggStatement>, functi
     }
 
     decls.extend(arith_poly_norm::arith_poly_norm_rules());
+    decls.extend(evaluation::evaluation_rules());
     if functions.names.contains_key("distinct") {
         decls.extend(distinct_elim::distinct_solver_statements());
     }

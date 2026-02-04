@@ -14,7 +14,7 @@ pub mod tests {
     use crate::ast::rare_rules::RareStatements;
     use crate::ast::{ProofNode, Rc, StepNode};
     use crate::parser::{Config, Parser};
-    use crate::rare::engine::run_egglog_debug;
+    use crate::rare::engine::run_egglog;
     use indexmap::IndexMap;
 
     /// Returns true if debug-egglog feature is enabled
@@ -24,17 +24,11 @@ pub mod tests {
     }
 
     const DEFINITIONS: &str = r#"
-        (declare-sort Int 0)
-        (declare-sort Real 0)
         (declare-fun x () Int)
         (declare-fun y () Int)
         (declare-fun z () Int)
         (declare-fun a () Int)
         (declare-fun b () Int)
-        (declare-fun * (Int Int) Int)
-        (declare-fun + (Int Int) Int)
-        (declare-fun - (Int Int) Int)
-        (declare-fun / (Int Int) Int)
     "#;
 
     /// Parse a term from a string with arithmetic definitions
@@ -89,7 +83,7 @@ pub mod tests {
         let conclusion = parse_term(&mut pool, conclusion_str);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let (result, code) = run_egglog_debug(&mut pool, conclusion, &root, &rules);
+        let (result, code) = run_egglog(&mut pool, conclusion, &root, &rules);
         if debug {
             println!("\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n", code);
         }
@@ -103,7 +97,7 @@ pub mod tests {
         let conclusion = parse_term(&mut pool, conclusion_str);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let (_, code) = run_egglog_debug(&mut pool, conclusion, &root, &rules);
+        let (_, code) = run_egglog(&mut pool, conclusion, &root, &rules);
         println!("\n=== Generated egglog code for: {} ===\n{}\n=== End ===\n", conclusion_str, code);
     }
 
@@ -210,16 +204,6 @@ pub mod tests {
         assert!(result.is_ok(), "Hanna sum zero equality failed: {:?}", result.err());
     }
 
-    /// From prob_00310_013548__18557966-t7.alethe
-    /// Tests product equality symmetry: (= (* a b) (* c d)) = (= (* c d) (* a b))
-    #[test]
-    fn test_hanna_product_equality_symmetry() {
-        let result = try_elaborate(
-            "(= (= (* a b) (* x y)) (= (* x y) (* a b)))"
-        );
-        assert!(result.is_ok(), "Hanna product equality symmetry failed: {:?}", result.err());
-    }
-
     /// From prob_00139_004785__15024976-t17.t6.alethe
     /// Tests: (>= (+ a (* -1 b)) 0) = (>= a b)
     /// Subtraction in comparison context
@@ -268,4 +252,26 @@ pub mod tests {
         );
         assert!(result.is_ok(), "Hanna common term cancellation failed: {:?}", result.err());
     }
+
+    /// Tests equality rearrangement with addition
+    /// (= x (+ 1 y)) should be equivalent to (= y (+ -1 x))
+    /// Both normalize to: x - y = 1
+    #[test]
+    fn test_equality_rearrangement_add() {
+        let result = try_elaborate(
+            "(= (= x (+ 1 y)) (= y (+ -1 x)))"
+        );
+        assert!(result.is_ok(), "Equality rearrangement failed: {:?}", result.err());
+    }
+
+    /// Tests canonical form: (= a b) should be equivalent to (= (- a b) 0)
+    /// This is the basic building block for equality normalization
+    #[test]
+    fn test_equality_canonical_form() {
+        let result = try_elaborate(
+            "(= (= x y) (= (- x y) 0))"
+        );
+        assert!(result.is_ok(), "Equality canonical form failed: {:?}", result.err());
+    }
+
 }

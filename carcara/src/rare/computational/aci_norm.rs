@@ -65,12 +65,12 @@ pub fn aci_rules(
 
     // 5. General singleton elimination for Assoc: (op (Assoc {x})) → x
     // Run in list-ruleset to avoid cycle issues
-    let assoc_set = egg_expr!((Assoc (set_insert (set_empty) "x")));
+    let assoc_set = egg_expr!((Assoc (set_insert (set_empty) (mk "x"))));
     let op_call = EggExpr::Call(op_with_at.into(), vec![assoc_set]);
     decls.push(EggStatement::Rule {
         ruleset: Some("list-ruleset".to_string()),
         body: vec![egg_expr!((= {op_call} "result"))],
-        head: vec![egg_expr!((union "result" "x"))],
+        head: vec![egg_expr!((union "result" (mk "x")))],
     });
 
     decls

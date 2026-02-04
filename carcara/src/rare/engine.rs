@@ -8,7 +8,7 @@ use crate::{
         computational::{aci_norm::singleton_operators, core::declare_special_eunoia_eliminations, defunctionalization::elaborate_rule, distinct_elim::declare_logic_operators},
         language::*,
         meta::lower_egg_language,
-        util::{clauses_to_or, collect_vars, get_equational_terms, hash_var_name},
+        util::{clauses_to_or, collect_equality_subterms, collect_vars, get_equational_terms, hash_var_name},
     },
 };
 use egg::Symbol;
@@ -720,17 +720,73 @@ fn set_goal(term: &Rc<Term>, var_map: &mut HashMap<String, u64>, func_cache: &mu
             Box::new(EggExpr::Literal("goal_lhs".to_string())),
             Box::new(EggExpr::Mk((Box::new(egg_expr!((get_arith_poly_norm {EggExpr::Args(Box::new(EggExpr::Literal("goal_lhs".to_string())), Box::new(EggExpr::Empty()))})))))),
         ));
-                
+
         goal.push(EggStatement::Union(
             Box::new(EggExpr::Literal("goal_rhs".to_string())),
             Box::new(EggExpr::Mk((Box::new(egg_expr!((get_arith_poly_norm {EggExpr::Args(Box::new(EggExpr::Literal("goal_rhs".to_string())), Box::new(EggExpr::Empty()))})))))),
         ));
 
+        // Collect and inject normalization for nested equality subterms
+        let mut subterm_counter = 0;
+        for subterm in collect_equality_subterms(lhs) {
+            if let Some((_, sub_lhs, sub_rhs)) = get_equational_terms(&subterm) {
+                let sub_lhs_name = format!("sub_lhs_{}", subterm_counter);
+                let sub_rhs_name = format!("sub_rhs_{}", subterm_counter);
+                subterm_counter += 1;
+
+                goal.push(EggStatement::Let(
+                    sub_lhs_name.clone(),
+                    Box::new(to_egg_expr(sub_lhs, &IndexMap::new(), func_cache, var_map, false).unwrap()),
+                ));
+                goal.push(EggStatement::Let(
+                    sub_rhs_name.clone(),
+                    Box::new(to_egg_expr(sub_rhs, &IndexMap::new(), func_cache, var_map, false).unwrap()),
+                ));
+
+                goal.push(EggStatement::Union(
+                    Box::new(EggExpr::Literal(sub_lhs_name.clone())),
+                    Box::new(EggExpr::Mk((Box::new(egg_expr!((get_arith_poly_norm {EggExpr::Args(Box::new(EggExpr::Literal(sub_lhs_name)), Box::new(EggExpr::Empty()))})))))),
+                ));
+                goal.push(EggStatement::Union(
+                    Box::new(EggExpr::Literal(sub_rhs_name.clone())),
+                    Box::new(EggExpr::Mk((Box::new(egg_expr!((get_arith_poly_norm {EggExpr::Args(Box::new(EggExpr::Literal(sub_rhs_name)), Box::new(EggExpr::Empty()))})))))),
+                ));
+            }
+        }
+
+        for subterm in collect_equality_subterms(rhs) {
+            if let Some((_, sub_lhs, sub_rhs)) = get_equational_terms(&subterm) {
+                let sub_lhs_name = format!("sub_lhs_{}", subterm_counter);
+                let sub_rhs_name = format!("sub_rhs_{}", subterm_counter);
+                subterm_counter += 1;
+
+                goal.push(EggStatement::Let(
+                    sub_lhs_name.clone(),
+                    Box::new(to_egg_expr(sub_lhs, &IndexMap::new(), func_cache, var_map, false).unwrap()),
+                ));
+                goal.push(EggStatement::Let(
+                    sub_rhs_name.clone(),
+                    Box::new(to_egg_expr(sub_rhs, &IndexMap::new(), func_cache, var_map, false).unwrap()),
+                ));
+
+                goal.push(EggStatement::Union(
+                    Box::new(EggExpr::Literal(sub_lhs_name.clone())),
+                    Box::new(EggExpr::Mk((Box::new(egg_expr!((get_arith_poly_norm {EggExpr::Args(Box::new(EggExpr::Literal(sub_lhs_name)), Box::new(EggExpr::Empty()))})))))),
+                ));
+                goal.push(EggStatement::Union(
+                    Box::new(EggExpr::Literal(sub_rhs_name.clone())),
+                    Box::new(EggExpr::Mk((Box::new(egg_expr!((get_arith_poly_norm {EggExpr::Args(Box::new(EggExpr::Literal(sub_rhs_name)), Box::new(EggExpr::Empty()))})))))),
+                ));
+            }
+        }
+
         goal.push(EggStatement::Saturate {
             ruleset: Some("list-ruleset".to_string()),
         });
 
-        goal.push(EggStatement::Run { ruleset: None, iterations: 20});
+        goal.push(EggStatement::Run { ruleset: None, iterations: 5});
+        goal.push(EggStatement::Run { ruleset: Some("evaluation".to_string()), iterations: 3});
+        goal.push(EggStatement::Run { ruleset: Some("arith_poly".to_string()), iterations: 15});
 
         goal.push(EggStatement::Check(Box::new(EggExpr::Equal(
             Box::new(EggExpr::Literal("goal_lhs".to_string())),
@@ -826,72 +882,6 @@ pub fn run_egglog(
     conclusion: Rc<Term>,
     root: &Rc<ProofNode>,
     database: &Rules,
-) -> Result<EGraph, String> {
-    let mut egg_functions = EggFunctions::default();
-    let mut var_map = HashMap::new();
-
-    let mut rules: Vec<RuleDefinition> = vec![];
-
-    for (_, rule) in database.rules.iter() {
-        rules.extend(elaborate_rule(
-            pool,
-            rule,
-            &database.programs,
-            &database.consts,
-            &rule.name,
-        ));
-    }
-
-    let rules = construct_rules(&rules, &mut egg_functions, &mut var_map);
-
-    let premises = construct_premises(pool, root, &mut var_map, &mut egg_functions);
-    let goal = set_goal(&conclusion, &mut var_map, &mut egg_functions);
-
-    let mut declarations = declare_functions(&mut egg_functions, &database.consts, &mut var_map);
-
-    declare_special_eunoia_eliminations(&mut declarations, &egg_functions);
-
-    // Partition declarations: constructors first, then everything else
-    let (constructors, other_decls): (Vec<_>, Vec<_>) = declarations
-        .into_iter()
-        .partition(|stmt| matches!(stmt, EggStatement::Constructor(_, _, _)));
-
-    let mut ast = create_headers();
-
-    ast.extend(constructors);
-    ast.extend(other_decls);
-    ast.extend(rules);
-    ast.extend(premises);
-
-    if goal.is_none() {
-        return Err("Failed to set goal".to_string());
-    }
-
-    ast.append(&mut goal.unwrap());
-    let mut egraph = EGraph::default();
-
-    egraph.add_primitive(CustomPrimitive {
-        name: Symbol::from("ineq"),
-        input: vec![
-            Arc::new(EqSort { name: Symbol::from("Term") }),
-            Arc::new(EqSort { name: Symbol::from("Term") }),
-        ],
-        output: Arc::new(BoolSort),
-        f: |x| Some(Value::from(x[0] != x[1])),
-    });
-
-    let egglog = lower_egg_language(ast);
-
-    egraph.run_program(egglog).map_err(|e| e.to_string())?;
-    Ok(egraph)
-}
-
-/// Run egglog and return the generated code as a string for debugging
-pub fn run_egglog_debug(
-    pool: &mut PrimitivePool,
-    conclusion: Rc<Term>,
-    root: &Rc<ProofNode>,
-    database: &Rules,
 ) -> (Result<EGraph, String>, String) {
     let mut egg_functions = EggFunctions::default();
     let mut var_map = HashMap::new();
@@ -963,7 +953,8 @@ pub fn reconstruct_rule(
     database: &Rules,
 ) {
     println!("Elaborating {:?}", conclusion);
-    let result = run_egglog(pool, conclusion, root, database);
+    let (result, egglogcode) = run_egglog(pool, conclusion, root, database);
+    println!("Generated egglog code:\n{}", egglogcode);
     match result {
         Ok(_) => println!("Elaboration succeeded"),
         Err(error) => println!("Elaboration failed: {}", error),
