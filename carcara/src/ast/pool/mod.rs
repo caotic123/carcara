@@ -272,6 +272,8 @@ impl PrimitivePool {
                 | Operator::ReKleeneCross
                 | Operator::ReOption
                 | Operator::ReRange => Sort::RegLan,
+                Operator::Pow2 | Operator::Log2 => Sort::Int,
+                Operator::IsPow2 => Sort::Bool,
                 Operator::RareList => {
                     let element_sort = if let Some(arg) = args.first() {
                         self.compute_sort(arg)
@@ -349,8 +351,8 @@ impl PrimitivePool {
                                         "bitvector parametric sort missing width in zero/sign extend"
                                     )
                                 });
-                                let ext =
-                                    self.add(Term::Const(Constant::Integer(extension_width.into())));
+                                let ext = self
+                                    .add(Term::Const(Constant::Integer(extension_width.into())));
                                 let add = self.add(Term::Op(Operator::Add, vec![ext, width]));
                                 Sort::ParamSort(vec![add], head)
                             }
