@@ -272,6 +272,8 @@ impl PrimitivePool {
                 | Operator::ReKleeneCross
                 | Operator::ReOption
                 | Operator::ReRange => Sort::RegLan,
+                Operator::Pow2 | Operator::Log2 => Sort::Int,
+                Operator::IsPow2 => Sort::Bool,
                 Operator::RareList => {
                     let element_sort = if let Some(arg) = args.first() {
                         self.compute_sort(arg)
