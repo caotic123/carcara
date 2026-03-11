@@ -22,6 +22,7 @@ pub enum EggExpr {
     Op(String),
     Var(u64),
     Const(String),
+    NativeBool(bool),
     Bool(bool),
     Num(Integer),
     String(String),
@@ -138,6 +139,8 @@ macro_rules! egg_expr {
     (false) => { $crate::rare::language::EggExpr::Bool(false) };
     ($lit:literal) => { $crate::rare::language::EggExpr::Literal(($lit).to_string()) };
     ({$expr:expr}) => { $expr };
+    ((native_bool true)) => { $crate::rare::language::EggExpr::NativeBool(true) };
+    ((native_bool false)) => { $crate::rare::language::EggExpr::NativeBool(false) };
 
     ((var $name:tt)) => { $crate::rare::language::EggExpr::Var(egg_expr!(@GET_OP $name).to_string()) };
     ((mk $inner:tt)) => { $crate::rare::language::EggExpr::Mk(Box::new(egg_expr!($inner))) };
@@ -147,7 +150,6 @@ macro_rules! egg_expr {
     ((union $lhs:tt $rhs:tt)) => { $crate::rare::language::EggExpr::Union(Box::new(egg_expr!($lhs)), Box::new(egg_expr!($rhs))) };
     ((set $lhs:tt $rhs:tt)) => { $crate::rare::language::EggExpr::Set(Box::new(egg_expr!($lhs)), Box::new(egg_expr!($rhs))) };
     ((ground $inner:tt)) => { $crate::rare::language::EggExpr::Ground(Box::new(egg_expr!($inner))) };
-    ((get_arith_poly_norm $inner:tt)) => { $crate::rare::language::EggExpr::Call("@$get_arith_poly_norm".into(), vec![egg_expr!($inner)]) };
     ((app $func:tt $arg:tt)) => { $crate::rare::language::EggExpr::App(Box::new(egg_expr!($func)), Box::new(egg_expr!($arg))) };
     (($op:tt)) => { $crate::rare::language::EggExpr::Call(egg_expr!(@GET_OP $op).into(), Vec::new()) };
     (($op:tt $($args:tt)+)) => { $crate::rare::language::EggExpr::Call(egg_expr!(@GET_OP $op).into(), vec![$(egg_expr!($args)),+]) };

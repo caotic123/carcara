@@ -1,1493 +1,820 @@
 (ruleset arith_poly)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;
-; Base theory
-;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; Arith ops required
-(constructor @- (Term) Term)
-(constructor @+ (Term) Term)
 (constructor @* (Term) Term)
+(constructor @- (Term) Term)
 (constructor @/ (Term) Term)
 (constructor @/_total (Term) Term)
-
-; Comparison
-(constructor @= (Term) Term)
-
-; Propositional logic (just "and")
-(constructor @and (Term) Term)
-
-(rewrite
- (Mk (@and (Args (Mk (Bool true)) (Args (Mk (Bool false)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite
- (Mk (@and (Args (Mk (Bool true)) (Args (Mk (Bool true)) (Empty)))))
- (Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite
- (Mk (@and (Args (Mk (Bool false)) (Args (Mk (Bool false)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite
- (Mk (@and (Args (Mk (Bool false)) (Args (Mk (Bool true)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Minimal theory about arith ops
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(rewrite
- (Mk (@+ (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
- (Mk (Num (+ x y)))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@+ (Args (Mk (Real num1 den1)) (Args (Mk (Real num2 den2)) (Empty)))))
- (Mk (Real (+ (* num1 den2) (* num2 den1)) (* den1 den2)))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@* (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
- (Mk (Num (* x y)))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@* (Args (Mk (Num x)) (Args (Mk (Real num den)) (Empty)))))
- (Mk (@* (Args (Mk (Real x 1)) (Args (Mk (Real num den)) (Empty)))))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@* (Args (Mk (Real num den)) (Args (Mk (Num x)) (Empty)))))
- (Mk (@* (Args (Mk (Real num den)) (Args (Mk (Real x 1)) (Empty)))))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@* (Args (Mk (Real num1 den1)) (Args (Mk (Real num2 den2)) (Empty)))))
- (Mk (Real (* num1 num2) (* den1 den2)))
- :ruleset arith_poly)
-
-(rewrite
- (Mk (@- (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
- (Mk (@+ (Args (Mk (Num x)) (Args (Mk (@- (Args (Mk (Num y)) (Empty)))) (Empty)))))
- :ruleset arith_poly)
-
-(rewrite
- (Mk (@- (Args (Mk (Real num1 den1)) (Args (Mk (Real num2 den2)) (Empty)))))
- (Mk (@+ (Args (Mk (Real num1 den1)) (Args (Mk (@- (Args (Mk (Real num2 den2)) 
-                                                         (Empty))))
-                                           (Empty)))))
- :ruleset arith_poly)
-
-(rewrite
- (Mk (@- (Args (Mk (Num x)) (Empty))))
- (Mk (@* (Args (Mk (Num -1)) (Args (Mk (Num x)) (Empty)))))
- :ruleset arith_poly)
-
-(rewrite
- (Mk (@- (Args (Mk (Real num1 den1)) (Empty))))
- (Mk (@* (Args (Mk (Real -1 1)) (Args (Mk (Real num1 den1)) (Empty)))))
- :ruleset arith_poly)
-
-;;;;;;;;;;;;;;;;;;;;;;;
-; Theory of polynomials
-;;;;;;;;;;;;;;;;;;;;;;;
-
-; Constructors of polynomials and related terms.
-(constructor @mon (Term) Term)
-(constructor @poly_zero () Term)
-(constructor @poly (Term) Term)
 (constructor @to_real (Term) Term)
-
-;;;;;;;;;;;;;;;;;;;;;;;;
-; @$is_product
-;;;;;;;;;;;;;;;;;;;;;;;;
-
-; Simple predicate to recognice product expressions.
-(constructor @$is_product (Term) Term)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (@- (Args (Mk a) (Empty)))) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (@+ (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (@- (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (@* (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (@/ (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (@/_total (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (@to_real (Args (Mk a) (Empty)))) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (@poly (Args (Mk m) (Args (Mk p) (Empty))))) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (@poly_zero)) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (Var x)) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (Num x)) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_product (Args (Mk (Real num den)) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-
-;;;;;;;;;;;;;;;;;;;;;;;
-; @$less_or_equal_var
-;;;;;;;;;;;;;;;;;;;;;;;
-
-; Comparison of variables (allowing for other kind of terms to appear 
-; multiplying a variable)
-(constructor @$less_or_equal_var (Term) Term)
-
-(rewrite 
-(Mk (@$less_or_equal_var (Args (Mk (Num a)) (Args (Mk (Num b)) (Empty)))))
-(Mk (Bool true))
-:when ((<= a b))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$less_or_equal_var (Args (Mk (Num a)) (Args (Mk (Num b)) (Empty)))))
-(Mk (Bool false))
-:when ((> a b))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$less_or_equal_var (Args (Mk (Var a)) (Args (Mk (Var b)) (Empty)))))
-(Mk (Bool true))
-:when ((<= a b))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$less_or_equal_var (Args (Mk (Var a)) (Args (Mk (Var b)) (Empty)))))
-(Mk (Bool false))
-:when ((> a b))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$less_or_equal_var (Args (Mk (Num a)) (Args (Mk (Var b)) (Empty)))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$less_or_equal_var (Args (Mk (Var a)) (Args (Mk (Num b)) (Empty)))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$less_or_equal_var (Args (Mk (Real num den)) (Args (Mk (Var b)) (Empty)))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$less_or_equal_var 
-      (Args (Mk (@* (Args (Mk a1) 
-                          (Args (Mk a2) (Empty))))) 
-            (Args (Mk (@* (Args (Mk b1) 
-                                (Args (Mk b2) (Empty))))) 
-                  (Empty)))))
-(Mk (@and (Args (Mk (@$less_or_equal_var 
-                     (Args (Mk a1) (Args (Mk b1) (Empty)))))
-                (Args (Mk (@$less_or_equal_var 
-                           (Args (Mk a2) (Args (Mk b2) (Empty)))))
-                      (Empty)))))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$less_or_equal_var 
-      (Args (Mk (@* (Args (Mk a1) 
-                          (Args (Mk a2) (Empty)))))
-            (Args (Mk b1) (Empty)))))
-(Mk (@and (Args (Mk (@$less_or_equal_var 
-                     (Args (Mk a1) (Args (Mk b1) (Empty)))))
-                (Args (Mk (@$less_or_equal_var 
-                           (Args (Mk a2) (Args (Mk b1) (Empty)))))
-                      (Empty)))))
-:when (
-       (= (Mk (@$is_product (Args (Mk b1) (Empty))))
-          (Mk (Bool false)))
-       )
- :ruleset arith_poly)
-
-; To guarantee that we can reason about the previous side-condition.
-(rule ((Mk (@$less_or_equal_var 
-            (Args (Mk (@* (Args (Mk a1) 
-                                (Args (Mk a2) (Empty)))))
-                  (Args (Mk b1) (Empty)))))) 
-      ((Mk (@$is_product (Args (Mk b1) (Empty)))))
- :ruleset arith_poly)
-
-
-(rewrite 
- (Mk (@$less_or_equal_var 
-      (Args (Mk b1)
-            (Args (Mk (@* (Args (Mk a1) 
-                                (Args (Mk a2) (Empty))))) (Empty)))))
-(Mk (@and (Args (Mk (@$less_or_equal_var 
-                     (Args (Mk b1) (Args (Mk a1) (Empty)))))
-                (Args (Mk (@$less_or_equal_var 
-                           (Args (Mk b1) (Args (Mk a2) (Empty)))))
-                      (Empty)))))
-:when (
-       (= (Mk (@$is_product (Args (Mk b1) (Empty))))
-          (Mk (Bool false)))
-       )
- :ruleset arith_poly)
-
-; To guarantee that we can reason about the previous side-condition.
-(rule ((Mk (@$less_or_equal_var 
-            (Args (Mk b1)
-                  (Args (Mk (@* (Args (Mk a1) 
-                                      (Args (Mk a2) (Empty))))) 
-                        (Empty))))))
-      ((Mk (@$is_product (Args (Mk b1) (Empty)))))
- :ruleset arith_poly)
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;
-; @$is_arith_exp
-;;;;;;;;;;;;;;;;;;;;;;;;
-
-; Simple predicate to recognice arith expressions.
-(constructor @$is_arith_exp (Term) Term)
-
-(rewrite 
-(Mk (@$is_arith_exp (Args (Mk (@- (Args (Mk a) (Empty)))) (Empty))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_arith_exp (Args (Mk (@+ (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_arith_exp (Args (Mk (@- (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_arith_exp (Args (Mk (@* (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_arith_exp (Args (Mk (@/ (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_arith_exp (Args (Mk (@/_total (Args (Mk a) (Args (Mk b) (Empty))))) (Empty))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_arith_exp (Args (Mk (@to_real (Args (Mk a) (Empty)))) (Empty))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_arith_exp (Args (Mk (@poly (Args (Mk m) (Args (Mk p) (Empty))))) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_arith_exp (Args (Mk (@poly_zero)) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$is_arith_exp (Args (Mk (Var x)) (Empty))))
-(Mk (Bool false))
- :ruleset arith_poly)
-
-;;;;;;;;;;;;;;;;;;;;;;;
-; @$equal_arith_terms
-;;;;;;;;;;;;;;;;;;;;;;;
-
-; Comparison of arbitrary arith terms.
-(constructor @$equal_arith_terms (Term) Term)
-
-(rewrite 
-(Mk (@$equal_arith_terms (Args (Mk term) (Args (Mk term) (Empty)))))
-(Mk (Bool true))
- :ruleset arith_poly)
-
-; Var
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Var x)) (Args (Mk (Var y)) (Empty)))))
- (Mk (Bool false))
-; x and y are guaranteed to be numeric literals
- :when ((!= x y))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Var x)) (Args (Mk (Num y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Var x)) 
-                                (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Var x)) 
-                                (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Var x)) 
-                                (Args (Mk (@- (Args (Mk op) (Empty))))
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Var x)) 
-                                (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Var x)) 
-                                (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Var x)) 
-                                (Args (Mk (@/_total (Args (Mk op1) (Args (Mk op2) 
-                                                                         (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Var x)) 
-                                (Args (Mk (@poly_zero)) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Var x)) 
-                                (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-; Num
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
- (Mk (Bool false))
-; x and y are guaranteed to be numeric literals
- :when ((!= x y))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Num x)) (Args (Mk (Var y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Num x)) 
-                                (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Num x)) 
-                                (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Num x)) 
-                                (Args (Mk (@- (Args (Mk op) (Empty))))
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Num x)) 
-                                (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Num x)) 
-                                (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Num x)) 
-                                (Args (Mk (@/_total (Args (Mk op1) (Args (Mk op2) 
-                                                                         (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Num x)) 
-                                (Args (Mk (@poly_zero)) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (Num x)) 
-                                (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-; @+
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (Num y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (Var y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@+ (Args (Mk op3) (Args (Mk op4) (Empty))))) 
-                                      (Empty)))))
- (Mk (@and (Args (Mk (@$equal_arith_terms (Args (Mk op1) (Args (Mk op3) (Empty)))))
-                 (Args (Mk (@$equal_arith_terms (Args (Mk op2) (Args (Mk op4) (Empty)))))
-                       (Empty)))))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op) (Empty))))
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@/_total (Args (Mk op1) (Args (Mk op2) 
-                                                                         (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@poly_zero)) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@+ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-; @*
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (Num y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (Var y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@* (Args (Mk op3) (Args (Mk op4) (Empty))))) 
-                                      (Empty)))))
- (Mk (@and (Args (Mk (@$equal_arith_terms (Args (Mk op1) (Args (Mk op3) (Empty)))))
-                 (Args (Mk (@$equal_arith_terms (Args (Mk op2) (Args (Mk op4) (Empty)))))
-                       (Empty)))))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op) (Empty))))
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@/_total (Args (Mk op1) (Args (Mk op2) 
-                                                                         (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@poly_zero)) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-; @/
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (Num y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (Var y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@/ (Args (Mk op3) (Args (Mk op4) (Empty))))) 
-                                      (Empty)))))
- (Mk (@and (Args (Mk (@$equal_arith_terms (Args (Mk op1) (Args (Mk op3) (Empty)))))
-                 (Args (Mk (@$equal_arith_terms (Args (Mk op2) (Args (Mk op4) (Empty)))))
-                       (Empty)))))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op) (Empty))))
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@/_total (Args (Mk op1) (Args (Mk op2) 
-                                                                         (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@poly_zero)) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-; @-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (Num y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (Var y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op3) (Args (Mk op4) (Empty))))) 
-                                      (Empty)))))
- (Mk (@and (Args (Mk (@$equal_arith_terms (Args (Mk op1) (Args (Mk op3) (Empty)))))
-                 (Args (Mk (@$equal_arith_terms (Args (Mk op2) (Args (Mk op4) (Empty)))))
-                       (Empty)))))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op) (Empty))))
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@/_total (Args (Mk op1) (Args (Mk op2) 
-                                                                         (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@poly_zero)) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Args (Mk op2) (Empty))))) 
-                                (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-; @- unary
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op) (Empty)))) 
-                                (Args (Mk (Num y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op) (Empty)))) 
-                                (Args (Mk (Var y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op) (Empty)))) 
-                                (Args (Mk (@- (Args (Mk op3) (Args (Mk op4) (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op1) (Empty)))) 
-                                (Args (Mk (@- (Args (Mk op2) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (@$equal_arith_terms (Args (Mk op1) 
-                                (Args (Mk op2) 
-                                      (Empty)))))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op) (Empty)))) 
-                                (Args (Mk (@- (Args (Mk op) (Empty))))
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op) (Empty)))) 
-                                (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op) (Empty)))) 
-                                (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op) (Empty)))) 
-                                (Args (Mk (@/_total (Args (Mk op1) (Args (Mk op2) 
-                                                                         (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op) (Empty)))) 
-                                (Args (Mk (@poly_zero)) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@- (Args (Mk op) (Empty)))) 
-                                (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-; @poly_zero
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly_zero)) 
-                                (Args (Mk (Num y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly_zero)) 
-                                (Args (Mk (Var y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly_zero)) 
-                                (Args (Mk (@- (Args (Mk op3) (Args (Mk op4) (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly_zero)) 
-                                (Args (Mk (@- (Args (Mk op2) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly_zero)) 
-                                (Args (Mk (@- (Args (Mk op) (Empty))))
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly_zero)) 
-                                (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly_zero)) 
-                                (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly_zero)) 
-                                (Args (Mk (@/_total (Args (Mk op1) (Args (Mk op2) 
-                                                                         (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly_zero)) 
-                                (Args (Mk (@poly_zero)) 
-                                      (Empty)))))
- (Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly_zero)) 
-                                (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-; @poly
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                (Args (Mk (Num y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                (Args (Mk (Var y)) (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op3) (Args (Mk op4) (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op2) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                (Args (Mk (@- (Args (Mk op) (Empty))))
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                (Args (Mk (@* (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                (Args (Mk (@/ (Args (Mk op1) (Args (Mk op2) 
-                                                                   (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                (Args (Mk (@/_total (Args (Mk op1) (Args (Mk op2) 
-                                                                         (Empty))))) 
-                                      (Empty)))))
- (Mk (Bool false))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly (Args (Mk mon) (Args (Mk poly) 
-                                                                      (Empty))))) 
-                                (Args (Mk (@poly_zero)) 
-                                      (Empty)))))
- (Mk (Bool true))
- :ruleset arith_poly)
-
-(rewrite 
- (Mk (@$equal_arith_terms (Args (Mk (@poly (Args (Mk mon1) (Args (Mk poly1) 
-                                                                      (Empty))))) 
-                                (Args (Mk (@poly (Args (Mk mon2) (Args (Mk poly2) 
-                                                                      (Empty))))) 
-                                      (Empty)))))
- (Mk (@and (Args (Mk (@$equal_arith_terms (Args (Mk mon1) (Args (Mk mon2) (Empty)))))
-                 (Args (Mk (@$equal_arith_terms (Args (Mk poly1) (Args (Mk poly2) 
-                                                                       (Empty)))))
-                       (Empty)))))
- :ruleset arith_poly)
-
-;;;;;;;;;;;;;;;;;;;;;;;
-; $poly_neg
-;;;;;;;;;;;;;;;;;;;;;;;
-(constructor @$poly_neg (Term) Term)
- 
-(rewrite 
-(Mk (@$poly_neg (Args (Mk (@poly_zero)) (Empty))))
-(Mk (@poly_zero))
- :ruleset arith_poly)
-
-(rewrite 
-(Mk (@$poly_neg 
-    (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a) (Args (Mk c) (Empty)))))
-                           (Args (Mk p2) (Empty))))) (Empty))))
-(Mk (@poly 
-    (Args (Mk (@mon (Args (Mk a) (Args (Mk (@- (Args (Mk c) (Empty)))) (Empty)))))
-          (Args (Mk (@$poly_neg (Args (Mk p2) (Empty)))) (Empty)))))
- :ruleset arith_poly)
-
-;;;;;;;;;;;;;;;;;;;;;;;
-; $poly_add
-;;;;;;;;;;;;;;;;;;;;;;;
-(constructor @$poly_add (Term) Term)
-
-; Case (($poly_add @poly.zero p) p)
+(constructor @not (Term) Term)
+(constructor @and (Term) Term)
+(constructor @or (Term) Term)
+(constructor @= (Term) Term)
+(constructor @+ (Term) Term)
+
+;; Keep the user-chosen numeric coercion in the arithmetic-poly ruleset.
 (rewrite
-(Mk (@$poly_add (Args (Mk (@poly_zero)) (Args (Mk p) (Empty)))))
-(Mk p)
- :ruleset arith_poly)
+  (Mk (Num x))
+  (Mk (Real x 1))
+  :ruleset arith_poly)
 
-; Case (($poly_add p @poly.zero) p)
-(rewrite 
-(Mk (@$poly_add (Args (Mk p) (Args (Mk (@poly_zero)) (Empty)))))
-(Mk p)
- :ruleset arith_poly)
+(let rat_zero (bigrat (bigint 0) (bigint 1)))
+(let rat_one (bigrat (bigint 1) (bigint 1)))
+(let rat_neg_one (bigrat (bigint -1) (bigint 1)))
 
-; Case 
-; ($poly_add (@poly (@mon a1 c1) p1) (@poly (@mon a1 c2) p2)) =
-; (@poly (@mon a1 (+ c1 c2)) (@poly_add p1 p2))
-; when (+ c1 c2) != 0
-(rewrite
-(Mk (@$poly_add
-    (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a1) (Args (Mk (Num c1)) (Empty)))))
-                           (Args (Mk p1) (Empty)))))
-          (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a1) (Args (Mk (Num c2)) (Empty)))))
-                           (Args (Mk p2) (Empty)))))
-                 (Empty)))))
-(Mk (@poly (Args (Mk (@mon (Args (Mk a1)
-                           (Args (Mk (@+ (Args (Mk (Num c1)) (Args (Mk (Num c2))
-                                                                   (Empty)))))
-                                 (Empty)))))
-                 (Args (Mk (@$poly_add (Args (Mk p1) (Args (Mk p2) (Empty)))))
-                       (Empty)))))
-:when ((!= (+ c1 c2) 0))
+(datatype G (PlusG G G G) (VarG BigRat Term) (CstG BigRat) (EmptyG))
 
- :ruleset arith_poly)
+(function addG (G G) G :no-merge)
+(relation addG-demand (G G))
 
-; Case 
-; ($poly_add (@poly (@mon a1 c1) p1) (@poly (@mon a1 c2) p2)) =
-; (@poly (@mon a1 (+ c1 c2)) (@poly_add p1 p2))
-; when (+ c1 c2) = 0
-(rewrite
-(Mk (@$poly_add
-    (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a1) (Args (Mk (Num c1)) (Empty)))))
-                           (Args (Mk p1) (Empty)))))
-          (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a1) (Args (Mk (Num c2)) (Empty)))))
-                                 (Args (Mk p2) (Empty)))))
-                (Empty)))))
-(Mk (@$poly_add (Args (Mk p1) (Args (Mk p2) (Empty)))))
-:when ((= (+ c1 c2) 0))
+(function insertG (G G) G :merge old)
+(relation insertG-demand (G G))
 
- :ruleset arith_poly)
+(function scaleG (BigRat G) G :no-merge)
+(relation scaleG-demand (BigRat G))
 
-; Case 
-; ($poly_add (@poly (@mon a1 c1) p1) (@poly (@mon a2 c2) p2)) =
-; (@poly (@mon a1 (+ c1 c2)) (@poly_add p1 p2))
-; when a1 != a2, @$less_or_equal_var a1 a2 = true
-(rewrite
-(Mk (@$poly_add
-    (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a1) (Args (Mk (Num c1)) (Empty)))))
-                           (Args (Mk p1) (Empty)))))
-          (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a2) (Args (Mk (Num c2)) (Empty)))))
-                           (Args (Mk p2) (Empty)))))
-                (Empty)))))
-(Mk (@poly (Args (Mk (@mon (Args (Mk a1) (Args (Mk (Num c1)) (Empty)))))
-                 (Args (Mk (@$poly_add (Args (Mk p1)
-                                       (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a2) 
-                                                        (Args (Mk (Num c2)) 
-                                                              (Empty)))))
-                                                        (Args (Mk p2) (Empty)))))
-                                                    (Empty)))))
-                       (Empty)))))
-:when ((= (Mk (@$equal_arith_terms (Args (Mk a1) (Args (Mk a2) (Empty)))))
-          (Mk (Bool false)))
-       (= (Mk (@$less_or_equal_var (Args (Mk a1) (Args (Mk a2) (Empty))))) 
-          (Mk (Bool true))))
- :ruleset arith_poly)
+(function polyOf (Term) G :no-merge)
+(relation polyOf-demand (Term))
 
-; Ensure that the required terms to reason about the side-conditions are already
-; present in the e-graph
-(rule ((Mk (@$poly_add
-            (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a1) (Args (Mk (Num c1)) 
-                                                                 (Empty)))))
-                                   (Args (Mk p1) (Empty)))))
-                  (Args (Mk (@poly 
-                             (Args (Mk (@mon (Args (Mk a2) 
-                                                   (Args (Mk (Num c2)) 
-                                                         (Empty)))))
-                                         (Args (Mk p2) (Empty)))))
-                        (Empty))))))
+(function eqPolyOf (Term) G :no-merge)
+(relation eqPolyOf-demand (Term))
 
-      ((Mk (@$less_or_equal_var (Args (Mk a1) (Args (Mk a2) (Empty)))))
-       (Mk (@$equal_arith_terms (Args (Mk a1) (Args (Mk a2) (Empty))))))
- :ruleset arith_poly)
+(function isConstG (G) bool :no-merge)
+(relation isConstG-demand (G))
 
-; Case 
-; ($poly_add (@poly (@mon a1 c1) p1) (@poly (@mon a2 c2) p2)) =
-; (@poly (@mon a1 (+ c1 c2)) (@poly_add p1 p2))
-; when a1 != a2, @$less_or_equal_var a1 a2 = false
-(rewrite
-(Mk (@$poly_add
-    (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a1) (Args (Mk (Num c1)) (Empty)))))
-                           (Args (Mk p1) (Empty)))))
-          (Args (Mk (@poly (Args (Mk (@mon (Args (Mk a2) (Args (Mk (Num c2)) (Empty)))))
-                           (Args (Mk p2) (Empty)))))
-                (Empty)))))
-
-(Mk (@poly 
-     (Args (Mk (@mon (Args (Mk a2) (Args (Mk (Num c2)) (Empty)))))
-           (Args 
-            (Mk (@$poly_add (Args (Mk p2)
-                                  (Args (Mk 
-                                         (@poly 
-                                          (Args 
-                                           (Mk (@mon (Args (Mk a1) 
-                                                           (Args (Mk (Num c1)) 
-                                                                 (Empty)))))
-                                           (Args (Mk p1) (Empty)))))
-                                        (Empty)))))
-            (Empty)))))
-:when ((= (Mk (@$equal_arith_terms (Args (Mk a1) (Args (Mk a2) (Empty)))))
-          (Mk (Bool false)))
-       (= (Mk (@$less_or_equal_var (Args (Mk a1) (Args (Mk a2) (Empty))))) 
-          (Mk (Bool false))))
-
- :ruleset arith_poly)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; $poly_mul and related stuff
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(function hasVarG (G) bool :no-merge)
+(relation hasVarG-demand (G))
 
 
-;;;;;;;;;;;;;;;;;;;;;;;
-; $mvar_mul_mvar
-;;;;;;;;;;;;;;;;;;;;;;;
-(constructor @$mvar_mul_mvar (Term) Term)
+(function eqOrientSignG (G) i64 :no-merge)
+(relation eqOrientSignG-demand (G))
 
-; Case ($mvar_mul_mvar (* a1 c1) (* a2 c2))
-;      (eo::cons * a1 ($mvar_mul_mvar c1 (* a2 c2)))
-; when $less_or_equal_var a1 a2 = true
-(rewrite
-(Mk (@$mvar_mul_mvar (Args (Mk (@* (Args (Mk a1) (Args (Mk c1) (Empty)))))
-                     (Args (Mk (@* (Args (Mk a2) (Args (Mk c2) (Empty)))))
-                           (Empty)))))
-(Mk (@* (Args (Mk a1) 
-        (Args (Mk (@$mvar_mul_mvar 
-                  (Args (Mk c1)
-                        (Args (Mk (@* (Args (Mk a2) (Args (Mk c2) (Empty)))))
-                              (Empty)))))
-              (Empty)))))
-:when ((= (Mk (@$less_or_equal_var (Args (Mk a1) (Args (Mk a2) (Empty))))) 
-          (Mk (Bool true))))
+(function canonEqG (G) G :no-merge)
+(relation canonEqG-demand (G))
 
- :ruleset arith_poly)
+;; ------------------------------------------------------------
+;; Conventions:
+;;
+;; 1. Normal form is a right-associated sum of atoms:
+;;      CstG c
+;;      VarG c atom
+;;      PlusG atom poly EmptyG
+;;
+;; 2. EmptyG is only the tail sentinel. We never store it as a
+;;    polynomial result.
+;;
+;; 3. Coefficients and constants live entirely in builtin BigRat.
+;; ------------------------------------------------------------
 
-; Ensure that the required terms to reason about the side-conditions are already
-; present in the e-graph
-(rule ((Mk (@$mvar_mul_mvar (Args (Mk (@* (Args (Mk a1) (Args (Mk c1) (Empty)))))
-                     (Args (Mk (@* (Args (Mk a2) (Args (Mk c2) (Empty)))))
-                           (Empty))))))
+;; ============================================================
+;; isConstG / hasVarG
+;; ============================================================
 
-      ((Mk (@$less_or_equal_var (Args (Mk a1) (Args (Mk a2) (Empty))))))
- :ruleset arith_poly)
+(rule
+  ((isConstG-demand (EmptyG)))
+  ((set (isConstG (EmptyG)) false))
+  :ruleset arith_poly)
 
+(rule
+  ((isConstG-demand (CstG c)))
+  ((set (isConstG (CstG c)) true))
+  :ruleset arith_poly)
 
-; Case ($mvar_mul_mvar (* a1 c1) (* a2 c2))
-;      (eo::cons * a1 ($mvar_mul_mvar c1 (* a2 c2)))
-; when $less_or_equal_var a1 a2 = false
-(rewrite
-(Mk (@$mvar_mul_mvar (Args (Mk (@* (Args (Mk a1) (Args (Mk c1) (Empty)))))
-                           (Args (Mk (@* (Args (Mk a2) (Args (Mk c2) (Empty)))))
-                                 (Empty)))))
-(Mk (@* (Args (Mk a2)
-        (Args (Mk (@$mvar_mul_mvar 
-                  (Args (Mk (@* (Args (Mk a1) (Args (Mk c1) (Empty)))))
-                        (Args (Mk c2) (Empty)))))
-              (Empty)))))
-:when ((= (Mk (@$less_or_equal_var (Args (Mk a1) (Args (Mk a2) (Empty))))) 
-          (Mk (Bool false))))
- :ruleset arith_poly)
+(rule
+  ((isConstG-demand (VarG c x)))
+  ((set (isConstG (VarG c x)) false))
+  :ruleset arith_poly)
 
-; Case ($mvar_mul_mvar (* a1 c1) 1)
-;      (* a1 c1)
-(rewrite
-(Mk (@$mvar_mul_mvar (Args (Mk (@* (Args (Mk a1) (Args (Mk c1) (Empty)))))
-                           (Args (Mk (Num 1)) (Empty)))))
-(Mk (@* (Args (Mk a1) (Args (Mk c1) (Empty)))))
- :ruleset arith_poly)
+(rule
+  ((isConstG-demand (PlusG a b rest)))
+  ((set (isConstG (PlusG a b rest)) false))
+  :ruleset arith_poly)
 
-; Case ($mvar_mul_mvar 1 (* a1 c1))
-;      (* a1 c1)
-(rewrite
-(Mk (@$mvar_mul_mvar (Args (Mk (Num 1))
-                           (Args (Mk (@* (Args (Mk a1) (Args (Mk c1) (Empty))))) 
-                                 (Empty)))))
-(Mk (@* (Args (Mk a1) (Args (Mk c1) (Empty)))))
- :ruleset arith_poly)
+(rule
+  ((hasVarG-demand (EmptyG)))
+  ((set (hasVarG (EmptyG)) false))
+  :ruleset arith_poly)
 
-;;;;;;;;;;;;;;;;;;;;;;;
-; $mon_mul_mon
-;;;;;;;;;;;;;;;;;;;;;;;
-(constructor @$mon_mul_mon (Term) Term)
+(rule
+  ((hasVarG-demand (CstG c)))
+  ((set (hasVarG (CstG c)) false))
+  :ruleset arith_poly)
 
-; Case (($mon_mul_mon (@mon a1 c1) (@mon a2 c2))  
-;       (@mon ($mvar_mul_mvar a1 a2) (eo::mul c1 c2)))
-(rewrite
-(Mk (@$mon_mul_mon (Args (Mk (@mon (Args (Mk a1) (Args (Mk c1) (Empty)))))
-                         (Args (Mk (@mon (Args (Mk a2) (Args (Mk c2) (Empty)))))
-                               (Empty)))))
-(Mk (@mon (Args (Mk (@$mvar_mul_mvar (Args (Mk a1) (Args (Mk a2) (Empty)))))
-                (Args (Mk (@* (Args (Mk c1) (Args (Mk c2) (Empty)))))
-                      (Empty)))))
- :ruleset arith_poly)
+(rule
+  ((hasVarG-demand (VarG c x)))
+  ((set (hasVarG (VarG c x)) true))
+  :ruleset arith_poly)
 
-;;;;;;;;;;;;;;;;;;;;;;;
-; $poly_mul_mon
-;;;;;;;;;;;;;;;;;;;;;;;
-(constructor @$poly_mul_mon (Term) Term)
+(rule
+  ((hasVarG-demand (PlusG a b rest)))
+  ((hasVarG-demand a)
+   (hasVarG-demand b)
+   (hasVarG-demand rest))
+  :ruleset arith_poly)
 
-; Case (($poly_mul_mon m1 (@poly m2 p2)) 
-;       ($poly_add (@poly ($mon_mul_mon m1 m2)) ($poly_mul_mon m1 p2)))
-(rewrite 
-(Mk (@$poly_mul_mon (Args (Mk m1)
-                          (Args (Mk (@poly (Args (Mk m2) (Args (Mk p2) (Empty)))))
-                                (Empty)))))
-(Mk (@$poly_add 
-    (Args (Mk (@poly 
-              (Args (Mk (@$mon_mul_mon (Args (Mk m1) (Args (Mk m2) (Empty)))))
-                    (Args (Mk (@poly_zero)) (Empty)))))
-          (Args (Mk (@$poly_mul_mon (Args (Mk m1) (Args (Mk p2) (Empty)))))
-                          (Empty)))))
- :ruleset arith_poly)
+(rule
+  ((= (hasVarG a) ha)
+   (= (hasVarG b) hb)
+   (= (hasVarG rest) hr)
+   (hasVarG-demand (PlusG a b rest)))
+  ((set (hasVarG (PlusG a b rest)) (or ha (or hb hr))))
+  :ruleset arith_poly)
 
-; Case (($poly_mul_mon m1 @poly.zero)    @poly.zero)
-(rewrite 
-(Mk (@$poly_mul_mon (Args (Mk m1) (Args (Mk (@poly_zero)) (Empty)))))
-(Mk (@poly_zero))
- :ruleset arith_poly)
+;; All polynomial atoms are reduced to hashed `(Var id)` leaves before
+;; insertion, so the old variable-only ordering is enough here.
 
-;;;;;;;;;;;;;;;;;;;;;;;
-; $poly_mul
-;;;;;;;;;;;;;;;;;;;;;;;
+;; ============================================================
+;; addG
+;; ============================================================
 
-(constructor @$poly_mul (Term) Term)
+(rule
+  ((addG-demand (CstG rat_zero) q))
+  ((set (addG (CstG rat_zero) q) q))
+  :ruleset arith_poly)
 
-; Case (($poly_mul (@poly m p1) p) 
-;        ($poly_add ($poly_mul_mon m p) ($poly_mul p1 p)))
-(rewrite 
-(Mk (@$poly_mul (Args (Mk (@poly (Args (Mk m) (Args (Mk p1) (Empty))))) 
-                      (Args (Mk p) (Empty)))))
-(Mk (@$poly_add (Args (Mk (@$poly_mul_mon (Args (Mk m) (Args (Mk p) (Empty)))))
-                      (Args (Mk (@$poly_mul (Args (Mk p1) (Args (Mk p) (Empty)))))
-                            (Empty)))))
- :ruleset arith_poly)
+(rule
+  ((addG-demand p (CstG rat_zero)))
+  ((set (addG p (CstG rat_zero)) p))
+  :ruleset arith_poly)
 
-; Case (($poly_mul @poly.zero p)   @poly.zero)
-(rewrite 
-(Mk (@$poly_mul (Args (Mk (@poly_zero)) 
-                      (Args (Mk p) (Empty)))))
-(Mk (@poly_zero))
- :ruleset arith_poly)
+(rule
+  ((addG-demand (CstG k) q))
+  ((insertG-demand (CstG k) q))
+  :ruleset arith_poly)
 
-; Case (($poly_mul p @poly.zero)   @poly.zero)
-(rewrite 
-(Mk (@$poly_mul (Args (Mk p) 
-                      (Args (Mk (@poly_zero)) (Empty)))))
-(Mk (@poly_zero))
- :ruleset arith_poly)
+(rule
+  ((= (insertG (CstG k) q) s)
+   (addG-demand (CstG k) q))
+  ((set (addG (CstG k) q) s))
+  :ruleset arith_poly)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;
-; $get_arith_poly_norm_div
-;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule
+  ((addG-demand (VarG c x) q))
+  ((insertG-demand (VarG c x) q))
+  :ruleset arith_poly)
 
-(constructor @$get_arith_poly_norm_div (Term) Term)
+(rule
+  ((= (insertG (VarG c x) q) s)
+   (addG-demand (VarG c x) q))
+  ((set (addG (VarG c x) q) s))
+  :ruleset arith_poly)
 
-; Case ($get_arith_poly_norm_div a1 a1p a2) 
-;      ($poly_mul_mon (@mon 1 (eo::qdiv 1/1 a2)) a1p) 
-(rewrite
-(Mk (@$get_arith_poly_norm_div (Args (Mk (Num a1)) 
-                                     (Args (Mk a1p)
-                                           (Args (Mk (Num a2)) 
-                                                 (Empty))))))
-(Mk (@$poly_mul_mon 
-    (Args (Mk (@mon (Args (Mk (Num 1))
-                    (Args (Mk (@/ (Args (Mk (Num 1))
-                                  (Args (Mk (Num a2)) (Empty)))))
-                          (Empty)))))
-          (Args (Mk a1p) (Empty)))))
-:when ((!= a2 0))
- :ruleset arith_poly)
+(rule
+  ((addG-demand (PlusG h t (EmptyG)) q))
+  ((addG-demand t q))
+  :ruleset arith_poly)
 
-; Case ($get_arith_poly_norm_div a1 a1p 0) 
-;      (@poly (@mon (* (/ a1 0)) 1/1))
-(rewrite
-(Mk (@$get_arith_poly_norm_div (Args (Mk (Num a1)) 
-                                     (Args (Mk a1p)
-                                           (Args (Mk (Num 0)) (Empty))))))
-(Mk (@poly (Args (Mk (@mon (Args (@* (Args (Mk (@/ (Args (Mk (Num a1))
-                                                         (Args (Mk (Num 0))
-                                                               (Empty)))))
-                                           (Args (Mk (Num 1)) (Empty))))
-                                  (Args (Mk (Num 1)) (Empty)))))
-                  (Args (Mk (@poly_zero)) (Empty)))))
- :ruleset arith_poly)
+(rule
+  ((= (addG t q) tq)
+   (addG-demand (PlusG h t (EmptyG)) q))
+  ((insertG-demand h tq))
+  :ruleset arith_poly)
 
-;;;;;;;;;;;;;;;;;;;;;;;
-; $get_arith_poly_norm
-;;;;;;;;;;;;;;;;;;;;;;;
-(constructor @$get_arith_poly_norm (Term) Term)
+(rule
+  ((= (addG t q) tq)
+   (= (insertG h tq) s)
+   (addG-demand (PlusG h t (EmptyG)) q))
+  ((set (addG (PlusG h t (EmptyG)) q) s))
+  :ruleset arith_poly)
 
-; Case (($get_arith_poly_norm (- a1))          
-;      ($poly_neg ($get_arith_poly_norm a1)))
-(rewrite
-(Mk (@$get_arith_poly_norm (Args (Mk (@- (Args (Mk a1) (Empty)))) (Empty))))
-(Mk (@$poly_neg (Args (Mk (@$get_arith_poly_norm (Args (Mk a1) (Empty))))
-                      (Empty))))
- :ruleset arith_poly)
+;; ============================================================
+;; insertG
+;; ============================================================
 
-; Case (($get_arith_poly_norm (+ a1 a2))
-;      ($poly_add ($get_arith_poly_norm a1) ($get_arith_poly_norm a2)))
-(rewrite
-(Mk (@$get_arith_poly_norm (Args (Mk (@+ (Args (Mk a1) (Args (Mk a2) (Empty))))) 
-                                 (Empty))))
-(Mk (@$poly_add (Args (Mk (@$get_arith_poly_norm (Args (Mk a1) (Empty))))
-                      (Args (Mk (@$get_arith_poly_norm (Args (Mk a2) (Empty))))
-                            (Empty)))))
- :ruleset arith_poly)
+;; ---------- insert constant ----------
 
-; Case (($get_arith_poly_norm (- a1 a2))
-;       ($poly_add ($get_arith_poly_norm a1) ($poly_neg ($get_arith_poly_norm a2))))
-(rewrite
-(Mk (@$get_arith_poly_norm (Args (Mk (@- (Args (Mk a1) (Args (Mk a2) (Empty))))) 
-                                                                     (Empty))))
-(Mk (@$poly_add (Args (Mk (@$get_arith_poly_norm (Args (Mk a1) (Empty))))
-                      (Args
-                        (Mk (@$poly_neg (Args (Mk (@$get_arith_poly_norm 
-                                                  (Args (Mk a2) (Empty))))
-                                              (Empty))))
-                        (Empty)))))
- :ruleset arith_poly)
+(rule
+  ((insertG-demand (CstG rat_zero) q))
+  ((set (insertG (CstG rat_zero) q) q))
+  :ruleset arith_poly)
 
-; Case (($get_arith_poly_norm (* a1 a2))       
-;      ($poly_mul ($get_arith_poly_norm a1) ($get_arith_poly_norm a2)))
-(rewrite 
-(Mk (@$get_arith_poly_norm (Args (Mk (@* (Args (Mk a1) (Args (Mk a2) (Empty)))))
-                                                                     (Empty))))
-(Mk (@$poly_mul (Args (Mk (@$get_arith_poly_norm (Args (Mk a1) (Empty))))
-                      (Args
-                        (Mk (@$get_arith_poly_norm (Args (Mk a2) (Empty))))
-                        (Empty)))))
- :ruleset arith_poly)
+(rule
+  ((insertG-demand (CstG c) (CstG k)))
+  ((set (insertG (CstG c) (CstG k))
+        (CstG (+ c k))))
+  :ruleset arith_poly)
 
-; Case (($get_arith_poly_norm (/ a1 a2))       
-;      ($get_arith_poly_norm_div a1 ($get_arith_poly_norm a1) a2))
-(rewrite 
-(Mk (@$get_arith_poly_norm (Args (Mk (@/ (Args (Mk a1) (Args (Mk a2) (Empty)))))
-                                 (Empty))))
-(Mk (@$get_arith_poly_norm_div 
-        (Args (Mk a1)
-              (Args (Mk (@$get_arith_poly_norm (Args (Mk a1) (Empty))))
-                    (Args (Mk a2) (Empty))))))
- :ruleset arith_poly)
+(rule
+  ((insertG-demand (CstG c) (VarG d x)))
+  ((set (insertG (CstG c) (VarG d x))
+        (PlusG (CstG c) (VarG d x) (EmptyG))))
+  :ruleset arith_poly)
 
-; Case (($get_arith_poly_norm (/_total a1 a2))       
-;      ($get_arith_poly_norm_div a1 ($get_arith_poly_norm a1) a2))
-(rewrite 
-(Mk (@$get_arith_poly_norm (Args (Mk (@/_total (Args (Mk a1) (Args (Mk a2) (Empty)))))
-                                 (Empty))))
-(Mk (@$get_arith_poly_norm_div 
-        (Args (Mk a1)
-              (Args (Mk (@$get_arith_poly_norm (Args (Mk a1) (Empty))))
-                    (Args (Mk a2) (Empty))))))
- :ruleset arith_poly)
+(rule
+  ((insertG-demand (CstG c) (PlusG (CstG k) t (EmptyG)))
+   (= (+ c k) rat_zero))
+  ((set (insertG (CstG c) (PlusG (CstG k) t (EmptyG)))
+        t))
+  :ruleset arith_poly)
 
+(rule
+  ((insertG-demand (CstG c) (PlusG (CstG k) t (EmptyG)))
+   (!= (+ c k) rat_zero))
+  ((set (insertG (CstG c) (PlusG (CstG k) t (EmptyG)))
+        (PlusG (CstG (+ c k)) t (EmptyG))))
+  :ruleset arith_poly)
 
-; Case (($get_arith_poly_norm (to_real a1)) ($get_arith_poly_norm a1))
-(rewrite 
-(Mk (@$get_arith_poly_norm (Args (Mk (@to_real (Args (Mk x) (Empty)))) (Empty))))
-(Mk (@$get_arith_poly_norm (Args (Mk x) (Empty))))
- :ruleset arith_poly)
+(rule
+  ((insertG-demand (CstG c) (PlusG (VarG d x) t (EmptyG))))
+  ((set (insertG (CstG c) (PlusG (VarG d x) t (EmptyG)))
+        (PlusG (CstG c)
+               (PlusG (VarG d x) t (EmptyG))
+               (EmptyG))))
+  :ruleset arith_poly)
 
-; Case (($get_arith_poly_norm (Num 0)) (@poly.zero)
-(rewrite 
-(Mk (@$get_arith_poly_norm (Args (Mk (Num 0)) (Empty))))
-(Mk (@poly_zero))
- :ruleset arith_poly)
+;; ---------- insert atom ----------
 
-; Case (($get_arith_poly_norm (Num x)) (@poly (@mon 1 x)), when x != 0
-(rewrite 
-(Mk (@$get_arith_poly_norm (Args (Mk (Num x)) (Empty))))
-(Mk (@poly (Args (Mk (@mon (Args (Mk (Num 1)) (Args (Mk (Num x)) (Empty)))))
-                 (Args (Mk (@poly_zero)) (Empty)))))
-:when ((!= x 0))
- :ruleset arith_poly)
+(rule
+  ((insertG-demand (VarG c x) (CstG rat_zero)))
+  ((set (insertG (VarG c x) (CstG rat_zero))
+        (VarG c x)))
+  :ruleset arith_poly)
 
-; Case (($get_arith_poly_norm x (@poly (@mon 1 x)), 
-; when x is not a number, nor an arith exp
-(rewrite 
-(Mk (@$get_arith_poly_norm (Args (Mk x) (Empty))))
-(Mk (@poly (Args (Mk (@mon (Args (Mk (@* (Args (Mk x) (Args (Mk (Num 1)) (Empty)))))
-                             (Args (Mk (Num 1)) (Empty)))))
-                  (Args (Mk (@poly_zero)) (Empty)))))
-:when ((= (Mk (@$is_arith_exp (Args (Mk x) (Empty)))) (Mk (Bool false))))
- :ruleset arith_poly)
+(rule
+  ((insertG-demand (VarG c x) (CstG k))
+   (!= k rat_zero))
+  ((set (insertG (VarG c x) (CstG k))
+        (PlusG (CstG k) (VarG c x) (EmptyG))))
+  :ruleset arith_poly)
 
-; Ensure that the required terms to reason about the side-conditions are already
-; present in the e-graph
-(rule ((Mk (@$get_arith_poly_norm (Args (Mk x) (Empty)))))
+(rule
+  ((insertG-demand (VarG c1 (Var x)) (VarG c2 (Var y)))
+   (= x y)
+   (= (+ c1 c2) rat_zero))
+  ((set (insertG (VarG c1 (Var x)) (VarG c2 (Var y)))
+        (CstG rat_zero)))
+  :ruleset arith_poly)
 
-      ((Mk (@$is_arith_exp (Args (Mk x) (Empty)))))
- :ruleset arith_poly)
+(rule
+  ((insertG-demand (VarG c1 (Var x)) (VarG c2 (Var y)))
+   (= x y)
+   (!= (+ c1 c2) rat_zero))
+  ((set (insertG (VarG c1 (Var x)) (VarG c2 (Var y)))
+        (VarG (+ c1 c2) (Var x))))
+  :ruleset arith_poly)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;
-; arith_poly_norm
-;;;;;;;;;;;;;;;;;;;;;;;;;
-; (declare-rule arith_poly_norm ((U Type) (a U) (b U))
-;   :args ((= a b))
-;   :requires ((($get_arith_poly_norm a) ($get_arith_poly_norm b)))
-;   :conclusion (= a b)
-; )
-(rewrite 
-(Mk poly1)
-(Mk poly2)
-:when ((= (Mk (@$is_arith_exp (Args (Mk poly1) (Empty)))) (Mk (Bool true)))
-       (= (Mk (@$is_arith_exp (Args (Mk poly2) (Empty)))) (Mk (Bool true)))
-       (= (Mk (@$get_arith_poly_norm (Args (Mk poly1) (Empty))))
-          (Mk (@$get_arith_poly_norm (Args (Mk poly2) (Empty))))))
- :ruleset arith_poly)
+(rule
+  ((insertG-demand (VarG c1 (Var x)) (VarG c2 (Var y)))
+   (< x y))
+  ((set (insertG (VarG c1 (Var x)) (VarG c2 (Var y)))
+        (PlusG (VarG c1 (Var x))
+               (VarG c2 (Var y))
+               (EmptyG))))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x)) (VarG c2 (Var y)))
+   (> x y))
+  ((set (insertG (VarG c1 (Var x)) (VarG c2 (Var y)))
+        (PlusG (VarG c2 (Var y))
+               (VarG c1 (Var x))
+               (EmptyG))))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c x) (PlusG (CstG k) t (EmptyG))))
+  ((insertG-demand (VarG c x) t))
+  :ruleset arith_poly)
+
+(rule
+  ((= (insertG (VarG c x) t) s)
+   (insertG-demand (VarG c x) (PlusG (CstG k) t (EmptyG))))
+  ((set (insertG (VarG c x) (PlusG (CstG k) t (EmptyG)))
+        (PlusG (CstG k) s (EmptyG))))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+   (= x y)
+   (= (+ c1 c2) rat_zero))
+  ((set (insertG (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+        t))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+   (= x y)
+   (!= (+ c1 c2) rat_zero))
+  ((set (insertG (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+        (PlusG (VarG (+ c1 c2) (Var x)) t (EmptyG))))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+   (< x y))
+  ((set (insertG (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+        (PlusG (VarG c1 (Var x))
+               (PlusG (VarG c2 (Var y)) t (EmptyG))
+               (EmptyG))))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+   (> x y))
+  ((insertG-demand (VarG c1 (Var x)) t))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+   (> x y)
+   (= (insertG (VarG c1 (Var x)) t) s))
+  ((set (insertG (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+        (PlusG (VarG c2 (Var y)) s (EmptyG))))
+  :ruleset arith_poly)
+
+;; ============================================================
+;; scaleG
+;; ============================================================
+
+(rule
+  ((scaleG-demand rat_zero p))
+  ((set (scaleG rat_zero p) (CstG rat_zero)))
+  :ruleset arith_poly)
+
+(rule
+  ((scaleG-demand rat_one p))
+  ((set (scaleG rat_one p) p))
+  :ruleset arith_poly)
+
+(rule
+  ((scaleG-demand k (CstG c)))
+  ((set (scaleG k (CstG c))
+        (CstG (* k c))))
+  :ruleset arith_poly)
+
+(rule
+  ((scaleG-demand k (VarG c x))
+   (= (* k c) rat_zero))
+  ((set (scaleG k (VarG c x))
+        (CstG rat_zero)))
+  :ruleset arith_poly)
+
+(rule
+  ((scaleG-demand k (VarG c x))
+   (!= (* k c) rat_zero))
+  ((set (scaleG k (VarG c x))
+        (VarG (* k c) x)))
+  :ruleset arith_poly)
+
+(rule
+  ((scaleG-demand k (PlusG h t (EmptyG))))
+  ((scaleG-demand k h)
+   (scaleG-demand k t))
+  :ruleset arith_poly)
+
+(rule
+  ((= (scaleG k h) sh)
+   (= (scaleG k t) st)
+   (scaleG-demand k (PlusG h t (EmptyG))))
+  ((addG-demand sh st))
+  :ruleset arith_poly)
+
+(rule
+  ((= (scaleG k h) sh)
+   (= (scaleG k t) st)
+   (= (addG sh st) s)
+   (scaleG-demand k (PlusG h t (EmptyG))))
+  ((set (scaleG k (PlusG h t (EmptyG))) s))
+  :ruleset arith_poly)
+
+;; ============================================================
+;; polyOf
+;; ============================================================
+
+(rule
+  ((polyOf-demand (Mk (Num i))))
+  ((set (polyOf (Mk (Num i)))
+        (CstG (bigrat (bigint i) (bigint 1)))))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (Real n d))))
+  ((set (polyOf (Mk (Real n d)))
+        (CstG (bigrat (bigint n) (bigint d)))))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (Var t))))
+  ((set (polyOf (Mk (Var t)))
+        (VarG rat_one (Var t))))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Empty)))
+  ((set (polyOf (Empty))
+        (CstG rat_zero)))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@+ (Args t (Empty))))))
+  ((polyOf-demand t))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@+ (Args t (Empty)))))
+   (= (polyOf t) p))
+  ((set (polyOf (Mk (@+ (Args t (Empty))))) p))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@- (Args t (Empty))))))
+  ((polyOf-demand t))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@- (Args t (Empty)))))
+   (= (polyOf t) p))
+  ((scaleG-demand rat_neg_one p))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@- (Args t (Empty)))))
+   (= (polyOf t) p)
+   (= (scaleG rat_neg_one p) s))
+  ((set (polyOf (Mk (@- (Args t (Empty))))) s))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@+ (Args t (Args t' (Empty))))))
+   (!= t' (Empty)))
+  ((polyOf-demand t)
+   (polyOf-demand t'))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@+ (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) p1)
+   (= (polyOf t') p2))
+  ((addG-demand p1 p2))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@+ (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) p1)
+   (= (polyOf t') p2)
+   (= (addG p1 p2) s))
+  ((set (polyOf (Mk (@+ (Args t (Args t' (Empty)))))) s))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@- (Args t (Args t' (Empty))))))
+   (!= t' (Empty)))
+  ((polyOf-demand t)
+   (polyOf-demand t'))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@- (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) p1)
+   (= (polyOf t') p2))
+  ((scaleG-demand rat_neg_one p2))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@- (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) p1)
+   (= (polyOf t') p2)
+   (= (scaleG rat_neg_one p2) neg_p2))
+  ((addG-demand p1 neg_p2))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@- (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) p1)
+   (= (polyOf t') p2)
+   (= (scaleG rat_neg_one p2) neg_p2)
+   (= (addG p1 neg_p2) s))
+  ((set (polyOf (Mk (@- (Args t (Args t' (Empty)))))) s))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty)))
+  ((polyOf-demand t)
+   (polyOf-demand t'))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) p1)
+   (= (polyOf t') p2))
+  ((isConstG-demand p1)
+   (isConstG-demand p2))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) (CstG k))
+   (= (polyOf t') p))
+  ((scaleG-demand k p))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) p)
+   (= (polyOf t') (CstG k)))
+  ((scaleG-demand k p))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) (CstG k))
+   (= (polyOf t') p)
+   (= (scaleG k p) s))
+  ((set (polyOf (Mk (@* (Args t (Args t' (Empty)))))) s))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) p)
+   (= (polyOf t') (CstG k))
+   (= (scaleG k p) s))
+  ((set (polyOf (Mk (@* (Args t (Args t' (Empty)))))) s))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) p1)
+   (= (polyOf t') p2)
+   (= (isConstG p1) false)
+   (= (isConstG p2) false))
+  ((set (polyOf (Mk (@* (Args t (Args t' (Empty))))))
+        (VarG rat_one
+              (Var (arith_poly_atom_hash
+                     (Mk (@* (Args t (Args t' (Empty))))))))))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@to_real (Args t (Empty))))))
+  ((polyOf-demand t))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@to_real (Args t (Empty)))))
+   (= (polyOf t) p))
+  ((set (polyOf (Mk (@to_real (Args t (Empty))))) p))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/ (Args t (Args d (Empty))))))
+   (!= d (Empty)))
+  ((polyOf-demand t)
+   (polyOf-demand d))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/ (Args t (Args d (Empty))))))
+   (!= d (Empty))
+   (= (polyOf d) pd))
+  ((isConstG-demand pd))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/ (Args t (Args d (Empty))))))
+   (!= d (Empty))
+   (= (polyOf t) pt)
+   (= (polyOf d) (CstG k))
+   (!= k rat_zero))
+  ((scaleG-demand (/ rat_one k) pt))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/ (Args t (Args d (Empty))))))
+   (!= d (Empty))
+   (= (polyOf t) pt)
+   (= (polyOf d) (CstG k))
+   (!= k rat_zero)
+   (= (scaleG (/ rat_one k) pt) s))
+  ((set (polyOf (Mk (@/ (Args t (Args d (Empty)))))) s))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/ (Args t (Args d (Empty))))))
+   (!= d (Empty))
+   (= (polyOf d) (CstG rat_zero)))
+  ((set (polyOf (Mk (@/ (Args t (Args d (Empty))))))
+        (VarG rat_one
+              (Var (arith_poly_atom_hash
+                     (Mk (@/ (Args t (Args d (Empty))))))))))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/ (Args t (Args d (Empty))))))
+   (!= d (Empty))
+   (= (polyOf d) pd)
+   (= (isConstG pd) false))
+  ((set (polyOf (Mk (@/ (Args t (Args d (Empty))))))
+        (VarG rat_one
+              (Var (arith_poly_atom_hash
+                     (Mk (@/ (Args t (Args d (Empty))))))))))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/_total (Args t (Args d (Empty))))))
+   (!= d (Empty)))
+  ((polyOf-demand t)
+   (polyOf-demand d))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/_total (Args t (Args d (Empty))))))
+   (!= d (Empty))
+   (= (polyOf d) pd))
+  ((isConstG-demand pd))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/_total (Args t (Args d (Empty))))))
+   (!= d (Empty))
+   (= (polyOf t) pt)
+   (= (polyOf d) (CstG k))
+   (!= k rat_zero))
+  ((scaleG-demand (/ rat_one k) pt))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/_total (Args t (Args d (Empty))))))
+   (!= d (Empty))
+   (= (polyOf t) pt)
+   (= (polyOf d) (CstG k))
+   (!= k rat_zero)
+   (= (scaleG (/ rat_one k) pt) s))
+  ((set (polyOf (Mk (@/_total (Args t (Args d (Empty)))))) s))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/_total (Args t (Args d (Empty))))))
+   (!= d (Empty))
+   (= (polyOf d) (CstG rat_zero)))
+  ((set (polyOf (Mk (@/_total (Args t (Args d (Empty))))))
+        (VarG rat_one
+              (Var (arith_poly_atom_hash
+                     (Mk (@/_total (Args t (Args d (Empty))))))))))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@/_total (Args t (Args d (Empty))))))
+   (!= d (Empty))
+   (= (polyOf d) pd)
+   (= (isConstG pd) false))
+  ((set (polyOf (Mk (@/_total (Args t (Args d (Empty))))))
+        (VarG rat_one
+              (Var (arith_poly_atom_hash
+                     (Mk (@/_total (Args t (Args d (Empty))))))))))
+  :ruleset arith_poly)
+
+;; ============================================================
+;; eqPolyOf
+;; ============================================================
+
+(rule
+  ((eqPolyOf-demand (Mk (@= (Args t1 (Args t2 (Empty))))))
+   (!= t2 (Empty)))
+  ((polyOf-demand t1)
+   (polyOf-demand t2))
+  :ruleset arith_poly)
+
+(rule
+  ((eqPolyOf-demand (Mk (@= (Args t1 (Args t2 (Empty))))))
+   (!= t2 (Empty))
+   (= (polyOf t1) p1)
+   (= (polyOf t2) p2))
+  ((scaleG-demand rat_neg_one p2))
+  :ruleset arith_poly)
+
+(rule
+  ((eqPolyOf-demand (Mk (@= (Args t1 (Args t2 (Empty))))))
+   (!= t2 (Empty))
+   (= (polyOf t1) p1)
+   (= (polyOf t2) p2)
+   (= (scaleG rat_neg_one p2) neg_p2))
+  ((addG-demand p1 neg_p2))
+  :ruleset arith_poly)
+
+(rule
+  ((eqPolyOf-demand (Mk (@= (Args t1 (Args t2 (Empty))))))
+   (!= t2 (Empty))
+   (= (polyOf t1) p1)
+   (= (polyOf t2) p2)
+   (= (scaleG rat_neg_one p2) neg_p2)
+   (= (addG p1 neg_p2) diff))
+  ((canonEqG-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((eqPolyOf-demand (Mk (@= (Args t1 (Args t2 (Empty))))))
+   (!= t2 (Empty))
+   (= (polyOf t1) p1)
+   (= (polyOf t2) p2)
+   (= (scaleG rat_neg_one p2) neg_p2)
+   (= (addG p1 neg_p2) diff)
+   (= (canonEqG diff) canon_diff))
+  ((set (eqPolyOf (Mk (@= (Args t1 (Args t2 (Empty)))))) canon_diff))
+  :ruleset arith_poly)
+
+;; ============================================================
+;; eqOrientSignG / canonEqG
+;; ============================================================
+
+(rule
+  ((eqOrientSignG-demand (CstG k))
+   (< k rat_zero))
+  ((set (eqOrientSignG (CstG k)) -1))
+  :ruleset arith_poly)
+
+(rule
+  ((eqOrientSignG-demand (CstG k))
+   (>= k rat_zero))
+  ((set (eqOrientSignG (CstG k)) 1))
+  :ruleset arith_poly)
+
+(rule
+  ((eqOrientSignG-demand (VarG c x))
+   (< c rat_zero))
+  ((set (eqOrientSignG (VarG c x)) -1))
+  :ruleset arith_poly)
+
+(rule
+  ((eqOrientSignG-demand (VarG c x))
+   (>= c rat_zero))
+  ((set (eqOrientSignG (VarG c x)) 1))
+  :ruleset arith_poly)
+
+(rule
+  ((eqOrientSignG-demand (PlusG a b rest)))
+  ((hasVarG-demand a)
+   (hasVarG-demand b)
+   (hasVarG-demand rest)
+   (eqOrientSignG-demand a)
+   (eqOrientSignG-demand b)
+   (eqOrientSignG-demand rest))
+  :ruleset arith_poly)
+
+(rule
+  ((= (hasVarG a) true)
+   (= (eqOrientSignG a) sa)
+   (eqOrientSignG-demand (PlusG a b rest)))
+  ((set (eqOrientSignG (PlusG a b rest)) sa))
+  :ruleset arith_poly)
+
+(rule
+  ((= (hasVarG a) false)
+   (= (hasVarG b) true)
+   (= (eqOrientSignG b) sb)
+   (eqOrientSignG-demand (PlusG a b rest)))
+  ((set (eqOrientSignG (PlusG a b rest)) sb))
+  :ruleset arith_poly)
+
+(rule
+  ((= (hasVarG a) false)
+   (= (hasVarG b) false)
+   (= (hasVarG rest) true)
+   (= (eqOrientSignG rest) sr)
+   (eqOrientSignG-demand (PlusG a b rest)))
+  ((set (eqOrientSignG (PlusG a b rest)) sr))
+  :ruleset arith_poly)
+
+(rule
+  ((= (hasVarG a) false)
+   (= (hasVarG b) false)
+   (= (hasVarG rest) false)
+   (= (eqOrientSignG a) sa)
+   (eqOrientSignG-demand (PlusG a b rest)))
+  ((set (eqOrientSignG (PlusG a b rest)) sa))
+  :ruleset arith_poly)
+
+(rule
+  ((canonEqG-demand g))
+  ((eqOrientSignG-demand g))
+  :ruleset arith_poly)
+
+(rule
+  ((= (eqOrientSignG g) s)
+   (< s 0)
+   (canonEqG-demand g))
+  ((scaleG-demand rat_neg_one g))
+  :ruleset arith_poly)
+
+(rule
+  ((= (eqOrientSignG g) s)
+   (< s 0)
+   (= (scaleG rat_neg_one g) neg_g)
+   (canonEqG-demand g))
+  ((set (canonEqG g) neg_g))
+  :ruleset arith_poly)
+
+(rule
+  ((= (eqOrientSignG g) s)
+   (>= s 0)
+   (canonEqG-demand g))
+  ((set (canonEqG g) g))
+  :ruleset arith_poly)

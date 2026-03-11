@@ -1,0 +1,386 @@
+(constructor @< (Term) Term)
+(constructor @<= (Term) Term)
+(constructor @> (Term) Term)
+(constructor @>= (Term) Term)
+(constructor GeqKey (G) Term)
+(constructor GtKey (G) Term)
+(constructor LeqKey (G) Term)
+(constructor LtKey (G) Term)
+
+(relation arithPolyNormRelDiff (Term Term Term))
+
+(function arithPolyNormRelCoeff (Term) BigRat :no-merge)
+(relation arithPolyNormRelCoeff-demand (Term))
+
+(function relScaleAbsG (G) BigRat :no-merge)
+(relation relScaleAbsG-demand (G))
+
+(function canonRelG (G) G :merge old)
+(relation canonRelG-demand (G))
+
+(function relPolyOf (Term) G :merge old)
+(relation relPolyOf-demand (Term))
+
+(rule
+  ((= dx (Mk (@- (Args x1 (Args x2 (Empty)))))))
+  ((arithPolyNormRelDiff dx x1 x2))
+  :ruleset arith_poly)
+
+(rule
+  ((= dx
+      (Mk (@to_real (Args (Mk (@- (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((arithPolyNormRelDiff dx x1 x2))
+  :ruleset arith_poly)
+
+(rule
+  ((arithPolyNormRelCoeff-demand (Mk (Num i))))
+  ((set (arithPolyNormRelCoeff (Mk (Num i)))
+        (bigrat (bigint i) (bigint 1))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithPolyNormRelCoeff-demand (Mk (Real n d))))
+  ((set (arithPolyNormRelCoeff (Mk (Real n d)))
+        (bigrat (bigint n) (bigint d))))
+  :ruleset arith_poly)
+
+;; Canonicalize order-relation differences up to positive scaling. We divide by the
+;; absolute value of the first variable coefficient when one exists, and otherwise by
+;; the absolute value of the constant. This makes positively scaled affine forms compare
+;; equal without changing the truth of <, <=, >, >=.
+(rule
+  ((relScaleAbsG-demand (CstG k))
+   (< k rat_zero))
+  ((set (relScaleAbsG (CstG k)) (* rat_neg_one k)))
+  :ruleset arith_poly)
+
+(rule
+  ((relScaleAbsG-demand (CstG k))
+   (>= k rat_zero))
+  ((set (relScaleAbsG (CstG k)) k))
+  :ruleset arith_poly)
+
+(rule
+  ((relScaleAbsG-demand (VarG c x))
+   (< c rat_zero))
+  ((set (relScaleAbsG (VarG c x)) (* rat_neg_one c)))
+  :ruleset arith_poly)
+
+(rule
+  ((relScaleAbsG-demand (VarG c x))
+   (>= c rat_zero))
+  ((set (relScaleAbsG (VarG c x)) c))
+  :ruleset arith_poly)
+
+(rule
+  ((relScaleAbsG-demand (PlusG a b rest)))
+  ((hasVarG-demand a)
+   (hasVarG-demand b)
+   (hasVarG-demand rest)
+   (relScaleAbsG-demand a)
+   (relScaleAbsG-demand b)
+   (relScaleAbsG-demand rest))
+  :ruleset arith_poly)
+
+(rule
+  ((= (hasVarG a) true)
+   (= (relScaleAbsG a) sa)
+   (relScaleAbsG-demand (PlusG a b rest)))
+  ((set (relScaleAbsG (PlusG a b rest)) sa))
+  :ruleset arith_poly)
+
+(rule
+  ((= (hasVarG a) false)
+   (= (hasVarG b) true)
+   (= (relScaleAbsG b) sb)
+   (relScaleAbsG-demand (PlusG a b rest)))
+  ((set (relScaleAbsG (PlusG a b rest)) sb))
+  :ruleset arith_poly)
+
+(rule
+  ((= (hasVarG a) false)
+   (= (hasVarG b) false)
+   (= (hasVarG rest) true)
+   (= (relScaleAbsG rest) sr)
+   (relScaleAbsG-demand (PlusG a b rest)))
+  ((set (relScaleAbsG (PlusG a b rest)) sr))
+  :ruleset arith_poly)
+
+(rule
+  ((= (hasVarG a) false)
+   (= (hasVarG b) false)
+   (= (hasVarG rest) false)
+   (= (relScaleAbsG a) sa)
+   (relScaleAbsG-demand (PlusG a b rest)))
+  ((set (relScaleAbsG (PlusG a b rest)) sa))
+  :ruleset arith_poly)
+
+(rule
+  ((canonRelG-demand g))
+  ((relScaleAbsG-demand g))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsG g) rat_zero)
+   (canonRelG-demand g))
+  ((set (canonRelG g) g))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsG g) k)
+   (!= k rat_zero)
+   (canonRelG-demand g))
+  ((scaleG-demand (/ rat_one k) g))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsG g) k)
+   (!= k rat_zero)
+   (= (scaleG (/ rat_one k) g) scaled)
+   (canonRelG-demand g))
+  ((set (canonRelG g) scaled))
+  :ruleset arith_poly)
+
+;; Direct relation normalization: normalize each order atom through its difference polynomial
+;; and union it with a canonical key term. Equivalent order atoms then meet in the same
+;; eclass through the shared key, without requiring an explicit scaled-difference premise
+;; and without pairing every relation against every other relation.
+(rule
+  ((= lhs (Mk (@>= (Args x1 (Args x2 (Empty)))))))
+  ((relPolyOf-demand lhs))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty)))))))
+  ((polyOf-demand (Mk (@- (Args x1 (Args x2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty))))))
+   (= (polyOf (Mk (@- (Args x1 (Args x2 (Empty)))))) diff))
+  ((canonRelG-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty))))))
+   (= (polyOf (Mk (@- (Args x1 (Args x2 (Empty)))))) diff)
+   (= (canonRelG diff) canon))
+  ((set (relPolyOf (Mk (@>= (Args x1 (Args x2 (Empty)))))) canon))
+  :ruleset arith_poly)
+
+(rule
+  ((= lhs (Mk (@>= (Args x1 (Args x2 (Empty))))))
+   (= (relPolyOf lhs) canon))
+  ((union lhs (GeqKey canon)))
+  :ruleset arith_poly)
+
+(rule
+  ((= lhs (Mk (@> (Args x1 (Args x2 (Empty)))))))
+  ((relPolyOf-demand lhs))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@> (Args x1 (Args x2 (Empty)))))))
+  ((polyOf-demand (Mk (@- (Args x1 (Args x2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@> (Args x1 (Args x2 (Empty))))))
+   (= (polyOf (Mk (@- (Args x1 (Args x2 (Empty)))))) diff))
+  ((canonRelG-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@> (Args x1 (Args x2 (Empty))))))
+   (= (polyOf (Mk (@- (Args x1 (Args x2 (Empty)))))) diff)
+   (= (canonRelG diff) canon))
+  ((set (relPolyOf (Mk (@> (Args x1 (Args x2 (Empty)))))) canon))
+  :ruleset arith_poly)
+
+(rule
+  ((= lhs (Mk (@> (Args x1 (Args x2 (Empty))))))
+   (= (relPolyOf lhs) canon))
+  ((union lhs (GtKey canon)))
+  :ruleset arith_poly)
+
+(rule
+  ((= lhs (Mk (@<= (Args x1 (Args x2 (Empty)))))))
+  ((relPolyOf-demand lhs))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty)))))))
+  ((polyOf-demand (Mk (@- (Args x2 (Args x1 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty))))))
+   (= (polyOf (Mk (@- (Args x2 (Args x1 (Empty)))))) diff))
+  ((canonRelG-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty))))))
+   (= (polyOf (Mk (@- (Args x2 (Args x1 (Empty)))))) diff)
+   (= (canonRelG diff) canon))
+  ((set (relPolyOf (Mk (@<= (Args x1 (Args x2 (Empty)))))) canon))
+  :ruleset arith_poly)
+
+(rule
+  ((= lhs (Mk (@<= (Args x1 (Args x2 (Empty))))))
+   (= (relPolyOf lhs) canon))
+  ((union lhs (LeqKey canon)))
+  :ruleset arith_poly)
+
+(rule
+  ((= lhs (Mk (@< (Args x1 (Args x2 (Empty)))))))
+  ((relPolyOf-demand lhs))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@< (Args x1 (Args x2 (Empty)))))))
+  ((polyOf-demand (Mk (@- (Args x2 (Args x1 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@< (Args x1 (Args x2 (Empty))))))
+   (= (polyOf (Mk (@- (Args x2 (Args x1 (Empty)))))) diff))
+  ((canonRelG-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@< (Args x1 (Args x2 (Empty))))))
+   (= (polyOf (Mk (@- (Args x2 (Args x1 (Empty)))))) diff)
+   (= (canonRelG diff) canon))
+  ((set (relPolyOf (Mk (@< (Args x1 (Args x2 (Empty)))))) canon))
+  :ruleset arith_poly)
+
+(rule
+  ((= lhs (Mk (@< (Args x1 (Args x2 (Empty))))))
+   (= (relPolyOf lhs) canon))
+  ((union lhs (LtKey canon)))
+  :ruleset arith_poly)
+
+;; Whenever a premise has the shape cx * dx = cy * dy, extract the relation
+;; arguments from dx and dy and normalize literal coefficients to BigRat.
+(rule
+  ((= (Mk (@* (Args cx (Args dx (Empty)))))
+      (Mk (@* (Args cy (Args dy (Empty)))))))
+  ((arithPolyNormRelCoeff-demand cx)
+   (arithPolyNormRelCoeff-demand cy))
+  :ruleset arith_poly)
+
+;; Equality needs only the scaled-difference premise shape.
+(rule
+  ((= (Mk (@* (Args cx (Args dx (Empty)))))
+      (Mk (@* (Args cy (Args dy (Empty))))))
+   (arithPolyNormRelDiff dx x1 x2)
+   (arithPolyNormRelDiff dy y1 y2))
+  ((union (Mk (@= (Args x1 (Args x2 (Empty)))))
+          (Mk (@= (Args y1 (Args y2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((= (Mk (@* (Args cx (Args dx (Empty)))))
+      (Mk (@* (Args cy (Args dy (Empty))))))
+   (arithPolyNormRelDiff dx x1 x2)
+   (arithPolyNormRelDiff dy y1 y2)
+   (= (arithPolyNormRelCoeff cx) kx)
+   (= (arithPolyNormRelCoeff cy) ky)
+   (< rat_zero kx)
+   (< rat_zero ky))
+  ((union (Mk (@< (Args x1 (Args x2 (Empty)))))
+          (Mk (@< (Args y1 (Args y2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((= (Mk (@* (Args cx (Args dx (Empty)))))
+      (Mk (@* (Args cy (Args dy (Empty))))))
+   (arithPolyNormRelDiff dx x1 x2)
+   (arithPolyNormRelDiff dy y1 y2)
+   (= (arithPolyNormRelCoeff cx) kx)
+   (= (arithPolyNormRelCoeff cy) ky)
+   (< kx rat_zero)
+   (< ky rat_zero))
+  ((union (Mk (@< (Args x1 (Args x2 (Empty)))))
+          (Mk (@< (Args y1 (Args y2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((= (Mk (@* (Args cx (Args dx (Empty)))))
+      (Mk (@* (Args cy (Args dy (Empty))))))
+   (arithPolyNormRelDiff dx x1 x2)
+   (arithPolyNormRelDiff dy y1 y2)
+   (= (arithPolyNormRelCoeff cx) kx)
+   (= (arithPolyNormRelCoeff cy) ky)
+   (< rat_zero kx)
+   (< rat_zero ky))
+  ((union (Mk (@<= (Args x1 (Args x2 (Empty)))))
+          (Mk (@<= (Args y1 (Args y2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((= (Mk (@* (Args cx (Args dx (Empty)))))
+      (Mk (@* (Args cy (Args dy (Empty))))))
+   (arithPolyNormRelDiff dx x1 x2)
+   (arithPolyNormRelDiff dy y1 y2)
+   (= (arithPolyNormRelCoeff cx) kx)
+   (= (arithPolyNormRelCoeff cy) ky)
+   (< kx rat_zero)
+   (< ky rat_zero))
+  ((union (Mk (@<= (Args x1 (Args x2 (Empty)))))
+          (Mk (@<= (Args y1 (Args y2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((= (Mk (@* (Args cx (Args dx (Empty)))))
+      (Mk (@* (Args cy (Args dy (Empty))))))
+   (arithPolyNormRelDiff dx x1 x2)
+   (arithPolyNormRelDiff dy y1 y2)
+   (= (arithPolyNormRelCoeff cx) kx)
+   (= (arithPolyNormRelCoeff cy) ky)
+   (< rat_zero kx)
+   (< rat_zero ky))
+  ((union (Mk (@> (Args x1 (Args x2 (Empty)))))
+          (Mk (@> (Args y1 (Args y2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((= (Mk (@* (Args cx (Args dx (Empty)))))
+      (Mk (@* (Args cy (Args dy (Empty))))))
+   (arithPolyNormRelDiff dx x1 x2)
+   (arithPolyNormRelDiff dy y1 y2)
+   (= (arithPolyNormRelCoeff cx) kx)
+   (= (arithPolyNormRelCoeff cy) ky)
+   (< kx rat_zero)
+   (< ky rat_zero))
+  ((union (Mk (@> (Args x1 (Args x2 (Empty)))))
+          (Mk (@> (Args y1 (Args y2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((= (Mk (@* (Args cx (Args dx (Empty)))))
+      (Mk (@* (Args cy (Args dy (Empty))))))
+   (arithPolyNormRelDiff dx x1 x2)
+   (arithPolyNormRelDiff dy y1 y2)
+   (= (arithPolyNormRelCoeff cx) kx)
+   (= (arithPolyNormRelCoeff cy) ky)
+   (< rat_zero kx)
+   (< rat_zero ky))
+  ((union (Mk (@>= (Args x1 (Args x2 (Empty)))))
+          (Mk (@>= (Args y1 (Args y2 (Empty)))))))
+  :ruleset arith_poly)
+  
+
+(rule
+  ((= (Mk (@* (Args cx (Args dx (Empty)))))
+      (Mk (@* (Args cy (Args dy (Empty))))))
+   (arithPolyNormRelDiff dx x1 x2)
+   (arithPolyNormRelDiff dy y1 y2)
+   (= (arithPolyNormRelCoeff cx) kx)
+   (= (arithPolyNormRelCoeff cy) ky)
+   (< kx rat_zero)
+   (< ky rat_zero))
+  ((union (Mk (@>= (Args x1 (Args x2 (Empty)))))
+          (Mk (@>= (Args y1 (Args y2 (Empty)))))))
+  :ruleset arith_poly)

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 
 use crate::ast::{Operator, PrimitivePool, Rc, Sort, Term, TermPool};
 
@@ -92,6 +92,44 @@ pub fn collect_vars(root: &Rc<Term>, collect_functions: bool) -> IndexMap<String
     let mut map = IndexMap::<String, Rc<Term>>::new();
     visit(&root, &mut map, collect_functions);
     map.into_iter().collect()
+}
+
+pub fn collect_subterms(root: &Rc<Term>) -> Vec<Rc<Term>> {
+    fn visit(term: &Rc<Term>, acc: &mut IndexSet<Rc<Term>>) {
+        if !acc.insert(term.clone()) {
+            return;
+        }
+
+        match &**term {
+            Term::Const(_) | Term::Var(_, _) | Term::Sort(_) => {}
+            Term::App(fun, args) => {
+                visit(fun, acc);
+                for arg in args {
+                    visit(arg, acc);
+                }
+            }
+            Term::Op(_, args) => {
+                for arg in args {
+                    visit(arg, acc);
+                }
+            }
+            Term::Binder(_, bindings, body) | Term::Let(bindings, body) => {
+                for (_, value) in bindings {
+                    visit(value, acc);
+                }
+                visit(body, acc);
+            }
+            Term::ParamOp { op_args, args, .. } => {
+                for arg in op_args.iter().chain(args.iter()) {
+                    visit(arg, acc);
+                }
+            }
+        }
+    }
+
+    let mut terms = IndexSet::new();
+    visit(root, &mut terms);
+    terms.into_iter().collect()
 }
 
 // Notice this unify patterns in both directions, so be aware if you are using against some pattern in side-unique direction
@@ -332,12 +370,13 @@ pub fn unify_pattern(pat: &Rc<Term>, val: &Rc<Term>) -> bool {
 }
 
 pub fn hash_var_name(map: &mut HashMap<String, u64>, name: &str) -> u64 {
-    if let Some(h) = map.get(name) {
+    let scoped_name = format!("var:{name}");
+    if let Some(h) = map.get(&scoped_name) {
         return *h;
     }
 
-    let h = str_to_u64(name);
-    map.insert(name.to_string(), h);
+    let h = str_to_u64(&scoped_name);
+    map.insert(scoped_name, h);
     h
 }
 

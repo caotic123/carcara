@@ -98,6 +98,9 @@ pub fn distinct_solver_statements() -> Vec<EggStatement> {
 pub fn declare_logic_operators(functions: &mut EggFunctions) {
     let functions_needed = vec!["not", "and", "or", "="];
     for func in functions_needed {
-        functions.names.entry(func.to_string()).or_insert((true, 1));
+        functions
+            .names
+            .entry(func.to_string())
+            .or_insert((true, 1, None));
     }
 }

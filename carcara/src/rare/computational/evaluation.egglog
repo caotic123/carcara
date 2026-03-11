@@ -392,10 +392,23 @@
  (Mk (Num x))
  :ruleset evaluation)
 
-; to_int for rationals: floor(n/d) = n / d (integer division)
+; to_int for rationals: floor(n/d), assuming normalized positive denominators
 (rewrite
  (Mk (@to_int (Args (Mk (Real n d)) (Empty))))
  (Mk (Num (/ n d)))
+ :when ((= (% n d) 0))
+ :ruleset evaluation)
+
+(rewrite
+ (Mk (@to_int (Args (Mk (Real n d)) (Empty))))
+ (Mk (Num (/ n d)))
+ :when ((>= n 0))
+ :ruleset evaluation)
+
+(rewrite
+ (Mk (@to_int (Args (Mk (Real n d)) (Empty))))
+ (Mk (Num (- (/ n d) 1)))
+ :when ((< n 0) (!= (% n d) 0))
  :ruleset evaluation)
 
 ; is_int (check if value is integer)

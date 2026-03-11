@@ -466,6 +466,17 @@ pub mod tests {
         assert!(result.is_ok(), "to_int real failed: {:?}", result.err());
     }
 
+    /// Test to_int on a negative non-integral real: floor(-1/4) = -1
+    #[test]
+    fn test_to_int_negative_fraction() {
+        let result = try_elaborate("(= (to_int (- 1/4)) (- 0 1))");
+        assert!(
+            result.is_ok(),
+            "to_int negative fraction failed: {:?}",
+            result.err()
+        );
+    }
+
     /// Test is_int on real 5.0: true (5.0 is an integer)
     #[test]
     fn test_is_int_real_true() {

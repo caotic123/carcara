@@ -40,6 +40,8 @@ fn to_expr(e: EggExpr) -> Expr {
             )],
         ),
 
+        NativeBool(b) => Expr::Lit(dummy_span(), egglog::ast::Literal::Bool(b)),
+
         Bool(b) => Expr::Call(
             dummy_span(),
             Symbol::from("Bool"),
