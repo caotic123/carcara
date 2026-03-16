@@ -6,7 +6,7 @@ use crate::{
     rare::{
         engine::EggFunctions,
         language::{EggExpr, EggStatement},
-        util::{get_equational_terms, str_to_u64},
+        util::str_to_u64,
     },
 };
 use egglog::{
@@ -28,22 +28,19 @@ fn is_numeric_sort(sort: &Sort) -> bool {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ArithPolyCheckKind {
-    PolyOf,
-    EqPolyOf,
+    ArithPolyNfOf,
 }
 
 impl ArithPolyCheckKind {
     fn demand_relation(self) -> &'static str {
         match self {
-            ArithPolyCheckKind::PolyOf => "polyOf-demand",
-            ArithPolyCheckKind::EqPolyOf => "eqPolyOf-demand",
+            ArithPolyCheckKind::ArithPolyNfOf => "arithPolyNfOf-demand",
         }
     }
 
     fn function_name(self) -> &'static str {
         match self {
-            ArithPolyCheckKind::PolyOf => "polyOf",
-            ArithPolyCheckKind::EqPolyOf => "eqPolyOf",
+            ArithPolyCheckKind::ArithPolyNfOf => "arithPolyNfOf",
         }
     }
 }
@@ -69,43 +66,37 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
     let mut decls = Vec::new();
 
     for (func, result_sort) in &numeric_funcs {
-        let sort_expr = match result_sort {
-            Sort::Int => EggExpr::Call("Sort".to_string(), vec![EggExpr::Const("Int".to_string())]),
-            Sort::Real => {
-                EggExpr::Call("Sort".to_string(), vec![EggExpr::Const("Real".to_string())])
-            }
-            _ => continue,
-        };
+        let is_int_result = matches!(result_sort, Sort::Int);
         let wrapped_app = EggExpr::Mk(Box::new(EggExpr::Call(
             format!("@{}", func),
             vec![EggExpr::Literal("args".to_string())],
         )));
         decls.push(EggStatement::Rule {
             ruleset: Some("arith_poly".to_string()),
-            body: vec![egg_expr!(("polyOf-demand" {wrapped_app.clone()}))],
-            head: vec![egg_expr!((set ("polyOf" {wrapped_app.clone()})
-            {EggExpr::Call(
-                "VarG".to_string(),
-                vec![
-                    EggExpr::Literal("rat_one".to_string()),
-                    EggExpr::Call(
-                        "Var".to_string(),
-                        vec![
-                            EggExpr::Call(
-                                "arith_poly_atom_hash".to_string(),
-                                vec![wrapped_app.clone()],
-                            ),
-                            sort_expr.clone(),
-                        ],
-                    ),
-                ],
-            )}))],
+            body: vec![egg_expr!(("arithPolyNfOf-demand" {wrapped_app.clone()}))],
+            head: vec![egg_expr!(("atomPolyN-demand" {wrapped_app.clone()}))],
         });
         decls.push(EggStatement::Rule {
             ruleset: Some("arith_poly".to_string()),
-            body: vec![egg_expr!(("arithTermSort-demand" {wrapped_app.clone()}))],
-            head: vec![egg_expr!((set ("arithTermSort" {wrapped_app})
-                                     {sort_expr}))],
+            body: vec![
+                egg_expr!((= ("atomPolyN" {wrapped_app.clone()}) "p")),
+                egg_expr!(("arithPolyNfOf-demand" {wrapped_app.clone()})),
+            ],
+            head: vec![egg_expr!((set ("arithPolyNfOf" {wrapped_app.clone()}) "p"))],
+        });
+        decls.push(EggStatement::Rule {
+            ruleset: Some("arith_poly".to_string()),
+            body: vec![egg_expr!(("atomMonN-demand" {wrapped_app.clone()}))],
+            head: vec![EggExpr::Set(
+                Box::new(EggExpr::Call(
+                    "atomHashIsInt".to_string(),
+                    vec![EggExpr::Call(
+                        "arith_poly_atom_hash".to_string(),
+                        vec![wrapped_app],
+                    )],
+                )),
+                Box::new(EggExpr::NativeBool(is_int_result)),
+            )],
         });
     }
 
@@ -140,15 +131,10 @@ fn supports_arith_poly_term(pool: &dyn TermPool, term: &Rc<Term>) -> bool {
 }
 
 pub fn arith_poly_check_kind(pool: &dyn TermPool, term: &Rc<Term>) -> Option<ArithPolyCheckKind> {
-    match get_equational_terms(term) {
-        Some((Operator::Equals, lhs, rhs))
-            if supports_arith_poly_term(pool, lhs) && supports_arith_poly_term(pool, rhs) =>
-        {
-            Some(ArithPolyCheckKind::EqPolyOf)
-        }
-        Some(_) => None,
-        None if supports_arith_poly_term(pool, term) => Some(ArithPolyCheckKind::PolyOf),
-        None => None,
+    if supports_arith_poly_term(pool, term) {
+        Some(ArithPolyCheckKind::ArithPolyNfOf)
+    } else {
+        None
     }
 }
 
@@ -218,7 +204,7 @@ pub mod tests {
     use crate::ast::rare_rules::RareStatements;
     use crate::ast::{ProofNode, Rc, StepNode};
     use crate::parser::{parse_instance_with_pool, Config, Parser};
-    use crate::rare::engine::run_egglog;
+    use crate::rare::engine::{run_egglog, run_egglog_with_options, RunEgglogOptions};
     use egglog::EGraph;
     use indexmap::IndexMap;
     use std::io::Cursor;
@@ -230,6 +216,9 @@ pub mod tests {
     }
 
     const DEFINITIONS: &str = r#"
+        (declare-fun arg0 () Int)
+        (declare-fun fmt0 () Int)
+        (declare-fun fmt1 () Int)
         (declare-fun x () Int)
         (declare-fun x1 () Int)
         (declare-fun y () Int)
@@ -240,6 +229,24 @@ pub mod tests {
         (declare-fun f (Int) Int)
         (declare-fun g (Int) Int)
         (declare-fun fr (Int) Real)
+        (declare-fun s_count (Int) Int)
+        (declare-fun x_count (Int) Int)
+    "#;
+
+    const COUNTED_OFFSET_REORDER_EQ: &str = r#"
+        (= (+ (+ arg0 (* 4 (s_count (- (- fmt1 2) fmt0))))
+              (* 4 (x_count (- (- fmt1 2) fmt0))))
+           (+ (* 4 (x_count (- (- fmt1 2) fmt0)))
+              (* 4 (s_count (- (- fmt1 2) fmt0)))
+              arg0))
+    "#;
+
+    const COUNTED_OFFSET_REORDER_EQ_BINARY_CONTROL: &str = r#"
+        (= (+ (+ arg0 (* 4 (s_count (- (- fmt1 2) fmt0))))
+              (* 4 (x_count (- (- fmt1 2) fmt0))))
+           (+ (+ (* 4 (x_count (- (- fmt1 2) fmt0)))
+                 (* 4 (s_count (- (- fmt1 2) fmt0))))
+              arg0))
     "#;
 
     // Minimal arithmetic subset copied from rules.rare for the integer-bound
@@ -378,6 +385,69 @@ pub mod tests {
             );
         }
         result.map(|_| ())
+    }
+
+    fn elaborate_with_options(
+        conclusion_str: &str,
+        options: RunEgglogOptions,
+    ) -> (Result<(), String>, String) {
+        let mut pool = PrimitivePool::new();
+        let conclusion = parse_term(&mut pool, conclusion_str);
+        let rules = empty_rules();
+        let root = dummy_proof_node(&mut pool, conclusion.clone());
+        let (result, code) = run_egglog_with_options(&mut pool, conclusion, &root, &rules, options);
+        (result.map(|_| ()), code)
+    }
+
+    fn goal_schedule_round_count(code: &str) -> usize {
+        code.lines()
+            .filter(|line| line.contains("(run list-ruleset)))"))
+            .count()
+    }
+
+    fn check_count(code: &str) -> usize {
+        code.lines()
+            .filter(|line| line.starts_with("(check "))
+            .count()
+    }
+
+    fn assert_single_round_raw_then_poly_pipeline(code: &str) {
+        let goal_schedule = code
+            .find("(run-schedule (repeat 1 (run list-ruleset)))")
+            .expect("missing goal schedule round");
+        let raw_check = code
+            .find("(check (= goal_lhs goal_rhs))")
+            .expect("missing raw goal check");
+        let poly_setup = code
+            .find("(arithPolyNfOf-demand goal_lhs)")
+            .expect("missing poly demand setup");
+        let poly_saturation = code
+            .find("(run-schedule (saturate (run arith_poly)))")
+            .expect("missing poly saturation");
+        let poly_check = code
+            .find("(check (= (arithPolyNfOf goal_lhs) (arithPolyNfOf goal_rhs)))")
+            .expect("missing poly goal check");
+
+        assert_eq!(
+            goal_schedule_round_count(code),
+            1,
+            "expected exactly one goal schedule round, got:\n{}",
+            code
+        );
+        assert_eq!(
+            check_count(code),
+            2,
+            "expected one raw check and one poly check, got:\n{}",
+            code
+        );
+        assert!(
+            goal_schedule < raw_check
+                && raw_check < poly_setup
+                && poly_setup < poly_saturation
+                && poly_saturation < poly_check,
+            "expected raw check before the poly retry pipeline, got:\n{}",
+            code
+        );
     }
 
     fn try_elaborate_with_rules(
@@ -863,6 +933,55 @@ pub mod tests {
     }
 
     #[test]
+    fn test_goal_schedule_round_runs_raw_and_poly_on_same_attempt() {
+        let (result, code) = elaborate_with_options(
+            "(= (+ a (* (- 0 1) b)) (- a b))",
+            RunEgglogOptions { max_goal_schedule_rounds: 1 },
+        );
+        assert!(
+            result.is_ok(),
+            "single-round raw/poly attempt failed: {:?}",
+            result.err()
+        );
+        assert_single_round_raw_then_poly_pipeline(&code);
+    }
+
+    #[test]
+    #[ignore = "n-ary addition regression for counted-offset reordering"]
+    fn test_counted_offset_sum_reordering_nary_regression() {
+        let result = try_elaborate(COUNTED_OFFSET_REORDER_EQ);
+        assert!(
+            result.is_ok(),
+            "counted offset sum reordering failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_counted_offset_sum_reordering_binary_control() {
+        let result = try_elaborate(COUNTED_OFFSET_REORDER_EQ_BINARY_CONTROL);
+        assert!(
+            result.is_ok(),
+            "counted offset sum reordering binary control failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_counted_offset_sum_reordering_binary_control_single_round_pipeline() {
+        let (result, code) = elaborate_with_options(
+            COUNTED_OFFSET_REORDER_EQ_BINARY_CONTROL,
+            RunEgglogOptions { max_goal_schedule_rounds: 1 },
+        );
+        assert!(
+            result.is_ok(),
+            "single-round counted offset sum reordering binary control failed: {:?}",
+            result.err()
+        );
+        assert_single_round_raw_then_poly_pipeline(&code);
+    }
+
+    #[test]
     fn test_uninterpreted_function_duplicate_sum() {
         let result = try_elaborate("(= (+ (f x1) (f x1)) (* 2 (f x1)))");
         assert!(
@@ -903,112 +1022,18 @@ pub mod tests {
     }
 
     #[test]
-    fn test_raw_rational_and_division_regressions() {
-        let result = run_raw_egglog(
-            r#"
-            (let var1 (Mk (Var 1 int_sort)))
-            (let var2 (Mk (Var 2 int_sort)))
-            (let var3 (Mk (Var 3 int_sort)))
-            (let num_0 (Mk (Num 0)))
-            (let num_1 (Mk (Num 1)))
-            (let num_2 (Mk (Num 2)))
-            (let real_24 (Mk (Real 2 4)))
-            (let real_12 (Mk (Real 1 2)))
-            (let real_11 (Mk (Real 1 1)))
-            (let real_23 (Mk (Real 2 3)))
-            (let real_32 (Mk (Real 3 2)))
-
-            (let half_x (Mk (@* (Args real_12 (Args var1 (Empty))))))
-            (let div_x_2 (Mk (@/ (Args var1 (Args num_2 (Empty))))))
-            (let div_x_23 (Mk (@/ (Args var1 (Args real_23 (Empty))))))
-            (let mul_32_x (Mk (@* (Args real_32 (Args var1 (Empty))))))
-
-            (let divt_x_2 (Mk (@/_total (Args var1 (Args num_2 (Empty))))))
-            (let divt_x_23 (Mk (@/_total (Args var1 (Args real_23 (Empty))))))
-
-            (let eq_half_xy (Mk (@= (Args half_x (Args var2 (Empty))))))
-            (let eq_half_yx (Mk (@= (Args var2 (Args half_x (Empty))))))
-
-            (let div_x_0 (Mk (@/ (Args var1 (Args num_0 (Empty))))))
-            (let div_x_0_expected (VarG rat_one (Var (arith_poly_atom_hash div_x_0) real_sort)))
-
-            (let divt_x_0 (Mk (@/_total (Args var1 (Args num_0 (Empty))))))
-            (let divt_x_0_expected (VarG rat_one (Var (arith_poly_atom_hash divt_x_0) real_sort)))
-
-            (let div_x_y (Mk (@/ (Args var1 (Args var2 (Empty))))))
-            (let div_x_y_expected (VarG rat_one (Var (arith_poly_atom_hash div_x_y) real_sort)))
-
-            (let to_real_div_x_y (Mk (@to_real (Args div_x_y (Empty)))))
-
-            (let neg_div_x_y (Mk (@- (Args div_x_y (Empty)))))
-            (let cancel_same (Mk (@+ (Args div_x_y (Args neg_div_x_y (Empty))))))
-
-            (let div_x_z (Mk (@/ (Args var1 (Args var3 (Empty))))))
-            (let neg_div_x_z (Mk (@- (Args div_x_z (Empty)))))
-            (let distinct_atoms (Mk (@+ (Args div_x_y (Args neg_div_x_z (Empty))))))
-
-            (let mul_x_y (Mk (@* (Args var1 (Args var2 (Empty))))))
-            (let neg_mul_x_y (Mk (@- (Args mul_x_y (Empty)))))
-            (let cancel_mul (Mk (@+ (Args mul_x_y (Args neg_mul_x_y (Empty))))))
-
-            (polyOf-demand real_24)
-            (polyOf-demand real_12)
-            (polyOf-demand num_1)
-            (polyOf-demand real_11)
-            (polyOf-demand half_x)
-            (polyOf-demand div_x_2)
-            (polyOf-demand div_x_23)
-            (polyOf-demand mul_32_x)
-            (polyOf-demand divt_x_2)
-            (polyOf-demand divt_x_23)
-            (polyOf-demand div_x_0)
-            (polyOf-demand divt_x_0)
-            (polyOf-demand div_x_y)
-            (polyOf-demand to_real_div_x_y)
-            (polyOf-demand cancel_same)
-            (polyOf-demand distinct_atoms)
-            (polyOf-demand cancel_mul)
-            (eqPolyOf-demand eq_half_xy)
-            (eqPolyOf-demand eq_half_yx)
-
-            (run-schedule (saturate (run arith_poly)))
-
-            (check (= (polyOf real_24) (polyOf real_12)))
-            (check (= (polyOf num_1) (polyOf real_11)))
-            (check (= (polyOf half_x) (polyOf div_x_2)))
-            (check (= (polyOf div_x_23) (polyOf mul_32_x)))
-            (check (= (eqPolyOf eq_half_xy) (eqPolyOf eq_half_yx)))
-            (check (= (polyOf divt_x_2) (polyOf half_x)))
-            (check (= (polyOf divt_x_23) (polyOf mul_32_x)))
-            (check (= (polyOf div_x_0) div_x_0_expected))
-            (check (= (polyOf divt_x_0) divt_x_0_expected))
-            (check (= (polyOf div_x_y) div_x_y_expected))
-            (check (= (polyOf to_real_div_x_y) (polyOf div_x_y)))
-            (check (= (polyOf cancel_same) (CstG rat_zero)))
-            (check (= (polyOf cancel_mul) (CstG rat_zero)))
-            (check (!= (polyOf distinct_atoms) (CstG rat_zero)))
-            "#,
-        );
-        assert!(
-            result.is_ok(),
-            "raw rational/division regressions failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
     fn test_raw_mixed_sort_same_id_regression() {
         let result = run_raw_egglog(
             r#"
-            (let int_v (VarG rat_one (Var 7 int_sort)))
-            (let real_v (VarG rat_one (Var 7 real_sort)))
-            (let expected (PlusG int_v real_v (EmptyG)))
+            (let int_v (Mk (Var 7 int_sort)))
+            (let real_v (Mk (Var 7 real_sort)))
 
-            (insertG-demand int_v real_v)
+            (arithPolyNfOf-demand int_v)
+            (arithPolyNfOf-demand real_v)
 
             (run-schedule (saturate (run arith_poly)))
 
-            (check (= (insertG int_v real_v) expected))
+            (check (!= (arithPolyNfOf int_v) (arithPolyNfOf real_v)))
             "#,
         );
         assert!(

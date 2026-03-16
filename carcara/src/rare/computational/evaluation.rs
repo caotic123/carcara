@@ -12,9 +12,10 @@ pub mod tests {
     use crate::ast::pool::PrimitivePool;
     use crate::ast::rare_rules::RareStatements;
     use crate::ast::{ProofNode, Rc, StepNode};
-    use crate::parser::{Config, Parser};
-    use crate::rare::engine::run_egglog;
+    use crate::parser::{parse_instance_with_pool, Config, Parser};
+    use crate::rare::engine::{run_egglog, run_egglog_with_options, RunEgglogOptions};
     use indexmap::IndexMap;
+    use std::io::Cursor;
 
     /// Returns true if debug-egglog feature is enabled
     /// Run with: cargo test --features debug-egglog <test_name> -- --nocapture
@@ -30,8 +31,27 @@ pub mod tests {
         (declare-fun b () Int)
     "#;
 
+    const ROUND_RETRY_DEFINITIONS: &str = r#"
+        (declare-fun f () Bool)
+    "#;
+
+    const ROUND_RETRY_RULES: &str = r#"
+        (declare-rare-rule late-eval ()
+          :args ()
+          :conclusion (= f (or false true))
+        )
+    "#;
+
     /// Parse a term from a string with boolean/arithmetic definitions
     fn parse_term(pool: &mut PrimitivePool, term_str: &str) -> Rc<crate::ast::Term> {
+        parse_term_with_definitions(pool, DEFINITIONS, term_str)
+    }
+
+    fn parse_term_with_definitions(
+        pool: &mut PrimitivePool,
+        definitions: &str,
+        term_str: &str,
+    ) -> Rc<crate::ast::Term> {
         let config = Config {
             apply_function_defs: true,
             expand_lets: false,
@@ -39,7 +59,7 @@ pub mod tests {
             strict: false,
             parse_hole_args: false,
         };
-        let mut parser = Parser::new(pool, config, DEFINITIONS.as_bytes()).expect("parser error");
+        let mut parser = Parser::new(pool, config, definitions.as_bytes()).expect("parser error");
         parser.parse_problem().expect("parse problem error");
         parser.reset(term_str.as_bytes()).expect("reset error");
         parser.parse_term().expect("parse term error")
@@ -52,6 +72,29 @@ pub mod tests {
             programs: IndexMap::new(),
             consts: IndexMap::new(),
         }
+    }
+
+    fn parse_rare_rules(
+        pool: &mut PrimitivePool,
+        definitions: &str,
+        source: &str,
+    ) -> RareStatements {
+        let config = Config {
+            apply_function_defs: true,
+            expand_lets: false,
+            allow_int_real_subtyping: false,
+            strict: false,
+            parse_hole_args: false,
+        };
+        let (_, _, rules) = parse_instance_with_pool(
+            Cursor::new(definitions.as_bytes()),
+            Cursor::new(b"".as_slice()),
+            Some(Cursor::new(source.as_bytes())),
+            config,
+            pool,
+        )
+        .expect("rare rules parse error");
+        rules
     }
 
     /// Create a minimal proof node with no premises
@@ -94,6 +137,27 @@ pub mod tests {
         result.map(|_| ())
     }
 
+    fn try_elaborate_with_rules_and_options(
+        definitions: &str,
+        conclusion_str: &str,
+        rules_source: &str,
+        options: RunEgglogOptions,
+        debug: bool,
+    ) -> Result<(), String> {
+        let mut pool = PrimitivePool::new();
+        let conclusion = parse_term_with_definitions(&mut pool, definitions, conclusion_str);
+        let rules = parse_rare_rules(&mut pool, definitions, rules_source);
+        let root = dummy_proof_node(&mut pool, conclusion.clone());
+        let (result, code) = run_egglog_with_options(&mut pool, conclusion, &root, &rules, options);
+        if debug {
+            println!(
+                "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
+                code
+            );
+        }
+        result.map(|_| ())
+    }
+
     /// Just print the generated egglog code without running it
     #[allow(dead_code)]
     fn print_egglog_code(conclusion_str: &str) {
@@ -105,6 +169,34 @@ pub mod tests {
         println!(
             "\n=== Generated egglog code for: {} ===\n{}\n=== End ===\n",
             conclusion_str, code
+        );
+    }
+
+    #[test]
+    fn test_goal_schedule_retry_rounds() {
+        let one_round = try_elaborate_with_rules_and_options(
+            ROUND_RETRY_DEFINITIONS,
+            "(= f true)",
+            ROUND_RETRY_RULES,
+            RunEgglogOptions { max_goal_schedule_rounds: 1 },
+            debug_egglog(),
+        );
+        assert!(
+            one_round.is_err(),
+            "single goal schedule round unexpectedly succeeded"
+        );
+
+        let retried = try_elaborate_with_rules_and_options(
+            ROUND_RETRY_DEFINITIONS,
+            "(= f true)",
+            ROUND_RETRY_RULES,
+            RunEgglogOptions::default(),
+            debug_egglog(),
+        );
+        assert!(
+            retried.is_ok(),
+            "goal schedule retries failed: {:?}",
+            retried.err()
         );
     }
 
