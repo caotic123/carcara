@@ -34,7 +34,7 @@ pub fn aci_rules(
     if let Some(calls) = assoc_calls {
         for args_expr in calls {
             let call = EggExpr::Call(op_with_at.into(), vec![args_expr.clone()]);
-            let lhs = egg_expr!((mk {call}));
+            let lhs = egg_expr!((mk { call }));
             let rhs = to_assoc_call(op_with_at, args_expr_to_vec(op_with_at, args_expr));
             decls.push(EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![]));
         }
@@ -43,7 +43,7 @@ pub fn aci_rules(
     // 2. Identity elimination: (op x identity) → x
     let args = egg_expr!((args "x" (args {identity.clone()} ())));
     let call = EggExpr::Call(op_with_at.into(), vec![args]);
-    let lhs = egg_expr!((mk {call}));
+    let lhs = egg_expr!((mk { call }));
     let rhs = egg_expr!("x");
     decls.push(EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![]));
 
@@ -51,7 +51,7 @@ pub fn aci_rules(
     // Match on Args representation directly to avoid set-insert/set-empty cycle
     let args = egg_expr!((args "x" ()));
     let call = EggExpr::Call(op_with_at.into(), vec![args]);
-    let lhs = egg_expr!((mk {call}));
+    let lhs = egg_expr!((mk { call }));
     let rhs = egg_expr!("x");
     decls.push(EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![]));
 
@@ -59,7 +59,7 @@ pub fn aci_rules(
     // Matches (op x x) directly on Args representation
     let args = egg_expr!((args "x" (args "x" ())));
     let call = EggExpr::Call(op_with_at.into(), vec![args]);
-    let lhs = egg_expr!((mk {call}));
+    let lhs = egg_expr!((mk { call }));
     let rhs = egg_expr!("x");
     decls.push(EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![]));
 
@@ -86,7 +86,7 @@ fn build_assoc(args: Vec<EggExpr>) -> EggExpr {
     for arg in args {
         set_expr = egg_expr!((set_insert {set_expr} {arg}));
     }
-    egg_expr!((Assoc {set_expr}))
+    egg_expr!((Assoc { set_expr }))
 }
 
 pub fn args_expr_to_vec(op_with_at: &str, expr: &EggExpr) -> Vec<EggExpr> {

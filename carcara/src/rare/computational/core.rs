@@ -1,8 +1,19 @@
 use indexmap::{IndexMap, IndexSet};
 
-use crate::{ast::{
-    BindingList, PrimitivePool, Rc, Sort, Substitution, Term, TermPool, rare_rules::{DeclAttr, DeclConst}
-}, egg_expr, rare::{computational::{aci_norm, arith_poly_norm, arith_poly_norm_rel, distinct_elim, evaluation}, engine::EggFunctions, language::{EggExpr, EggStatement}}};
+use crate::{
+    ast::{
+        rare_rules::{DeclAttr, DeclConst},
+        BindingList, PrimitivePool, Rc, Sort, Substitution, Term, TermPool,
+    },
+    egg_expr,
+    rare::{
+        computational::{
+            aci_norm, arith_poly_norm, arith_poly_norm_rel, distinct_elim, evaluation,
+        },
+        engine::EggFunctions,
+        language::{EggExpr, EggStatement},
+    },
+};
 
 // Add this type alias near the top of the module:
 type Matcher<'a> = dyn Fn(&Rc<Term>, &mut PrimitivePool) -> Option<Rc<Term>> + 'a;
@@ -395,13 +406,18 @@ pub fn interpret_eunoia(
     term
 }
 
-
-pub fn declare_special_eunoia_eliminations(decls: &mut Vec<EggStatement>, functions: &EggFunctions) {
-
+pub fn declare_special_eunoia_eliminations(
+    decls: &mut Vec<EggStatement>,
+    functions: &EggFunctions,
+) {
     // Use centralized ACI operator definitions
     for (_, name, op_with_at, identity) in aci_norm::aci_operators() {
         if functions.names.contains_key(name) {
-            decls.extend(aci_norm::aci_rules(op_with_at, identity, functions.assoc_calls.get(op_with_at)));
+            decls.extend(aci_norm::aci_rules(
+                op_with_at,
+                identity,
+                functions.assoc_calls.get(op_with_at),
+            ));
         }
     }
 

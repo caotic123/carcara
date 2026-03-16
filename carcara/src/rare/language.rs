@@ -20,7 +20,7 @@ pub struct Constructor {
 pub enum EggExpr {
     App(Box<EggExpr>, Box<EggExpr>),
     Op(String),
-    Var(u64),
+    Var(u64, Box<EggExpr>),
     Const(String),
     NativeBool(bool),
     Bool(bool),
@@ -79,7 +79,7 @@ pub type EggLanguage = Vec<EggStatement>;
 impl fmt::Display for ConstType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConstType::Var => write!(f, "i32"),
+            ConstType::Var => write!(f, "i64"),
             ConstType::Bool => write!(f, "bool"),
             ConstType::Integer => write!(f, "i64"),
             ConstType::Operator => write!(f, "String"),
@@ -142,7 +142,7 @@ macro_rules! egg_expr {
     ((native_bool true)) => { $crate::rare::language::EggExpr::NativeBool(true) };
     ((native_bool false)) => { $crate::rare::language::EggExpr::NativeBool(false) };
 
-    ((var $name:tt)) => { $crate::rare::language::EggExpr::Var(egg_expr!(@GET_OP $name).to_string()) };
+    ((var $name:tt $sort:tt)) => { $crate::rare::language::EggExpr::Var($name, Box::new(egg_expr!($sort))) };
     ((mk $inner:tt)) => { $crate::rare::language::EggExpr::Mk(Box::new(egg_expr!($inner))) };
     ((args $head:tt $tail:tt)) => { $crate::rare::language::EggExpr::Args(Box::new(egg_expr!($head)), Box::new(egg_expr!($tail))) };
     ((= $lhs:tt $rhs:tt)) => { $crate::rare::language::EggExpr::Equal(Box::new(egg_expr!($lhs)), Box::new(egg_expr!($rhs))) };

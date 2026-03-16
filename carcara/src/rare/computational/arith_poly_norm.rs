@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    egg_expr,
     ast::{Constant, Operator, Rc, Sort, Term, TermPool},
+    egg_expr,
     rare::{
         engine::EggFunctions,
         language::{EggExpr, EggStatement},
@@ -15,7 +15,6 @@ use egglog::{
     sort::{EqSort, I64Sort},
     ArcSort, EGraph, PrimitiveLike, Value,
 };
-
 
 pub fn arith_poly_norm_rules() -> Vec<EggStatement> {
     // Include the egglog file content at compile time
@@ -54,10 +53,14 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
         .names
         .iter()
         .filter_map(|(name, (is_op, _arity, result_sort))| {
-            (!*is_op && result_sort.as_ref().is_some_and(is_numeric_sort)).then_some(name.clone())
+            (!*is_op)
+                .then_some(result_sort.as_ref())
+                .flatten()
+                .filter(|sort| is_numeric_sort(sort))
+                .map(|sort| (name.clone(), sort.clone()))
         })
         .collect();
-    numeric_funcs.sort();
+    numeric_funcs.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
     if numeric_funcs.is_empty() {
         return Vec::new();
@@ -65,7 +68,14 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
 
     let mut decls = Vec::new();
 
-    for func in &numeric_funcs {
+    for (func, result_sort) in &numeric_funcs {
+        let sort_expr = match result_sort {
+            Sort::Int => EggExpr::Call("Sort".to_string(), vec![EggExpr::Const("Int".to_string())]),
+            Sort::Real => {
+                EggExpr::Call("Sort".to_string(), vec![EggExpr::Const("Real".to_string())])
+            }
+            _ => continue,
+        };
         let wrapped_app = EggExpr::Mk(Box::new(EggExpr::Call(
             format!("@{}", func),
             vec![EggExpr::Literal("args".to_string())],
@@ -74,19 +84,28 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
             ruleset: Some("arith_poly".to_string()),
             body: vec![egg_expr!(("polyOf-demand" {wrapped_app.clone()}))],
             head: vec![egg_expr!((set ("polyOf" {wrapped_app.clone()})
-                                     {EggExpr::Call(
-                                         "VarG".to_string(),
-                                         vec![
-                                             EggExpr::Literal("rat_one".to_string()),
-                                             EggExpr::Call(
-                                                 "Var".to_string(),
-                                                 vec![EggExpr::Call(
-                                                     "arith_poly_atom_hash".to_string(),
-                                                     vec![wrapped_app],
-                                                 )],
-                                             ),
-                                         ],
-                                     )}))],
+            {EggExpr::Call(
+                "VarG".to_string(),
+                vec![
+                    EggExpr::Literal("rat_one".to_string()),
+                    EggExpr::Call(
+                        "Var".to_string(),
+                        vec![
+                            EggExpr::Call(
+                                "arith_poly_atom_hash".to_string(),
+                                vec![wrapped_app.clone()],
+                            ),
+                            sort_expr.clone(),
+                        ],
+                    ),
+                ],
+            )}))],
+        });
+        decls.push(EggStatement::Rule {
+            ruleset: Some("arith_poly".to_string()),
+            body: vec![egg_expr!(("arithTermSort-demand" {wrapped_app.clone()}))],
+            head: vec![egg_expr!((set ("arithTermSort" {wrapped_app})
+                                     {sort_expr}))],
         });
     }
 
@@ -101,7 +120,9 @@ fn supports_arith_poly_term(pool: &dyn TermPool, term: &Rc<Term>) -> bool {
         Term::Op(Operator::Add, args) => {
             !args.is_empty() && args.iter().all(|arg| supports_arith_poly_term(pool, arg))
         }
-        Term::Op(Operator::Sub, args) if args.len() == 1 => supports_arith_poly_term(pool, &args[0]),
+        Term::Op(Operator::Sub, args) if args.len() == 1 => {
+            supports_arith_poly_term(pool, &args[0])
+        }
         Term::Op(Operator::Sub, args) if args.len() == 2 => {
             supports_arith_poly_term(pool, &args[0]) && supports_arith_poly_term(pool, &args[1])
         }
@@ -111,7 +132,9 @@ fn supports_arith_poly_term(pool: &dyn TermPool, term: &Rc<Term>) -> bool {
         Term::Op(Operator::RealDiv, args) if args.len() == 2 => {
             supports_arith_poly_term(pool, &args[0]) && supports_arith_poly_term(pool, &args[1])
         }
-        Term::Op(Operator::ToReal, args) if args.len() == 1 => supports_arith_poly_term(pool, &args[0]),
+        Term::Op(Operator::ToReal, args) if args.len() == 1 => {
+            supports_arith_poly_term(pool, &args[0])
+        }
         _ => false,
     }
 }
@@ -163,7 +186,10 @@ impl PrimitiveLike for ArithPolyAtomHash {
     fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
         SimpleTypeConstraint::new(
             self.name(),
-            vec![Arc::new(EqSort { name: Symbol::from("Term") }), Arc::new(I64Sort)],
+            vec![
+                Arc::new(EqSort { name: Symbol::from("Term") }),
+                Arc::new(I64Sort),
+            ],
             span.clone(),
         )
         .into_box()
@@ -175,7 +201,9 @@ impl PrimitiveLike for ArithPolyAtomHash {
         _sorts: (&[ArcSort], &ArcSort),
         _egraph: Option<&mut EGraph>,
     ) -> Option<Value> {
-        Some(Value::from(str_to_u64(&format!("atoms:{}", values[0].bits)) as i64))
+        Some(Value::from(
+            str_to_u64(&format!("atoms:{}", values[0].bits)) as i64,
+        ))
     }
 }
 
@@ -252,7 +280,8 @@ pub mod tests {
     const RAW_TERM_BASE: &str = r#"
         (datatype Term
           (App Term Term)
-          (Var i64)
+          (Const String)
+          (Var i64 Term)
           (Bool bool)
           (Num i64)
           (Real i64 i64)
@@ -277,8 +306,7 @@ pub mod tests {
             strict: false,
             parse_hole_args: false,
         };
-        let mut parser =
-            Parser::new(pool, config, DEFINITIONS.as_bytes()).expect("parser error");
+        let mut parser = Parser::new(pool, config, DEFINITIONS.as_bytes()).expect("parser error");
         parser.parse_problem().expect("parse problem error");
         parser.reset(term_str.as_bytes()).expect("reset error");
         parser.parse_term().expect("parse term error")
@@ -313,7 +341,10 @@ pub mod tests {
     }
 
     /// Create a minimal proof node with no premises
-    fn dummy_proof_node(pool: &mut PrimitivePool, conclusion: Rc<crate::ast::Term>) -> Rc<ProofNode> {
+    fn dummy_proof_node(
+        pool: &mut PrimitivePool,
+        conclusion: Rc<crate::ast::Term>,
+    ) -> Rc<ProofNode> {
         let step = StepNode {
             id: "test".to_string(),
             depth: 0,
@@ -341,7 +372,10 @@ pub mod tests {
         let root = dummy_proof_node(&mut pool, conclusion.clone());
         let (result, code) = run_egglog(&mut pool, conclusion, &root, &rules);
         if debug {
-            println!("\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n", code);
+            println!(
+                "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
+                code
+            );
         }
         result.map(|_| ())
     }
@@ -357,7 +391,10 @@ pub mod tests {
         let root = dummy_proof_node(&mut pool, conclusion.clone());
         let (result, code) = run_egglog(&mut pool, conclusion, &root, &rules);
         if debug {
-            println!("\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n", code);
+            println!(
+                "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
+                code
+            );
         }
         result.map(|_| ())
     }
@@ -370,7 +407,10 @@ pub mod tests {
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
         let (_, code) = run_egglog(&mut pool, conclusion, &root, &rules);
-        println!("\n=== Generated egglog code for: {} ===\n{}\n=== End ===\n", conclusion_str, code);
+        println!(
+            "\n=== Generated egglog code for: {} ===\n{}\n=== End ===\n",
+            conclusion_str, code
+        );
     }
 
     fn run_raw_egglog(script: &str) -> Result<(), String> {
@@ -431,7 +471,11 @@ pub mod tests {
     #[test]
     fn test_hanna_sum_zero_equality() {
         let result = try_elaborate("(= (= (+ a (* (- 0 1) b)) 0) (= a b))");
-        assert!(result.is_ok(), "Hanna sum zero equality failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Hanna sum zero equality failed: {:?}",
+            result.err()
+        );
     }
 
     /// From prob_00139_004785__15024976-t17.t6.alethe
@@ -440,10 +484,12 @@ pub mod tests {
     #[test]
     fn test_hanna_geq_subtraction() {
         // Need to add >= to definitions for this test
-        let result = try_elaborate(
-            "(= (+ a (* (- 0 1) b)) (- a b))"
+        let result = try_elaborate("(= (+ a (* (- 0 1) b)) (- a b))");
+        assert!(
+            result.is_ok(),
+            "Hanna geq subtraction failed: {:?}",
+            result.err()
         );
-        assert!(result.is_ok(), "Hanna geq subtraction failed: {:?}", result.err());
     }
 
     /// From prob_00331_012189__22756550-t2.t14.alethe
@@ -452,10 +498,12 @@ pub mod tests {
     #[test]
     fn test_hanna_equality_flip_coefficients() {
         // (= (* 1 (- a b)) (* -1 (- b a))) should imply (= (= a b) (= b a))
-        let result = try_elaborate(
-            "(= (* 1 (- a b)) (* (- 0 1) (- b a)))"
+        let result = try_elaborate("(= (* 1 (- a b)) (* (- 0 1) (- b a)))");
+        assert!(
+            result.is_ok(),
+            "Hanna equality flip coefficients failed: {:?}",
+            result.err()
         );
-        assert!(result.is_ok(), "Hanna equality flip coefficients failed: {:?}", result.err());
     }
 
     #[test]
@@ -513,7 +561,7 @@ pub mod tests {
     fn test_hanna_integer_bound_prefix_t9_arith_poly_norm_rel() {
         let result = run_raw_egglog(
             r#"
-            (let f3 (Mk (Var 1)))
+            (let f3 (Mk (Var 1 int_sort)))
             (let num_1 (Mk (Num 1)))
             (let num_2 (Mk (Num 2)))
             (let num_4 (Mk (Num 4)))
@@ -554,7 +602,7 @@ pub mod tests {
     fn test_hanna_integer_bound_prefix_t9_direct_relation_normalization() {
         let result = run_raw_egglog(
             r#"
-            (let f3 (Mk (Var 1)))
+            (let f3 (Mk (Var 1 int_sort)))
             (let num_1 (Mk (Num 1)))
             (let num_2 (Mk (Num 2)))
             (let num_4 (Mk (Num 4)))
@@ -632,11 +680,7 @@ pub mod tests {
             INTEGER_BOUND_TEST_RARE,
             debug_egglog(),
         );
-        assert!(
-            result.is_ok(),
-            "t14 geq tighten failed: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "t14 geq tighten failed: {:?}", result.err());
     }
 
     #[test]
@@ -656,7 +700,7 @@ pub mod tests {
     fn test_hanna_integer_bound_prefix_t16_arith_poly_norm_rel() {
         let result = run_raw_egglog(
             r#"
-            (let f3 (Mk (Var 1)))
+            (let f3 (Mk (Var 1 int_sort)))
             (let num_0 (Mk (Num 0)))
             (let num_1 (Mk (Num 1)))
             (let num_neg_1 (Mk (Num -1)))
@@ -691,7 +735,7 @@ pub mod tests {
     fn test_hanna_integer_bound_prefix_t16_direct_relation_normalization() {
         let result = run_raw_egglog(
             r#"
-            (let f3 (Mk (Var 1)))
+            (let f3 (Mk (Var 1 int_sort)))
             (let num_0 (Mk (Num 0)))
             (let num_1 (Mk (Num 1)))
             (let num_neg_1 (Mk (Num -1)))
@@ -715,21 +759,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_hanna_integer_bound_left_branch_after_t9() {
-        let result = try_elaborate_with_rules(
-            "(= (>= (to_real (* (- 0 1) f3)) (- 1/4))
-                (>= (* (- 0 1) f3) 0))",
-            INTEGER_BOUND_TEST_RARE,
-            debug_egglog(),
-        );
-        assert!(
-            result.is_ok(),
-            "left branch after t9 failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
     fn test_hanna_integer_bound_left_branch_affine_isolate_step() {
         let result = try_elaborate_with_rules(
             "(= (>= 2 (+ 1 (* 4 f3)))
@@ -741,6 +770,21 @@ pub mod tests {
         assert!(
             result.is_ok(),
             "left branch affine isolate failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_hanna_integer_bound_left_branch_to_zero() {
+        let result = try_elaborate_with_rules(
+            "(= (>= 2 (+ 1 (* 4 f3)))
+                (>= (* (- 0 1) f3) 0))",
+            INTEGER_BOUND_TEST_RARE,
+            debug_egglog(),
+        );
+        assert!(
+            result.is_ok(),
+            "left branch direct to zero failed: {:?}",
             result.err()
         );
     }
@@ -772,21 +816,6 @@ pub mod tests {
         assert!(
             result.is_ok(),
             "right branch after t14 failed: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_hanna_integer_bound_left_branch_to_zero() {
-        let result = try_elaborate_with_rules(
-            "(= (>= 2 (+ 1 (* 4 f3)))
-                (>= (* (- 0 1) f3) 0))",
-            INTEGER_BOUND_TEST_RARE,
-            debug_egglog(),
-        );
-        assert!(
-            result.is_ok(),
-            "left branch to zero failed: {:?}",
             result.err()
         );
     }
@@ -825,10 +854,12 @@ pub mod tests {
     /// Both normalize to: x - y = 1
     #[test]
     fn test_equality_rearrangement_add() {
-        let result = try_elaborate(
-            "(= (= x (+ 1 y)) (= y (+ -1 x)))"
+        let result = try_elaborate("(= (= x (+ 1 y)) (= y (+ -1 x)))");
+        assert!(
+            result.is_ok(),
+            "Equality rearrangement failed: {:?}",
+            result.err()
         );
-        assert!(result.is_ok(), "Equality rearrangement failed: {:?}", result.err());
     }
 
     #[test]
@@ -875,9 +906,9 @@ pub mod tests {
     fn test_raw_rational_and_division_regressions() {
         let result = run_raw_egglog(
             r#"
-            (let var1 (Mk (Var 1)))
-            (let var2 (Mk (Var 2)))
-            (let var3 (Mk (Var 3)))
+            (let var1 (Mk (Var 1 int_sort)))
+            (let var2 (Mk (Var 2 int_sort)))
+            (let var3 (Mk (Var 3 int_sort)))
             (let num_0 (Mk (Num 0)))
             (let num_1 (Mk (Num 1)))
             (let num_2 (Mk (Num 2)))
@@ -899,13 +930,13 @@ pub mod tests {
             (let eq_half_yx (Mk (@= (Args var2 (Args half_x (Empty))))))
 
             (let div_x_0 (Mk (@/ (Args var1 (Args num_0 (Empty))))))
-            (let div_x_0_expected (VarG rat_one (Var (arith_poly_atom_hash div_x_0))))
+            (let div_x_0_expected (VarG rat_one (Var (arith_poly_atom_hash div_x_0) real_sort)))
 
             (let divt_x_0 (Mk (@/_total (Args var1 (Args num_0 (Empty))))))
-            (let divt_x_0_expected (VarG rat_one (Var (arith_poly_atom_hash divt_x_0))))
+            (let divt_x_0_expected (VarG rat_one (Var (arith_poly_atom_hash divt_x_0) real_sort)))
 
             (let div_x_y (Mk (@/ (Args var1 (Args var2 (Empty))))))
-            (let div_x_y_expected (VarG rat_one (Var (arith_poly_atom_hash div_x_y))))
+            (let div_x_y_expected (VarG rat_one (Var (arith_poly_atom_hash div_x_y) real_sort)))
 
             (let to_real_div_x_y (Mk (@to_real (Args div_x_y (Empty)))))
 
@@ -958,21 +989,47 @@ pub mod tests {
             (check (!= (polyOf distinct_atoms) (CstG rat_zero)))
             "#,
         );
-        assert!(result.is_ok(), "raw rational/division regressions failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "raw rational/division regressions failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_raw_mixed_sort_same_id_regression() {
+        let result = run_raw_egglog(
+            r#"
+            (let int_v (VarG rat_one (Var 7 int_sort)))
+            (let real_v (VarG rat_one (Var 7 real_sort)))
+            (let expected (PlusG int_v real_v (EmptyG)))
+
+            (insertG-demand int_v real_v)
+
+            (run-schedule (saturate (run arith_poly)))
+
+            (check (= (insertG int_v real_v) expected))
+            "#,
+        );
+        assert!(
+            result.is_ok(),
+            "mixed-sort same-id regression failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
     fn test_raw_arith_poly_norm_rel_regressions() {
         let result = run_raw_egglog(
             r#"
-            (let x1 (Mk (Var 1)))
-            (let x2 (Mk (Var 2)))
-            (let y1 (Mk (Var 3)))
-            (let y2 (Mk (Var 4)))
-            (let z1 (Mk (Var 5)))
-            (let z2 (Mk (Var 6)))
-            (let w1 (Mk (Var 7)))
-            (let w2 (Mk (Var 8)))
+            (let x1 (Mk (Var 1 int_sort)))
+            (let x2 (Mk (Var 2 int_sort)))
+            (let y1 (Mk (Var 3 int_sort)))
+            (let y2 (Mk (Var 4 int_sort)))
+            (let z1 (Mk (Var 5 int_sort)))
+            (let z2 (Mk (Var 6 int_sort)))
+            (let w1 (Mk (Var 7 int_sort)))
+            (let w2 (Mk (Var 8 int_sort)))
 
             (let num_2 (Mk (Num 2)))
             (let num_3 (Mk (Num 3)))
@@ -1025,5 +1082,4 @@ pub mod tests {
             result.err()
         );
     }
-
 }

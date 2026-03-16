@@ -1,6 +1,5 @@
 use crate::rare::language::EggStatement;
 
-
 pub fn evaluation_rules() -> Vec<EggStatement> {
     // Include the egglog file content at compile time
     let egglog_content = include_str!("evaluation.egglog");
@@ -40,8 +39,7 @@ pub mod tests {
             strict: false,
             parse_hole_args: false,
         };
-        let mut parser =
-            Parser::new(pool, config, DEFINITIONS.as_bytes()).expect("parser error");
+        let mut parser = Parser::new(pool, config, DEFINITIONS.as_bytes()).expect("parser error");
         parser.parse_problem().expect("parse problem error");
         parser.reset(term_str.as_bytes()).expect("reset error");
         parser.parse_term().expect("parse term error")
@@ -57,7 +55,10 @@ pub mod tests {
     }
 
     /// Create a minimal proof node with no premises
-    fn dummy_proof_node(pool: &mut PrimitivePool, conclusion: Rc<crate::ast::Term>) -> Rc<ProofNode> {
+    fn dummy_proof_node(
+        pool: &mut PrimitivePool,
+        conclusion: Rc<crate::ast::Term>,
+    ) -> Rc<ProofNode> {
         let step = StepNode {
             id: "test".to_string(),
             depth: 0,
@@ -85,7 +86,10 @@ pub mod tests {
         let root = dummy_proof_node(&mut pool, conclusion.clone());
         let (result, code) = run_egglog(&mut pool, conclusion, &root, &rules);
         if debug {
-            println!("\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n", code);
+            println!(
+                "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
+                code
+            );
         }
         result.map(|_| ())
     }
@@ -98,7 +102,10 @@ pub mod tests {
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
         let (_, code) = run_egglog(&mut pool, conclusion, &root, &rules);
-        println!("\n=== Generated egglog code for: {} ===\n{}\n=== End ===\n", conclusion_str, code);
+        println!(
+            "\n=== Generated egglog code for: {} ===\n{}\n=== End ===\n",
+            conclusion_str, code
+        );
     }
 
     // ============ Boolean Operations Tests ============
@@ -163,14 +170,22 @@ pub mod tests {
     #[test]
     fn test_implies_true_false() {
         let result = try_elaborate("(= (=> true false) false)");
-        assert!(result.is_ok(), "implies true false failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "implies true false failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test implies: false => true = true
     #[test]
     fn test_implies_false_true() {
         let result = try_elaborate("(= (=> false true) true)");
-        assert!(result.is_ok(), "implies false true failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "implies false true failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test ite: ite true x y = x
@@ -193,14 +208,22 @@ pub mod tests {
     #[test]
     fn test_int_equality_same() {
         let result = try_elaborate("(= (= 5 5) true)");
-        assert!(result.is_ok(), "int equality same failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "int equality same failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test integer inequality: 3 = 5
     #[test]
     fn test_int_equality_diff() {
         let result = try_elaborate("(= (= 3 5) false)");
-        assert!(result.is_ok(), "int equality diff failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "int equality diff failed: {:?}",
+            result.err()
+        );
     }
 
     // ============ Additional Tests ============
@@ -237,28 +260,44 @@ pub mod tests {
     #[test]
     fn test_implies_true_true() {
         let result = try_elaborate("(= (=> true true) true)");
-        assert!(result.is_ok(), "implies true true failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "implies true true failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test implies false false = true
     #[test]
     fn test_implies_false_false() {
         let result = try_elaborate("(= (=> false false) true)");
-        assert!(result.is_ok(), "implies false false failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "implies false false failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test boolean equality: true = true
     #[test]
     fn test_bool_equality_same() {
         let result = try_elaborate("(= (= true true) true)");
-        assert!(result.is_ok(), "bool equality same failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bool equality same failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test boolean equality: true = false
     #[test]
     fn test_bool_equality_diff() {
         let result = try_elaborate("(= (= true false) false)");
-        assert!(result.is_ok(), "bool equality diff failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bool equality diff failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test nested: and (or true false) true = true
@@ -323,21 +362,33 @@ pub mod tests {
     #[test]
     fn test_greater_than_true() {
         let result = try_elaborate("(= (> 5 3) true)");
-        assert!(result.is_ok(), "greater than true failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "greater than true failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test greater than: 3 > 5 = false
     #[test]
     fn test_greater_than_false() {
         let result = try_elaborate("(= (> 3 5) false)");
-        assert!(result.is_ok(), "greater than false failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "greater than false failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test greater than: 3 > 3 = false (equal case)
     #[test]
     fn test_greater_than_equal() {
         let result = try_elaborate("(= (> 3 3) false)");
-        assert!(result.is_ok(), "greater than equal failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "greater than equal failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test greater than or equal: 5 >= 3 = true
@@ -365,14 +416,22 @@ pub mod tests {
     #[test]
     fn test_less_than_negative() {
         let result = try_elaborate("(= (< (- 0 5) 3) true)");
-        assert!(result.is_ok(), "less than negative failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "less than negative failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test negative numbers: 3 > -5 = true
     #[test]
     fn test_greater_than_negative() {
         let result = try_elaborate("(= (> 3 (- 0 5)) true)");
-        assert!(result.is_ok(), "greater than negative failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "greater than negative failed: {:?}",
+            result.err()
+        );
     }
 
     // ============ Arithmetic Operations Tests ============
@@ -432,7 +491,11 @@ pub mod tests {
     #[test]
     fn test_sub_negative_result() {
         let result = try_elaborate("(= (- 3 5) (- 0 2))");
-        assert!(result.is_ok(), "sub negative result failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "sub negative result failed: {:?}",
+            result.err()
+        );
     }
 
     // ============ Arithmetic Conversions & Predicates Tests ============
@@ -481,13 +544,21 @@ pub mod tests {
     #[test]
     fn test_is_int_real_true() {
         let result = try_elaborate("(= (is_int 5.0) true)");
-        assert!(result.is_ok(), "is_int real true failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "is_int real true failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test is_int on real 5.5: false (5.5 is not an integer)
     #[test]
     fn test_is_int_real_false() {
         let result = try_elaborate("(= (is_int 5.5) false)");
-        assert!(result.is_ok(), "is_int real false failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "is_int real false failed: {:?}",
+            result.err()
+        );
     }
 }

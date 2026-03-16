@@ -10,15 +10,11 @@
 (constructor @= (Term) Term)
 (constructor @+ (Term) Term)
 
-;; Keep the user-chosen numeric coercion in the arithmetic-poly ruleset.
-(rewrite
-  (Mk (Num x))
-  (Mk (Real x 1))
-  :ruleset arith_poly)
-
 (let rat_zero (bigrat (bigint 0) (bigint 1)))
 (let rat_one (bigrat (bigint 1) (bigint 1)))
 (let rat_neg_one (bigrat (bigint -1) (bigint 1)))
+(let int_sort (Sort (Const "Int")))
+(let real_sort (Sort (Const "Real")))
 
 (datatype G (PlusG G G G) (VarG BigRat Term) (CstG BigRat) (EmptyG))
 
@@ -43,26 +39,14 @@
 (function hasVarG (G) bool :no-merge)
 (relation hasVarG-demand (G))
 
+(function arithTermSort (Term) Term :no-merge)
+(relation arithTermSort-demand (Term))
 
 (function eqOrientSignG (G) i64 :no-merge)
 (relation eqOrientSignG-demand (G))
 
 (function canonEqG (G) G :no-merge)
 (relation canonEqG-demand (G))
-
-;; ------------------------------------------------------------
-;; Conventions:
-;;
-;; 1. Normal form is a right-associated sum of atoms:
-;;      CstG c
-;;      VarG c atom
-;;      PlusG atom poly EmptyG
-;;
-;; 2. EmptyG is only the tail sentinel. We never store it as a
-;;    polynomial result.
-;;
-;; 3. Coefficients and constants live entirely in builtin BigRat.
-;; ------------------------------------------------------------
 
 ;; ============================================================
 ;; isConstG / hasVarG
@@ -118,8 +102,150 @@
   ((set (hasVarG (PlusG a b rest)) (or ha (or hb hr))))
   :ruleset arith_poly)
 
-;; All polynomial atoms are reduced to hashed `(Var id)` leaves before
-;; insertion, so the old variable-only ordering is enough here.
+;; ============================================================
+;; arithTermSort
+;; ============================================================
+
+(rule
+  ((arithTermSort-demand (Mk (Num i))))
+  ((set (arithTermSort (Mk (Num i))) int_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (Real n d))))
+  ((set (arithTermSort (Mk (Real n d))) real_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (Var x s))))
+  ((set (arithTermSort (Mk (Var x s))) s))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@to_real (Args t (Empty))))))
+  ((set (arithTermSort (Mk (@to_real (Args t (Empty))))) real_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@+ (Args t (Empty))))))
+  ((arithTermSort-demand t))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@+ (Args t (Empty)))))
+   (= (arithTermSort t) s))
+  ((set (arithTermSort (Mk (@+ (Args t (Empty))))) s))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@- (Args t (Empty))))))
+  ((arithTermSort-demand t))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@- (Args t (Empty)))))
+   (= (arithTermSort t) s))
+  ((set (arithTermSort (Mk (@- (Args t (Empty))))) s))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@+ (Args t (Args t' (Empty))))))
+   (!= t' (Empty)))
+  ((arithTermSort-demand t)
+   (arithTermSort-demand t'))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@+ (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (arithTermSort t) int_sort)
+   (= (arithTermSort t') int_sort))
+  ((set (arithTermSort (Mk (@+ (Args t (Args t' (Empty)))))) int_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@+ (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (arithTermSort t) real_sort))
+  ((set (arithTermSort (Mk (@+ (Args t (Args t' (Empty)))))) real_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@+ (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (arithTermSort t') real_sort))
+  ((set (arithTermSort (Mk (@+ (Args t (Args t' (Empty)))))) real_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@- (Args t (Args t' (Empty))))))
+   (!= t' (Empty)))
+  ((arithTermSort-demand t)
+   (arithTermSort-demand t'))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@- (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (arithTermSort t) int_sort)
+   (= (arithTermSort t') int_sort))
+  ((set (arithTermSort (Mk (@- (Args t (Args t' (Empty)))))) int_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@- (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (arithTermSort t) real_sort))
+  ((set (arithTermSort (Mk (@- (Args t (Args t' (Empty)))))) real_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@- (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (arithTermSort t') real_sort))
+  ((set (arithTermSort (Mk (@- (Args t (Args t' (Empty)))))) real_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty)))
+  ((arithTermSort-demand t)
+   (arithTermSort-demand t'))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (arithTermSort t) int_sort)
+   (= (arithTermSort t') int_sort))
+  ((set (arithTermSort (Mk (@* (Args t (Args t' (Empty)))))) int_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (arithTermSort t) real_sort))
+  ((set (arithTermSort (Mk (@* (Args t (Args t' (Empty)))))) real_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (arithTermSort t') real_sort))
+  ((set (arithTermSort (Mk (@* (Args t (Args t' (Empty)))))) real_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@/ (Args t (Args d (Empty))))))
+   (!= d (Empty)))
+  ((set (arithTermSort (Mk (@/ (Args t (Args d (Empty)))))) real_sort))
+  :ruleset arith_poly)
+
+(rule
+  ((arithTermSort-demand (Mk (@/_total (Args t (Args d (Empty))))))
+   (!= d (Empty)))
+  ((set (arithTermSort (Mk (@/_total (Args t (Args d (Empty)))))) real_sort))
+  :ruleset arith_poly)
 
 ;; ============================================================
 ;; addG
@@ -179,8 +305,6 @@
 ;; insertG
 ;; ============================================================
 
-;; ---------- insert constant ----------
-
 (rule
   ((insertG-demand (CstG rat_zero) q))
   ((set (insertG (CstG rat_zero) q) q))
@@ -220,8 +344,6 @@
                (EmptyG))))
   :ruleset arith_poly)
 
-;; ---------- insert atom ----------
-
 (rule
   ((insertG-demand (VarG c x) (CstG rat_zero)))
   ((set (insertG (VarG c x) (CstG rat_zero))
@@ -236,36 +358,56 @@
   :ruleset arith_poly)
 
 (rule
-  ((insertG-demand (VarG c1 (Var x)) (VarG c2 (Var y)))
+  ((insertG-demand (VarG c1 (Var x sx)) (VarG c2 (Var y sy)))
    (= x y)
+   (= sx sy)
    (= (+ c1 c2) rat_zero))
-  ((set (insertG (VarG c1 (Var x)) (VarG c2 (Var y)))
+  ((set (insertG (VarG c1 (Var x sx)) (VarG c2 (Var y sy)))
         (CstG rat_zero)))
   :ruleset arith_poly)
 
 (rule
-  ((insertG-demand (VarG c1 (Var x)) (VarG c2 (Var y)))
+  ((insertG-demand (VarG c1 (Var x sx)) (VarG c2 (Var y sy)))
    (= x y)
+   (= sx sy)
    (!= (+ c1 c2) rat_zero))
-  ((set (insertG (VarG c1 (Var x)) (VarG c2 (Var y)))
-        (VarG (+ c1 c2) (Var x))))
+  ((set (insertG (VarG c1 (Var x sx)) (VarG c2 (Var y sy)))
+        (VarG (+ c1 c2) (Var x sx))))
   :ruleset arith_poly)
 
 (rule
-  ((insertG-demand (VarG c1 (Var x)) (VarG c2 (Var y)))
+  ((insertG-demand (VarG c1 (Var x sx)) (VarG c2 (Var y sy)))
    (< x y))
-  ((set (insertG (VarG c1 (Var x)) (VarG c2 (Var y)))
-        (PlusG (VarG c1 (Var x))
-               (VarG c2 (Var y))
+  ((set (insertG (VarG c1 (Var x sx)) (VarG c2 (Var y sy)))
+        (PlusG (VarG c1 (Var x sx))
+               (VarG c2 (Var y sy))
                (EmptyG))))
   :ruleset arith_poly)
 
 (rule
-  ((insertG-demand (VarG c1 (Var x)) (VarG c2 (Var y)))
+  ((insertG-demand (VarG c1 (Var x sx)) (VarG c2 (Var y sy)))
    (> x y))
-  ((set (insertG (VarG c1 (Var x)) (VarG c2 (Var y)))
-        (PlusG (VarG c2 (Var y))
-               (VarG c1 (Var x))
+  ((set (insertG (VarG c1 (Var x sx)) (VarG c2 (Var y sy)))
+        (PlusG (VarG c2 (Var y sy))
+               (VarG c1 (Var x sx))
+               (EmptyG))))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x int_sort)) (VarG c2 (Var y real_sort)))
+   (= x y))
+  ((set (insertG (VarG c1 (Var x int_sort)) (VarG c2 (Var y real_sort)))
+        (PlusG (VarG c1 (Var x int_sort))
+               (VarG c2 (Var y real_sort))
+               (EmptyG))))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x real_sort)) (VarG c2 (Var y int_sort)))
+   (= x y))
+  ((set (insertG (VarG c1 (Var x real_sort)) (VarG c2 (Var y int_sort)))
+        (PlusG (VarG c2 (Var y int_sort))
+               (VarG c1 (Var x real_sort))
                (EmptyG))))
   :ruleset arith_poly)
 
@@ -282,42 +424,72 @@
   :ruleset arith_poly)
 
 (rule
-  ((insertG-demand (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+  ((insertG-demand (VarG c1 (Var x sx)) (PlusG (VarG c2 (Var y sy)) t (EmptyG)))
    (= x y)
+   (= sx sy)
    (= (+ c1 c2) rat_zero))
-  ((set (insertG (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+  ((set (insertG (VarG c1 (Var x sx)) (PlusG (VarG c2 (Var y sy)) t (EmptyG)))
         t))
   :ruleset arith_poly)
 
 (rule
-  ((insertG-demand (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+  ((insertG-demand (VarG c1 (Var x sx)) (PlusG (VarG c2 (Var y sy)) t (EmptyG)))
    (= x y)
+   (= sx sy)
    (!= (+ c1 c2) rat_zero))
-  ((set (insertG (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
-        (PlusG (VarG (+ c1 c2) (Var x)) t (EmptyG))))
+  ((set (insertG (VarG c1 (Var x sx)) (PlusG (VarG c2 (Var y sy)) t (EmptyG)))
+        (PlusG (VarG (+ c1 c2) (Var x sx)) t (EmptyG))))
   :ruleset arith_poly)
 
 (rule
-  ((insertG-demand (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+  ((insertG-demand (VarG c1 (Var x sx)) (PlusG (VarG c2 (Var y sy)) t (EmptyG)))
    (< x y))
-  ((set (insertG (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
-        (PlusG (VarG c1 (Var x))
-               (PlusG (VarG c2 (Var y)) t (EmptyG))
+  ((set (insertG (VarG c1 (Var x sx)) (PlusG (VarG c2 (Var y sy)) t (EmptyG)))
+        (PlusG (VarG c1 (Var x sx))
+               (PlusG (VarG c2 (Var y sy)) t (EmptyG))
                (EmptyG))))
   :ruleset arith_poly)
 
 (rule
-  ((insertG-demand (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+  ((insertG-demand (VarG c1 (Var x sx)) (PlusG (VarG c2 (Var y sy)) t (EmptyG)))
    (> x y))
-  ((insertG-demand (VarG c1 (Var x)) t))
+  ((insertG-demand (VarG c1 (Var x sx)) t))
   :ruleset arith_poly)
 
 (rule
-  ((insertG-demand (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
+  ((insertG-demand (VarG c1 (Var x sx)) (PlusG (VarG c2 (Var y sy)) t (EmptyG)))
    (> x y)
-   (= (insertG (VarG c1 (Var x)) t) s))
-  ((set (insertG (VarG c1 (Var x)) (PlusG (VarG c2 (Var y)) t (EmptyG)))
-        (PlusG (VarG c2 (Var y)) s (EmptyG))))
+   (= (insertG (VarG c1 (Var x sx)) t) s))
+  ((set (insertG (VarG c1 (Var x sx)) (PlusG (VarG c2 (Var y sy)) t (EmptyG)))
+        (PlusG (VarG c2 (Var y sy)) s (EmptyG))))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x int_sort))
+                   (PlusG (VarG c2 (Var y real_sort)) t (EmptyG)))
+   (= x y))
+  ((set (insertG (VarG c1 (Var x int_sort))
+                 (PlusG (VarG c2 (Var y real_sort)) t (EmptyG)))
+        (PlusG (VarG c1 (Var x int_sort))
+               (PlusG (VarG c2 (Var y real_sort)) t (EmptyG))
+               (EmptyG))))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x real_sort))
+                   (PlusG (VarG c2 (Var y int_sort)) t (EmptyG)))
+   (= x y))
+  ((insertG-demand (VarG c1 (Var x real_sort)) t))
+  :ruleset arith_poly)
+
+(rule
+  ((insertG-demand (VarG c1 (Var x real_sort))
+                   (PlusG (VarG c2 (Var y int_sort)) t (EmptyG)))
+   (= x y)
+   (= (insertG (VarG c1 (Var x real_sort)) t) s))
+  ((set (insertG (VarG c1 (Var x real_sort))
+                 (PlusG (VarG c2 (Var y int_sort)) t (EmptyG)))
+        (PlusG (VarG c2 (Var y int_sort)) s (EmptyG))))
   :ruleset arith_poly)
 
 ;; ============================================================
@@ -392,9 +564,9 @@
   :ruleset arith_poly)
 
 (rule
-  ((polyOf-demand (Mk (Var t))))
-  ((set (polyOf (Mk (Var t)))
-        (VarG rat_one (Var t))))
+  ((polyOf-demand (Mk (Var t s))))
+  ((set (polyOf (Mk (Var t s)))
+        (VarG rat_one (Var t s))))
   :ruleset arith_poly)
 
 (rule
@@ -547,10 +719,21 @@
    (= (polyOf t') p2)
    (= (isConstG p1) false)
    (= (isConstG p2) false))
+  ((arithTermSort-demand (Mk (@* (Args t (Args t' (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((polyOf-demand (Mk (@* (Args t (Args t' (Empty))))))
+   (!= t' (Empty))
+   (= (polyOf t) p1)
+   (= (polyOf t') p2)
+   (= (isConstG p1) false)
+   (= (isConstG p2) false)
+   (= (arithTermSort (Mk (@* (Args t (Args t' (Empty)))))) s))
   ((set (polyOf (Mk (@* (Args t (Args t' (Empty))))))
         (VarG rat_one
               (Var (arith_poly_atom_hash
-                     (Mk (@* (Args t (Args t' (Empty))))))))))
+                     (Mk (@* (Args t (Args t' (Empty)))))) s))))
   :ruleset arith_poly)
 
 (rule
@@ -604,7 +787,7 @@
   ((set (polyOf (Mk (@/ (Args t (Args d (Empty))))))
         (VarG rat_one
               (Var (arith_poly_atom_hash
-                     (Mk (@/ (Args t (Args d (Empty))))))))))
+                     (Mk (@/ (Args t (Args d (Empty)))))) real_sort))))
   :ruleset arith_poly)
 
 (rule
@@ -615,7 +798,7 @@
   ((set (polyOf (Mk (@/ (Args t (Args d (Empty))))))
         (VarG rat_one
               (Var (arith_poly_atom_hash
-                     (Mk (@/ (Args t (Args d (Empty))))))))))
+                     (Mk (@/ (Args t (Args d (Empty)))))) real_sort))))
   :ruleset arith_poly)
 
 (rule
@@ -658,7 +841,7 @@
   ((set (polyOf (Mk (@/_total (Args t (Args d (Empty))))))
         (VarG rat_one
               (Var (arith_poly_atom_hash
-                     (Mk (@/_total (Args t (Args d (Empty))))))))))
+                     (Mk (@/_total (Args t (Args d (Empty)))))) real_sort))))
   :ruleset arith_poly)
 
 (rule
@@ -669,7 +852,7 @@
   ((set (polyOf (Mk (@/_total (Args t (Args d (Empty))))))
         (VarG rat_one
               (Var (arith_poly_atom_hash
-                     (Mk (@/_total (Args t (Args d (Empty))))))))))
+                     (Mk (@/_total (Args t (Args d (Empty)))))) real_sort))))
   :ruleset arith_poly)
 
 ;; ============================================================

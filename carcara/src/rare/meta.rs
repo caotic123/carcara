@@ -31,13 +31,13 @@ fn ctor_to_variant(c: Constructor) -> Variant {
 fn to_expr(e: EggExpr) -> Expr {
     use EggExpr::*;
     match e {
-        Var(v) => Expr::Call(
+        Var(v, sort) => Expr::Call(
             dummy_span(),
             Symbol::from("Var"),
-            vec![Expr::Lit(
-                dummy_span(),
-                egglog::ast::Literal::Int(v as i64),
-            )],
+            vec![
+                Expr::Lit(dummy_span(), egglog::ast::Literal::Int(v as i64)),
+                to_expr(*sort),
+            ],
         ),
 
         NativeBool(b) => Expr::Lit(dummy_span(), egglog::ast::Literal::Bool(b)),
@@ -68,13 +68,16 @@ fn to_expr(e: EggExpr) -> Expr {
         Real(r) => Expr::Call(
             dummy_span(),
             Symbol::from("Real"),
-            vec![Expr::Lit(
-                dummy_span(),
-                egglog::ast::Literal::Int(r.0.to_i64_wrapping()),
-            ), Expr::Lit(
-                dummy_span(),
-                egglog::ast::Literal::Int(r.1.to_i64_wrapping()),
-            )],
+            vec![
+                Expr::Lit(
+                    dummy_span(),
+                    egglog::ast::Literal::Int(r.0.to_i64_wrapping()),
+                ),
+                Expr::Lit(
+                    dummy_span(),
+                    egglog::ast::Literal::Int(r.1.to_i64_wrapping()),
+                ),
+            ],
         ),
 
         BitVec(w, v) => Expr::Call(
