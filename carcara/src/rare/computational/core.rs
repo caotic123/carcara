@@ -409,6 +409,7 @@ pub fn interpret_eunoia(
 pub fn declare_special_eunoia_eliminations(
     decls: &mut Vec<EggStatement>,
     functions: &EggFunctions,
+    enable_arith_poly: bool,
 ) {
     // Use centralized ACI operator definitions
     for (_, name, op_with_at, identity) in aci_norm::aci_operators() {
@@ -421,8 +422,10 @@ pub fn declare_special_eunoia_eliminations(
         }
     }
 
-    decls.extend(arith_poly_norm::arith_poly_norm_rules());
-    decls.extend(arith_poly_norm_rel::arith_poly_norm_rel_rules());
+    if enable_arith_poly {
+        decls.extend(arith_poly_norm::arith_poly_norm_rules());
+        decls.extend(arith_poly_norm_rel::arith_poly_norm_rel_rules());
+    }
     decls.extend(evaluation::evaluation_rules());
     if functions.names.contains_key("distinct") {
         decls.extend(distinct_elim::distinct_solver_statements());

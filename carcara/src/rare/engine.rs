@@ -12,7 +12,7 @@ use crate::{
     },
     rare::{
         computational::{
-            aci_norm::singleton_operators, arith_poly_norm,
+            aci_norm::singleton_operators, arith_poly_norm, arith_poly_norm_rel,
             core::declare_special_eunoia_eliminations, defunctionalization::elaborate_rule,
             distinct_elim::declare_logic_operators,
         },
@@ -38,6 +38,7 @@ pub struct EggFunctions {
     pub names: IndexMap<String, (bool, usize, Option<Sort>)>,
     pub shapes: IndexMap<String, IndexSet<Rc<Term>>>,
     pub assoc_calls: IndexMap<String, IndexSet<EggExpr>>,
+    pub arith_shape_facts: IndexSet<EggStatement>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +86,70 @@ fn register_function_call(
             }
         })
         .or_insert((is_op, arity, result_sort));
+}
+
+fn is_arith_op(op: Operator) -> bool {
+    matches!(op, Operator::Add | Operator::Sub)
+}
+
+fn unary_args(arg: EggExpr) -> EggExpr {
+    EggExpr::Args(Box::new(arg), Box::new(EggExpr::Empty()))
+}
+
+fn binary_args(lhs: EggExpr, rhs: EggExpr) -> EggExpr {
+    EggExpr::Args(
+        Box::new(lhs),
+        Box::new(EggExpr::Args(Box::new(rhs), Box::new(EggExpr::Empty()))),
+    )
+}
+
+fn mk_term_call(name: &str, args: EggExpr) -> EggExpr {
+    EggExpr::Mk(Box::new(EggExpr::Call(name.to_string(), vec![args])))
+}
+
+fn mk_unary_term(name: &str, arg: EggExpr) -> EggExpr {
+    mk_term_call(name, unary_args(arg))
+}
+
+fn mk_binary_term(name: &str, lhs: EggExpr, rhs: EggExpr) -> EggExpr {
+    mk_term_call(name, binary_args(lhs, rhs))
+}
+
+fn build_arith_shape_term(op: Operator, args: &[EggExpr]) -> Option<EggExpr> {
+    match op {
+        Operator::Add => {
+            let mut it = args.iter().cloned();
+            let first = it.next()?;
+            Some(match it.next() {
+                None => mk_unary_term("@arith_pos1", first),
+                Some(second) => it.fold(mk_binary_term("@arith_add2", first, second), |acc, next| {
+                    mk_binary_term("@arith_add2", acc, next)
+                }),
+            })
+        }
+        Operator::Sub => {
+            let mut it = args.iter().cloned();
+            let first = it.next()?;
+            Some(match it.next() {
+                None => mk_unary_term("@arith_neg1", first),
+                Some(second) => it.fold(mk_binary_term("@arith_sub2", first, second), |acc, next| {
+                    mk_binary_term("@arith_sub2", acc, next)
+                }),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn arith_shape_fact(raw_term: EggExpr, shaped_term: EggExpr) -> EggStatement {
+    EggStatement::Rule {
+        ruleset: Some("arith_poly".to_string()),
+        body: vec![],
+        head: vec![EggExpr::Set(
+            Box::new(EggExpr::Call("arithSyntaxOf".to_string(), vec![raw_term])),
+            Box::new(shaped_term),
+        )],
+    }
 }
 
 struct CustomPrimitive {
@@ -410,34 +475,6 @@ pub fn create_headers() -> EggLanguage {
                 Box::new(EggExpr::Literal("y".to_string())),
             )],
         },
-        EggStatement::Rewrite(
-            Box::new(EggExpr::Args(
-                Box::new(EggExpr::Literal("t1".to_string())),
-                Box::new(EggExpr::Literal("t2".to_string())),
-            )),
-            Box::new(EggExpr::Args(
-                Box::new(EggExpr::Args(
-                    Box::new(EggExpr::Literal("t1".to_string())),
-                    Box::new(EggExpr::Empty()),
-                )),
-                Box::new(EggExpr::Literal("t2".to_string())),
-            )),
-            vec![],
-        ),
-        EggStatement::Rewrite(
-            Box::new(EggExpr::Args(
-                Box::new(EggExpr::Args(
-                    Box::new(EggExpr::Literal("t1".to_string())),
-                    Box::new(EggExpr::Empty()),
-                )),
-                Box::new(EggExpr::Literal("t2".to_string())),
-            )),
-            Box::new(EggExpr::Args(
-                Box::new(EggExpr::Literal("t1".to_string())),
-                Box::new(EggExpr::Literal("t2".to_string())),
-            )),
-            vec![],
-        ),
     ];
 
     stmts
@@ -578,13 +615,25 @@ pub fn to_egg_expr(
                 }
 
                 register_function_call(func_cache, &head.to_string(), true, args.len(), None);
-                let args_list =
-                    build_args_list(args.clone().iter().map(|x| {
+                let arg_exprs = args
+                    .iter()
+                    .map(|x| {
                         to_egg_expr(x, subs, func_cache, var_map, collect_functions_shape)
-                    }))?;
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                let args_list = build_args_list(arg_exprs.iter().cloned().map(Some))?;
+
+                let op_with_at = format!("@{}", head.to_string());
+                if subs.is_empty() && is_arith_op(*head) {
+                    if let Some(shaped_term) = build_arith_shape_term(*head, &arg_exprs) {
+                        func_cache.arith_shape_facts.insert(arith_shape_fact(
+                            encapluse(EggExpr::Call(op_with_at.clone(), vec![args_list.clone()])),
+                            shaped_term,
+                        ));
+                    }
+                }
 
                 if singleton_operators(*head).is_some() {
-                    let op_with_at = format!("@{}", head.to_string());
                     func_cache
                         .assoc_calls
                         .entry(op_with_at.clone())
@@ -1048,8 +1097,8 @@ fn available_subterm_premises(
         .collect()
 }
 
-fn goal_run_schedule(iter: i16) -> Vec<EggStatement> {
-    vec![
+fn goal_run_schedule(iter: i16, enable_arith_poly: bool) -> Vec<EggStatement> {
+    let mut schedule = vec![
         EggStatement::Run {
             ruleset: Some("list-ruleset".to_string()),
             iterations: iter,
@@ -1058,12 +1107,15 @@ fn goal_run_schedule(iter: i16) -> Vec<EggStatement> {
             ruleset: Some("evaluation".to_string()),
             iterations: iter,
         },
-        EggStatement::Run {
+    ];
+    if enable_arith_poly {
+        schedule.push(EggStatement::Run {
             ruleset: Some("arith_poly".to_string()),
             iterations: iter,
-        },
-        EggStatement::Run { ruleset: None, iterations: iter },
-    ]
+        });
+    }
+    schedule.push(EggStatement::Run { ruleset: None, iterations: iter });
+    schedule
 }
 
 fn should_deduplicate_statement(statement: &EggStatement) -> bool {
@@ -1182,36 +1234,70 @@ fn run_goal_schedule_round(
     egraph: &mut EGraph,
     code_str: &mut String,
     iter: i16,
+    enable_arith_poly: bool,
 ) -> Result<(), String> {
-    run_and_record_statements(egraph, code_str, goal_run_schedule(iter))
+    run_and_record_statements(egraph, code_str, goal_run_schedule(iter, enable_arith_poly))
 }
 
 #[derive(Clone)]
-struct PolyCheckPlan {
+struct GoalFallbackPlan {
+    label: &'static str,
+    guard_setup: Vec<EggStatement>,
+    guard: EggExpr,
     setup: Vec<EggStatement>,
     lhs: EggExpr,
     rhs: EggExpr,
 }
 
-impl PolyCheckPlan {
-    fn from_kind(kind: arith_poly_norm::ArithPolyCheckKind) -> Self {
-        let (setup, lhs, rhs) = arith_poly_norm::poly_eq_terms(kind);
-        Self { setup, lhs, rhs }
+impl GoalFallbackPlan {
+    fn new(
+        label: &'static str,
+        guard_setup: Vec<EggStatement>,
+        guard: EggExpr,
+        (setup, lhs, rhs): (Vec<EggStatement>, EggExpr, EggExpr),
+    ) -> Self {
+        Self {
+            label,
+            guard_setup,
+            guard,
+            setup,
+            lhs,
+            rhs,
+        }
     }
 }
 
-fn run_poly_check_attempt(
+fn run_goal_fallback_attempt(
     egraph: &mut EGraph,
     code_str: &mut String,
-    poly_check: &PolyCheckPlan,
+    fallback: &GoalFallbackPlan,
 ) -> Result<(), String> {
-    run_and_record_statements(egraph, code_str, poly_check.setup.clone())?;
+    run_and_record_statements(egraph, code_str, fallback.guard_setup.clone())?;
     run_and_record_check(
         egraph,
         code_str,
-        poly_check.lhs.clone(),
-        poly_check.rhs.clone(),
-    )
+        fallback.guard.clone(),
+        EggExpr::NativeBool(true),
+    )?;
+    run_and_record_statements(egraph, code_str, fallback.setup.clone())?;
+    run_and_record_check(egraph, code_str, fallback.lhs.clone(), fallback.rhs.clone())
+}
+
+fn run_goal_fallback_attempts(
+    egraph: &mut EGraph,
+    code_str: &mut String,
+    fallback_plans: &[GoalFallbackPlan],
+) -> Result<(), String> {
+    let mut errors = Vec::with_capacity(fallback_plans.len());
+
+    for fallback in fallback_plans {
+        match run_goal_fallback_attempt(egraph, code_str, fallback) {
+            Ok(()) => return Ok(()),
+            Err(error) => errors.push(format!("{} fallback failed:\n{}", fallback.label, error)),
+        }
+    }
+
+    Err(errors.join("\n"))
 }
 
 fn check_goal_attempt(
@@ -1219,20 +1305,21 @@ fn check_goal_attempt(
     code_str: &mut String,
     lhs_expr: &EggExpr,
     rhs_expr: &EggExpr,
-    poly_check: Option<&PolyCheckPlan>,
+    fallback_plans: &[GoalFallbackPlan],
     iter: i16,
+    enable_arith_poly: bool,
 ) -> Result<(), String> {
-    run_goal_schedule_round(egraph, code_str, iter)?;
+    run_goal_schedule_round(egraph, code_str, iter, enable_arith_poly)?;
 
     match run_and_record_check(egraph, code_str, lhs_expr.clone(), rhs_expr.clone()) {
         Ok(()) => Ok(()),
         Err(raw_error) => {
-            let Some(poly_check) = poly_check else {
+            if fallback_plans.is_empty() {
                 return Err(raw_error);
-            };
+            }
 
-            run_poly_check_attempt(egraph, code_str, poly_check)
-                .map_err(|poly_error| format!("{raw_error}\n{poly_error}"))
+            run_goal_fallback_attempts(egraph, code_str, fallback_plans)
+                .map_err(|fallback_error| format!("{raw_error}\n{fallback_error}"))
         }
     }
 }
@@ -1244,11 +1331,11 @@ fn check_goal_with_retry_rounds(
     code_str: &mut String,
     lhs_expr: EggExpr,
     rhs_expr: EggExpr,
-    poly_check: Option<&PolyCheckPlan>,
+    fallback_plans: &[GoalFallbackPlan],
+    enable_arith_poly: bool,
     options: RunEgglogOptions,
 ) -> Result<(), String> {
     let mut last_error = None;
-
     for i in 0..options.normalized_max_goal_schedule_rounds() {
         println!("Running goal check schedule round {}...", i + 1);
         match check_goal_attempt(
@@ -1256,8 +1343,9 @@ fn check_goal_with_retry_rounds(
             code_str,
             &lhs_expr,
             &rhs_expr,
-            poly_check,
+            fallback_plans,
             (i + 1) as i16,
+            enable_arith_poly,
         ) {
             Ok(()) => return Ok(()),
             Err(error) => last_error = Some(error),
@@ -1418,10 +1506,41 @@ pub fn run_egglog_with_options(
         false,
     )
     .unwrap();
-    let lhs_kind = arith_poly_norm::arith_poly_check_kind(pool, lhs);
-    let rhs_kind = arith_poly_norm::arith_poly_check_kind(pool, rhs);
-    let poly_kind = lhs_kind.filter(|kind| Some(*kind) == rhs_kind);
-    let poly_check = poly_kind.map(PolyCheckPlan::from_kind);
+    let enable_arith_poly = arith_poly_norm::uses_arith_machinery(&egg_functions);
+    let fallback_plans = enable_arith_poly.then(|| {
+        vec![
+            GoalFallbackPlan::new(
+                "arithPolyNfOf",
+                vec![
+                    EggStatement::Call(Box::new(EggExpr::Call(
+                        "arithGoalPolyNfOf-demand".to_string(),
+                        vec![EggExpr::Literal("goal_lhs".to_string())],
+                    ))),
+                    EggStatement::Run {
+                        ruleset: Some("arith_poly_guard".to_string()),
+                        iterations: 1,
+                    },
+                ],
+                arith_poly_norm::poly_goal_guard_term(),
+                arith_poly_norm::poly_goal_check_terms(),
+            ),
+            GoalFallbackPlan::new(
+                "arithRelBoolKeyOf",
+                vec![
+                    EggStatement::Call(Box::new(EggExpr::Call(
+                        "arithRelBoolKeyOf-demand".to_string(),
+                        vec![EggExpr::Literal("goal_lhs".to_string())],
+                    ))),
+                    EggStatement::Run {
+                        ruleset: Some("arith_poly_guard".to_string()),
+                        iterations: 1,
+                    },
+                ],
+                arith_poly_norm_rel::relation_bool_goal_guard_term(),
+                arith_poly_norm_rel::relation_bool_goal_check_terms(),
+            ),
+        ]
+    });
     let mut goal = set_goal(goal_lhs_expr, goal_rhs_expr);
     goal.extend(available_subterm_premises(
         lhs,
@@ -1436,10 +1555,13 @@ pub fn run_egglog_with_options(
 
     let mut declarations = declare_functions(&mut egg_functions, &database.consts, &mut var_map);
 
-    declare_special_eunoia_eliminations(&mut declarations, &egg_functions);
-    declarations.extend(arith_poly_norm::declare_opaque_arith_poly_rules(
-        &egg_functions,
-    ));
+    declare_special_eunoia_eliminations(&mut declarations, &egg_functions, enable_arith_poly);
+    if enable_arith_poly {
+        declarations.extend(arith_poly_norm::declare_opaque_arith_poly_rules(
+            &egg_functions,
+        ));
+        declarations.extend(egg_functions.arith_shape_facts.clone());
+    }
 
     let mut ast = create_headers();
 
@@ -1451,7 +1573,9 @@ pub fn run_egglog_with_options(
     let (egglog, mut code_str) = compile_program(ast);
 
     let mut egraph = EGraph::default();
-    arith_poly_norm::register_arith_poly_primitives(&mut egraph);
+    if enable_arith_poly {
+        arith_poly_norm::register_arith_poly_primitives(&mut egraph);
+    }
 
     egraph.add_primitive(CustomPrimitive {
         name: Symbol::from("ineq"),
@@ -1470,7 +1594,8 @@ pub fn run_egglog_with_options(
             &mut code_str,
             raw_lhs,
             raw_rhs,
-            poly_check.as_ref(),
+            fallback_plans.as_deref().unwrap_or(&[]),
+            enable_arith_poly,
             options,
         )
     });

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    ast::{Constant, Operator, Rc, Sort, Term, TermPool},
+    ast::Sort,
     egg_expr,
     rare::{
         engine::EggFunctions,
@@ -26,23 +26,20 @@ fn is_numeric_sort(sort: &Sort) -> bool {
     matches!(sort, Sort::Int | Sort::Real)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ArithPolyCheckKind {
-    ArithPolyNfOf,
-}
-
-impl ArithPolyCheckKind {
-    fn demand_relation(self) -> &'static str {
-        match self {
-            ArithPolyCheckKind::ArithPolyNfOf => "arithPolyNfOf-demand",
-        }
-    }
-
-    fn function_name(self) -> &'static str {
-        match self {
-            ArithPolyCheckKind::ArithPolyNfOf => "arithPolyNfOf",
-        }
-    }
+pub fn uses_arith_machinery(functions: &EggFunctions) -> bool {
+    functions
+        .names
+        .iter()
+        .any(|(name, (is_op, _arity, result_sort))| {
+            if *is_op {
+                matches!(
+                    name.as_str(),
+                    "+" | "-" | "*" | "/" | "/_total" | "to_real" | "<" | "<=" | ">" | ">="
+                )
+            } else {
+                result_sort.as_ref().is_some_and(is_numeric_sort)
+            }
+        })
 }
 
 pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggStatement> {
@@ -71,6 +68,28 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
             format!("@{}", func),
             vec![EggExpr::Literal("args".to_string())],
         )));
+        decls.push(EggStatement::Rule {
+            ruleset: Some("arith_poly_guard".to_string()),
+            body: vec![egg_expr!(("arithGoalPolyNfOf-demand" {wrapped_app.clone()}))],
+            head: vec![
+                EggExpr::Set(
+                    Box::new(EggExpr::Call(
+                        "arithGoalPolyCanMatch".to_string(),
+                        vec![wrapped_app.clone()],
+                    )),
+                    Box::new(EggExpr::NativeBool(true)),
+                ),
+                egg_expr!(("arithPolyNfOf-demand" {wrapped_app.clone()})),
+            ],
+        });
+        decls.push(EggStatement::Rule {
+            ruleset: Some("arith_poly".to_string()),
+            body: vec![
+                egg_expr!((= ("arithPolyNfOf" {wrapped_app.clone()}) "p")),
+                egg_expr!(("arithGoalPolyNfOf-demand" {wrapped_app.clone()})),
+            ],
+            head: vec![egg_expr!((set ("arithGoalPolyNfOf" {wrapped_app.clone()}) "p"))],
+        });
         decls.push(EggStatement::Rule {
             ruleset: Some("arith_poly".to_string()),
             body: vec![egg_expr!(("arithPolyNfOf-demand" {wrapped_app.clone()}))],
@@ -103,52 +122,17 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
     decls
 }
 
-fn supports_arith_poly_term(pool: &dyn TermPool, term: &Rc<Term>) -> bool {
-    match term.as_ref() {
-        Term::Const(Constant::Integer(_) | Constant::Real(_)) => true,
-        Term::Var(_, sort) => sort.as_sort().is_some_and(is_numeric_sort),
-        Term::App(_, _) => pool.sort(term).as_sort().is_some_and(is_numeric_sort),
-        Term::Op(Operator::Add, args) => {
-            !args.is_empty() && args.iter().all(|arg| supports_arith_poly_term(pool, arg))
-        }
-        Term::Op(Operator::Sub, args) if args.len() == 1 => {
-            supports_arith_poly_term(pool, &args[0])
-        }
-        Term::Op(Operator::Sub, args) if args.len() == 2 => {
-            supports_arith_poly_term(pool, &args[0]) && supports_arith_poly_term(pool, &args[1])
-        }
-        Term::Op(Operator::Mult, args) if args.len() == 2 => {
-            supports_arith_poly_term(pool, &args[0]) && supports_arith_poly_term(pool, &args[1])
-        }
-        Term::Op(Operator::RealDiv, args) if args.len() == 2 => {
-            supports_arith_poly_term(pool, &args[0]) && supports_arith_poly_term(pool, &args[1])
-        }
-        Term::Op(Operator::ToReal, args) if args.len() == 1 => {
-            supports_arith_poly_term(pool, &args[0])
-        }
-        _ => false,
-    }
-}
-
-pub fn arith_poly_check_kind(pool: &dyn TermPool, term: &Rc<Term>) -> Option<ArithPolyCheckKind> {
-    if supports_arith_poly_term(pool, term) {
-        Some(ArithPolyCheckKind::ArithPolyNfOf)
-    } else {
-        None
-    }
-}
-
-pub fn poly_eq_terms(kind: ArithPolyCheckKind) -> (Vec<EggStatement>, EggExpr, EggExpr) {
+pub fn poly_goal_check_terms() -> (Vec<EggStatement>, EggExpr, EggExpr) {
     let lhs = EggExpr::Literal("goal_lhs".to_string());
     let rhs = EggExpr::Literal("goal_rhs".to_string());
 
     let setup = vec![
         EggStatement::Call(Box::new(EggExpr::Call(
-            kind.demand_relation().to_string(),
+            "arithGoalPolyNfOf-demand".to_string(),
             vec![lhs.clone()],
         ))),
         EggStatement::Call(Box::new(EggExpr::Call(
-            kind.demand_relation().to_string(),
+            "arithGoalPolyNfOf-demand".to_string(),
             vec![rhs.clone()],
         ))),
         EggStatement::Saturate {
@@ -156,10 +140,17 @@ pub fn poly_eq_terms(kind: ArithPolyCheckKind) -> (Vec<EggStatement>, EggExpr, E
         },
     ];
 
-    let lhs_cmp = EggExpr::Call(kind.function_name().to_string(), vec![lhs]);
-    let rhs_cmp = EggExpr::Call(kind.function_name().to_string(), vec![rhs]);
+    let lhs_cmp = EggExpr::Call("arithGoalPolyNfOf".to_string(), vec![lhs]);
+    let rhs_cmp = EggExpr::Call("arithGoalPolyNfOf".to_string(), vec![rhs]);
 
     (setup, lhs_cmp, rhs_cmp)
+}
+
+pub fn poly_goal_guard_term() -> EggExpr {
+    EggExpr::Call(
+        "arithGoalPolyCanMatch".to_string(),
+        vec![EggExpr::Literal("goal_lhs".to_string())],
+    )
 }
 
 struct ArithPolyAtomHash;
@@ -221,14 +212,25 @@ pub mod tests {
         (declare-fun fmt1 () Int)
         (declare-fun x () Int)
         (declare-fun x1 () Int)
+        (declare-fun x4 () Int)
+        (declare-fun x6 () Int)
+        (declare-fun x7 () Int)
+        (declare-fun x13 () Int)
+        (declare-fun x17 () Int)
+        (declare-fun x18 () Int)
         (declare-fun y () Int)
         (declare-fun z () Int)
         (declare-fun a () Int)
         (declare-fun b () Int)
+        (declare-fun c () Int)
+        (declare-fun d () Int)
         (declare-fun f3 () Int)
         (declare-fun f (Int) Int)
         (declare-fun g (Int) Int)
         (declare-fun fr (Int) Real)
+        (declare-fun r () Real)
+        (declare-fun s () Real)
+        (declare-fun t () Real)
         (declare-fun s_count (Int) Int)
         (declare-fun x_count (Int) Int)
     "#;
@@ -302,6 +304,59 @@ pub mod tests {
           (Empty)
           (Args Term Term)
           (Mk Term))
+    "#;
+
+    const RAW_ARITH_SHAPE_HELPERS: &str = r#"
+        (relation rawAddShape-demand (Term DesbinN))
+        (relation rawSubShape-demand (Term DesbinN))
+
+        (rule
+          ((= t (Mk (@+ (Args x (Empty))))))
+          ((set (arithSyntaxOf t) (Mk (@arith_pos1 (Args x (Empty))))))
+          :ruleset arith_poly)
+
+        (rule
+          ((= t (Mk (@+ (Args x (Args y rest))))))
+          ((rawAddShape-demand t (Desbin x (Args y rest))))
+          :ruleset arith_poly)
+
+        (rule
+          ((rawAddShape-demand torig (Desbin acc (Args z rest)))
+           (!= rest (Empty)))
+          ((rawAddShape-demand
+            torig
+            (Desbin (Mk (@arith_add2 (Args acc (Args z (Empty))))) rest)))
+          :ruleset arith_poly)
+
+        (rule
+          ((rawAddShape-demand torig (Desbin acc (Args z (Empty)))))
+          ((set (arithSyntaxOf torig)
+                (Mk (@arith_add2 (Args acc (Args z (Empty)))))))
+          :ruleset arith_poly)
+
+        (rule
+          ((= t (Mk (@- (Args x (Empty))))))
+          ((set (arithSyntaxOf t) (Mk (@arith_neg1 (Args x (Empty))))))
+          :ruleset arith_poly)
+
+        (rule
+          ((= t (Mk (@- (Args x (Args y rest))))))
+          ((rawSubShape-demand t (Desbin x (Args y rest))))
+          :ruleset arith_poly)
+
+        (rule
+          ((rawSubShape-demand torig (Desbin acc (Args z rest)))
+           (!= rest (Empty)))
+          ((rawSubShape-demand
+            torig
+            (Desbin (Mk (@arith_sub2 (Args acc (Args z (Empty))))) rest)))
+          :ruleset arith_poly)
+
+        (rule
+          ((rawSubShape-demand torig (Desbin acc (Args z (Empty)))))
+          ((set (arithSyntaxOf torig)
+                (Mk (@arith_sub2 (Args acc (Args z (Empty)))))))
+          :ruleset arith_poly)
     "#;
 
     /// Parse a term from a string with arithmetic definitions
@@ -411,6 +466,13 @@ pub mod tests {
             .count()
     }
 
+    fn nth_occurrence(code: &str, needle: &str, index: usize) -> usize {
+        code.match_indices(needle)
+            .nth(index)
+            .map(|(offset, _)| offset)
+            .unwrap_or_else(|| panic!("missing occurrence {} of `{}` in:\n{}", index, needle, code))
+    }
+
     fn assert_single_round_raw_then_poly_pipeline(code: &str) {
         let goal_schedule = code
             .find("(run-schedule (repeat 1 (run list-ruleset)))")
@@ -418,14 +480,18 @@ pub mod tests {
         let raw_check = code
             .find("(check (= goal_lhs goal_rhs))")
             .expect("missing raw goal check");
-        let poly_setup = code
-            .find("(arithPolyNfOf-demand goal_lhs)")
-            .expect("missing poly demand setup");
+        let poly_guard_setup = nth_occurrence(code, "(arithGoalPolyNfOf-demand goal_lhs)", 0);
+        let poly_guard_run =
+            nth_occurrence(code, "(run-schedule (repeat 1 (run arith_poly_guard)))", 0);
+        let poly_guard = code
+            .find("(check (= (arithGoalPolyCanMatch goal_lhs) true))")
+            .expect("missing poly guard check");
+        let poly_setup = nth_occurrence(code, "(arithGoalPolyNfOf-demand goal_lhs)", 1);
         let poly_saturation = code
             .find("(run-schedule (saturate (run arith_poly)))")
             .expect("missing poly saturation");
         let poly_check = code
-            .find("(check (= (arithPolyNfOf goal_lhs) (arithPolyNfOf goal_rhs)))")
+            .find("(check (= (arithGoalPolyNfOf goal_lhs) (arithGoalPolyNfOf goal_rhs)))")
             .expect("missing poly goal check");
 
         assert_eq!(
@@ -436,16 +502,100 @@ pub mod tests {
         );
         assert_eq!(
             check_count(code),
-            2,
-            "expected one raw check and one poly check, got:\n{}",
+            3,
+            "expected one raw check, one poly guard, and one poly check, got:\n{}",
             code
         );
         assert!(
             goal_schedule < raw_check
-                && raw_check < poly_setup
+                && raw_check < poly_guard_setup
+                && poly_guard_setup < poly_guard_run
+                && poly_guard_run < poly_guard
+                && poly_guard < poly_setup
                 && poly_setup < poly_saturation
                 && poly_saturation < poly_check,
             "expected raw check before the poly retry pipeline, got:\n{}",
+            code
+        );
+    }
+
+    fn assert_single_round_raw_then_poly_then_rel_pipeline(code: &str) {
+        let goal_schedule = code
+            .find("(run-schedule (repeat 1 (run list-ruleset)))")
+            .expect("missing goal schedule round");
+        let raw_check = code
+            .find("(check (= goal_lhs goal_rhs))")
+            .expect("missing raw goal check");
+        let poly_guard_setup = nth_occurrence(code, "(arithGoalPolyNfOf-demand goal_lhs)", 0);
+        let poly_guard_run =
+            nth_occurrence(code, "(run-schedule (repeat 1 (run arith_poly_guard)))", 0);
+        let poly_guard = code
+            .find("(check (= (arithGoalPolyCanMatch goal_lhs) true))")
+            .expect("missing poly guard check");
+        assert!(
+            !code.contains("(check (= (arithGoalPolyNfOf goal_lhs) (arithGoalPolyNfOf goal_rhs)))"),
+            "numeric fallback should have stopped at the guard, got:\n{}",
+            code
+        );
+        let rel_guard_setup = nth_occurrence(code, "(arithRelBoolKeyOf-demand goal_lhs)", 0);
+        let rel_guard_run =
+            nth_occurrence(code, "(run-schedule (repeat 1 (run arith_poly_guard)))", 1);
+        let rel_guard = code
+            .find("(check (= (arithRelBoolCanMatch goal_lhs) true))")
+            .expect("missing relation-bool guard check");
+        let rel_setup = nth_occurrence(code, "(arithRelBoolKeyOf-demand goal_lhs)", 1);
+        let rel_saturation = nth_occurrence(code, "(run-schedule (saturate (run arith_poly)))", 0);
+        let rel_check = code
+            .find("(check (= (arithRelBoolKeyOf goal_lhs) (arithRelBoolKeyOf goal_rhs)))")
+            .expect("missing relation-bool goal check");
+
+        assert_eq!(
+            goal_schedule_round_count(code),
+            1,
+            "expected exactly one goal schedule round, got:\n{}",
+            code
+        );
+        assert_eq!(
+            check_count(code),
+            4,
+            "expected one raw check, one poly guard, one relation guard, and one relation check, got:\n{}",
+            code
+        );
+        assert!(
+            goal_schedule < raw_check
+                && raw_check < poly_guard_setup
+                && poly_guard_setup < poly_guard_run
+                && poly_guard_run < poly_guard
+                && poly_guard < rel_guard_setup
+                && rel_guard_setup < rel_guard_run
+                && rel_guard_run < rel_guard
+                && rel_guard < rel_setup
+                && rel_setup < rel_saturation
+                && rel_saturation < rel_check,
+            "expected raw, poly, then relation retry pipeline order, got:\n{}",
+            code
+        );
+    }
+
+    fn assert_single_round_raw_only_pipeline(code: &str) {
+        assert_eq!(
+            goal_schedule_round_count(code),
+            1,
+            "expected exactly one goal schedule round, got:\n{}",
+            code
+        );
+        assert_eq!(
+            check_count(code),
+            1,
+            "expected only the raw goal check, got:\n{}",
+            code
+        );
+        assert!(
+            !code.contains("(run-schedule (repeat 1 (run arith_poly)))")
+                && !code.contains("(run-schedule (saturate (run arith_poly)))")
+                && !code.contains("arithGoalPolyNfOf-demand goal_lhs")
+                && !code.contains("arithRelBoolKeyOf-demand goal_lhs"),
+            "expected no arithmetic machinery in generated code, got:\n{}",
             code
         );
     }
@@ -487,10 +637,11 @@ pub mod tests {
         let mut egraph = EGraph::default();
         super::register_arith_poly_primitives(&mut egraph);
         let program = format!(
-            "{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}",
             RAW_TERM_BASE,
             include_str!("arith_poly_norm.egglog"),
             include_str!("arith_poly_norm_rel.egglog"),
+            RAW_ARITH_SHAPE_HELPERS,
             script,
         );
         egraph
@@ -947,7 +1098,34 @@ pub mod tests {
     }
 
     #[test]
-    #[ignore = "n-ary addition regression for counted-offset reordering"]
+    fn test_goal_schedule_round_runs_raw_poly_then_relation_on_same_attempt() {
+        let (result, code) = elaborate_with_options(
+            "(= (<= 1 f3) (>= f3 1))",
+            RunEgglogOptions { max_goal_schedule_rounds: 1 },
+        );
+        assert!(
+            result.is_ok(),
+            "single-round raw/poly/relation attempt failed: {:?}",
+            result.err()
+        );
+        assert_single_round_raw_then_poly_then_rel_pipeline(&code);
+    }
+
+    #[test]
+    fn test_non_arith_goal_skips_arith_pipeline() {
+        let (result, code) = elaborate_with_options(
+            "(= true true)",
+            RunEgglogOptions { max_goal_schedule_rounds: 1 },
+        );
+        assert!(
+            result.is_ok(),
+            "non-arith single-round attempt failed: {:?}",
+            result.err()
+        );
+        assert_single_round_raw_only_pipeline(&code);
+    }
+
+    #[test]
     fn test_counted_offset_sum_reordering_nary_regression() {
         let result = try_elaborate(COUNTED_OFFSET_REORDER_EQ);
         assert!(
@@ -979,6 +1157,19 @@ pub mod tests {
             result.err()
         );
         assert_single_round_raw_then_poly_pipeline(&code);
+    }
+
+    #[test]
+    fn test_cut_lemma_t218_nary_rhs_reordering_regression() {
+        let result = try_elaborate(
+            "(= (+ (+ (+ (+ (+ x7 x6) (- x17)) x4) (- x13)) x18)
+                (+ (- x17) (- x13) x18 x7 x6 x4))",
+        );
+        assert!(
+            result.is_ok(),
+            "cut lemma t218 n-ary rhs reordering failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1061,11 +1252,11 @@ pub mod tests {
             (let num_neg_2 (Mk (Num -2)))
             (let num_neg_3 (Mk (Num -3)))
 
-            (let diff_x (Mk (@- (Args x1 (Args x2 (Empty))))))
-            (let diff_y (Mk (@- (Args y1 (Args y2 (Empty))))))
+            (let diff_x (Mk (@arith_sub2 (Args x1 (Args x2 (Empty))))))
+            (let diff_y (Mk (@arith_sub2 (Args y1 (Args y2 (Empty))))))
             (let diff_y_real (Mk (@to_real (Args diff_y (Empty)))))
-            (let diff_z (Mk (@- (Args z1 (Args z2 (Empty))))))
-            (let diff_w (Mk (@- (Args w1 (Args w2 (Empty))))))
+            (let diff_z (Mk (@arith_sub2 (Args z1 (Args z2 (Empty))))))
+            (let diff_w (Mk (@arith_sub2 (Args w1 (Args w2 (Empty))))))
 
             (let prem_eq_lhs (Mk (@* (Args num_2 (Args diff_x (Empty))))))
             (let prem_eq_rhs (Mk (@* (Args num_3 (Args diff_y_real (Empty))))))
@@ -1104,6 +1295,68 @@ pub mod tests {
         assert!(
             result.is_ok(),
             "raw arith_poly_norm_rel regressions failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_raw_nary_left_assoc_desbinarization_regressions() {
+        let result = run_raw_egglog(
+            r#"
+            (let x (Mk (Var 1 int_sort)))
+            (let y (Mk (Var 2 int_sort)))
+            (let z (Mk (Var 3 int_sort)))
+            (let w (Mk (Var 4 int_sort)))
+            (let r (Mk (Var 5 real_sort)))
+            (let s (Mk (Var 6 real_sort)))
+            (let t (Mk (Var 7 real_sort)))
+
+            (let add_n (Mk (@+ (Args x (Args y (Args z (Args w (Empty))))))))
+            (let add_b
+              (Mk (@+ (Args (Mk (@+ (Args (Mk (@+ (Args x (Args y (Empty))))) (Args z (Empty)))))
+                           (Args w (Empty))))))
+
+            (let sub_n (Mk (@- (Args x (Args y (Args z (Args w (Empty))))))))
+            (let sub_b
+              (Mk (@- (Args (Mk (@- (Args (Mk (@- (Args x (Args y (Empty))))) (Args z (Empty)))))
+                           (Args w (Empty))))))
+
+            (let mul_n (Mk (@* (Args x (Args y (Args z (Empty)))))))
+            (let mul_b
+              (Mk (@* (Args (Mk (@* (Args x (Args y (Empty))))) (Args z (Empty))))))
+
+            (let div_n (Mk (@/ (Args r (Args s (Args t (Empty)))))))
+            (let div_b
+              (Mk (@/ (Args (Mk (@/ (Args r (Args s (Empty))))) (Args t (Empty))))))
+
+            (let div_total_n (Mk (@/_total (Args r (Args s (Args t (Empty)))))))
+            (let div_total_b
+              (Mk (@/_total
+                    (Args (Mk (@/_total (Args r (Args s (Empty))))) (Args t (Empty))))))
+
+            (arithPolyNfOf-demand add_n)
+            (arithPolyNfOf-demand add_b)
+            (arithPolyNfOf-demand sub_n)
+            (arithPolyNfOf-demand sub_b)
+            (arithPolyNfOf-demand mul_n)
+            (arithPolyNfOf-demand mul_b)
+            (arithPolyNfOf-demand div_n)
+            (arithPolyNfOf-demand div_b)
+            (arithPolyNfOf-demand div_total_n)
+            (arithPolyNfOf-demand div_total_b)
+
+            (run-schedule (saturate (run arith_poly)))
+
+            (check (= (arithPolyNfOf add_n) (arithPolyNfOf add_b)))
+            (check (= (arithPolyNfOf sub_n) (arithPolyNfOf sub_b)))
+            (check (= (arithPolyNfOf mul_n) (arithPolyNfOf mul_b)))
+            (check (= (arithPolyNfOf div_n) (arithPolyNfOf div_b)))
+            (check (= (arithPolyNfOf div_total_n) (arithPolyNfOf div_total_b)))
+            "#,
+        );
+        assert!(
+            result.is_ok(),
+            "raw n-ary left-assoc des-binarization regressions failed: {:?}",
             result.err()
         );
     }

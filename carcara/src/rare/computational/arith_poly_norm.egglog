@@ -1,4 +1,5 @@
 (ruleset arith_poly)
+(ruleset arith_poly_guard)
 (constructor @* (Term) Term)
 (constructor @- (Term) Term)
 (constructor @/ (Term) Term)
@@ -9,6 +10,10 @@
 (constructor @or (Term) Term)
 (constructor @= (Term) Term)
 (constructor @+ (Term) Term)
+(constructor @arith_pos1 (Term) Term)
+(constructor @arith_add2 (Term) Term)
+(constructor @arith_neg1 (Term) Term)
+(constructor @arith_sub2 (Term) Term)
 (constructor RatConst (BigRat) Term)
 
 (let rat_zero (bigrat (bigint 0) (bigint 1)))
@@ -42,7 +47,9 @@
 ;;   - @+, @-, @*, @/, @/_total, @to_real, @=
 ;;   - RatConst
 ;;   - arith_poly_atom_hash : Term -> i64
-;;   - arithmetic terms are binarized
+;;   - source + / - terms are lowered to arity-safe helper terms before
+;;     normalization
+;;   - n-ary * / /_total terms are left-associated on demand
 ;; ============================================================
 
 (datatype MonN
@@ -87,6 +94,204 @@
 
 (function arithPolyNfOf (Term) PolyN :no-merge)
 (relation arithPolyNfOf-demand (Term))
+(function arithSyntaxOf (Term) Term :merge old)
+
+(function arithGoalPolyCanMatch (Term) bool :merge old)
+(function arithGoalPolyNfOf (Term) PolyN :no-merge)
+(relation arithGoalPolyNfOf-demand (Term))
+
+;; ------------------------------------------------------------
+;; arity-safe source lowering
+;; ------------------------------------------------------------
+
+(rule
+  ((= (arithSyntaxOf t) shaped)
+   (arithPolyNfOf-demand t))
+  ((arithPolyNfOf-demand shaped))
+  :ruleset arith_poly)
+
+(rule
+  ((= (arithSyntaxOf t) shaped)
+   (= (arithPolyNfOf shaped) p)
+   (arithPolyNfOf-demand t))
+  ((set (arithPolyNfOf t) p))
+  :ruleset arith_poly)
+
+;; ------------------------------------------------------------
+;; goal-facing numeric normalization wrapper
+;; ------------------------------------------------------------
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (Num i))))
+  ((set (arithGoalPolyCanMatch (Mk (Num i))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (Num i))))
+  ((arithPolyNfOf-demand (Mk (Num i))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (Real n d))))
+  ((set (arithGoalPolyCanMatch (Mk (Real n d))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (Real n d))))
+  ((arithPolyNfOf-demand (Mk (Real n d))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (RatConst q))))
+  ((set (arithGoalPolyCanMatch (Mk (RatConst q))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (RatConst q))))
+  ((arithPolyNfOf-demand (Mk (RatConst q))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (Var x int_sort))))
+  ((set (arithGoalPolyCanMatch (Mk (Var x int_sort))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (Var x int_sort))))
+  ((arithPolyNfOf-demand (Mk (Var x int_sort))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (Var x real_sort))))
+  ((set (arithGoalPolyCanMatch (Mk (Var x real_sort))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (Var x real_sort))))
+  ((arithPolyNfOf-demand (Mk (Var x real_sort))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@+ args))))
+  ((set (arithGoalPolyCanMatch (Mk (@+ args))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@+ args))))
+  ((arithPolyNfOf-demand (Mk (@+ args))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@- args))))
+  ((set (arithGoalPolyCanMatch (Mk (@- args))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@- args))))
+  ((arithPolyNfOf-demand (Mk (@- args))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@* args))))
+  ((set (arithGoalPolyCanMatch (Mk (@* args))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@* args))))
+  ((arithPolyNfOf-demand (Mk (@* args))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@/ args))))
+  ((set (arithGoalPolyCanMatch (Mk (@/ args))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@/ args))))
+  ((arithPolyNfOf-demand (Mk (@/ args))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@/_total args))))
+  ((set (arithGoalPolyCanMatch (Mk (@/_total args))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@/_total args))))
+  ((arithPolyNfOf-demand (Mk (@/_total args))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@to_real args))))
+  ((set (arithGoalPolyCanMatch (Mk (@to_real args))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithGoalPolyNfOf-demand (Mk (@to_real args))))
+  ((arithPolyNfOf-demand (Mk (@to_real args))))
+  :ruleset arith_poly)
+
+(rule
+  ((= (arithPolyNfOf t) p)
+   (arithGoalPolyNfOf-demand t))
+  ((set (arithGoalPolyNfOf t) p))
+  :ruleset arith_poly)
+
+;; ------------------------------------------------------------
+;; n-ary left-assoc des-binarization
+;; ------------------------------------------------------------
+
+(datatype DesbinN
+  (Desbin Term Term))
+
+(relation mulDesbinN-demand (Term DesbinN))
+(relation divDesbinN-demand (Term DesbinN))
+(relation divTotalDesbinN-demand (Term DesbinN))
+
+;; *  : left-associate n-ary applications on demand
+(rule
+  ((mulDesbinN-demand torig (Desbin acc (Args z rest)))
+   (!= rest (Empty)))
+  ((mulDesbinN-demand
+    torig
+    (Desbin (Mk (@* (Args acc (Args z (Empty))))) rest)))
+  :ruleset arith_poly)
+
+(rule
+  ((mulDesbinN-demand torig (Desbin acc (Args z (Empty)))))
+  ((union torig (Mk (@* (Args acc (Args z (Empty))))))
+   (arithPolyNfOf-demand (Mk (@* (Args acc (Args z (Empty)))))))
+  :ruleset arith_poly)
+
+;; /  : left-associate n-ary applications on demand
+(rule
+  ((divDesbinN-demand torig (Desbin acc (Args z rest)))
+   (!= rest (Empty)))
+  ((divDesbinN-demand
+    torig
+    (Desbin (Mk (@/ (Args acc (Args z (Empty))))) rest)))
+  :ruleset arith_poly)
+
+(rule
+  ((divDesbinN-demand torig (Desbin acc (Args z (Empty)))))
+  ((union torig (Mk (@/ (Args acc (Args z (Empty))))))
+   (arithPolyNfOf-demand (Mk (@/ (Args acc (Args z (Empty)))))))
+  :ruleset arith_poly)
+
+;; /_total  : left-associate n-ary applications on demand
+(rule
+  ((divTotalDesbinN-demand torig (Desbin acc (Args z rest)))
+   (!= rest (Empty)))
+  ((divTotalDesbinN-demand
+    torig
+    (Desbin (Mk (@/_total (Args acc (Args z (Empty))))) rest)))
+  :ruleset arith_poly)
+
+(rule
+  ((divTotalDesbinN-demand torig (Desbin acc (Args z (Empty)))))
+  ((union torig (Mk (@/_total (Args acc (Args z (Empty))))))
+   (arithPolyNfOf-demand (Mk (@/_total (Args acc (Args z (Empty)))))))
+  :ruleset arith_poly)
 
 ;; ------------------------------------------------------------
 ;; opaque atoms
@@ -496,39 +701,38 @@
 
 ;; unary +
 (rule
-  ((arithPolyNfOf-demand (Mk (@+ (Args t (Empty))))))
+  ((arithPolyNfOf-demand (Mk (@arith_pos1 (Args t (Empty))))))
   ((arithPolyNfOf-demand t))
   :ruleset arith_poly)
 
 (rule
   ((= (arithPolyNfOf t) p)
-   (arithPolyNfOf-demand (Mk (@+ (Args t (Empty))))))
-  ((set (arithPolyNfOf (Mk (@+ (Args t (Empty))))) p))
+   (arithPolyNfOf-demand (Mk (@arith_pos1 (Args t (Empty))))))
+  ((set (arithPolyNfOf (Mk (@arith_pos1 (Args t (Empty))))) p))
   :ruleset arith_poly)
 
 ;; unary -
 (rule
-  ((arithPolyNfOf-demand (Mk (@- (Args t (Empty))))))
+  ((arithPolyNfOf-demand (Mk (@arith_neg1 (Args t (Empty))))))
   ((arithPolyNfOf-demand t))
   :ruleset arith_poly)
 
 (rule
   ((= (arithPolyNfOf t) p)
-   (arithPolyNfOf-demand (Mk (@- (Args t (Empty))))))
+   (arithPolyNfOf-demand (Mk (@arith_neg1 (Args t (Empty))))))
   ((scalePolyN-demand rat_neg_one p))
   :ruleset arith_poly)
 
 (rule
   ((= (arithPolyNfOf t) p)
    (= (scalePolyN rat_neg_one p) s)
-   (arithPolyNfOf-demand (Mk (@- (Args t (Empty))))))
-  ((set (arithPolyNfOf (Mk (@- (Args t (Empty))))) s))
+   (arithPolyNfOf-demand (Mk (@arith_neg1 (Args t (Empty))))))
+  ((set (arithPolyNfOf (Mk (@arith_neg1 (Args t (Empty))))) s))
   :ruleset arith_poly)
 
 ;; binary +
 (rule
-  ((arithPolyNfOf-demand (Mk (@+ (Args t (Args u (Empty))))))
-   (!= u (Empty)))
+  ((arithPolyNfOf-demand (Mk (@arith_add2 (Args t (Args u (Empty)))))))
   ((arithPolyNfOf-demand t)
    (arithPolyNfOf-demand u))
   :ruleset arith_poly)
@@ -536,8 +740,7 @@
 (rule
   ((= (arithPolyNfOf t) p1)
    (= (arithPolyNfOf u) p2)
-   (arithPolyNfOf-demand (Mk (@+ (Args t (Args u (Empty))))))
-   (!= u (Empty)))
+   (arithPolyNfOf-demand (Mk (@arith_add2 (Args t (Args u (Empty)))))))
   ((addPolyN-demand p1 p2))
   :ruleset arith_poly)
 
@@ -545,23 +748,20 @@
   ((= (arithPolyNfOf t) p1)
    (= (arithPolyNfOf u) p2)
    (= (addPolyN p1 p2) s)
-   (arithPolyNfOf-demand (Mk (@+ (Args t (Args u (Empty))))))
-   (!= u (Empty)))
-  ((set (arithPolyNfOf (Mk (@+ (Args t (Args u (Empty)))))) s))
+   (arithPolyNfOf-demand (Mk (@arith_add2 (Args t (Args u (Empty)))))))
+  ((set (arithPolyNfOf (Mk (@arith_add2 (Args t (Args u (Empty)))))) s))
   :ruleset arith_poly)
 
 ;; binary -
 (rule
-  ((arithPolyNfOf-demand (Mk (@- (Args t (Args u (Empty))))))
-   (!= u (Empty)))
+  ((arithPolyNfOf-demand (Mk (@arith_sub2 (Args t (Args u (Empty)))))))
   ((arithPolyNfOf-demand t)
    (arithPolyNfOf-demand u))
   :ruleset arith_poly)
 
 (rule
   ((= (arithPolyNfOf u) p2)
-   (arithPolyNfOf-demand (Mk (@- (Args t (Args u (Empty))))))
-   (!= u (Empty)))
+   (arithPolyNfOf-demand (Mk (@arith_sub2 (Args t (Args u (Empty)))))))
   ((scalePolyN-demand rat_neg_one p2))
   :ruleset arith_poly)
 
@@ -569,8 +769,7 @@
   ((= (arithPolyNfOf t) p1)
    (= (arithPolyNfOf u) p2)
    (= (scalePolyN rat_neg_one p2) neg_p2)
-   (arithPolyNfOf-demand (Mk (@- (Args t (Args u (Empty))))))
-   (!= u (Empty)))
+   (arithPolyNfOf-demand (Mk (@arith_sub2 (Args t (Args u (Empty)))))))
   ((addPolyN-demand p1 neg_p2))
   :ruleset arith_poly)
 
@@ -579,9 +778,17 @@
    (= (arithPolyNfOf u) p2)
    (= (scalePolyN rat_neg_one p2) neg_p2)
    (= (addPolyN p1 neg_p2) s)
-   (arithPolyNfOf-demand (Mk (@- (Args t (Args u (Empty))))))
-   (!= u (Empty)))
-  ((set (arithPolyNfOf (Mk (@- (Args t (Args u (Empty)))))) s))
+   (arithPolyNfOf-demand (Mk (@arith_sub2 (Args t (Args u (Empty)))))))
+  ((set (arithPolyNfOf (Mk (@arith_sub2 (Args t (Args u (Empty)))))) s))
+  :ruleset arith_poly)
+
+;; binary *
+(rule
+  ((arithPolyNfOf-demand (Mk (@* (Args x (Args y rest)))))
+   (!= rest (Empty)))
+  ((mulDesbinN-demand
+    (Mk (@* (Args x (Args y rest))))
+    (Desbin (Mk (@* (Args x (Args y (Empty))))) rest)))
   :ruleset arith_poly)
 
 ;; binary *
@@ -619,6 +826,15 @@
   ((= (arithPolyNfOf t) p)
    (arithPolyNfOf-demand (Mk (@to_real (Args t (Empty))))))
   ((set (arithPolyNfOf (Mk (@to_real (Args t (Empty))))) p))
+  :ruleset arith_poly)
+
+;; /  -- if denominator is not a nonzero constant, keep the whole term opaque
+(rule
+  ((arithPolyNfOf-demand (Mk (@/ (Args x (Args y rest)))))
+   (!= rest (Empty)))
+  ((divDesbinN-demand
+    (Mk (@/ (Args x (Args y rest))))
+    (Desbin (Mk (@/ (Args x (Args y (Empty))))) rest)))
   :ruleset arith_poly)
 
 ;; /  -- if denominator is not a nonzero constant, keep the whole term opaque
@@ -694,6 +910,15 @@
 
 ;; /_total -- same EO treatment as /
 (rule
+  ((arithPolyNfOf-demand (Mk (@/_total (Args x (Args y rest)))))
+   (!= rest (Empty)))
+  ((divTotalDesbinN-demand
+    (Mk (@/_total (Args x (Args y rest))))
+    (Desbin (Mk (@/_total (Args x (Args y (Empty))))) rest)))
+  :ruleset arith_poly)
+
+;; /_total -- same EO treatment as /
+(rule
   ((arithPolyNfOf-demand (Mk (@/_total (Args t (Args d (Empty))))))
    (!= d (Empty)))
   ((arithPolyNfOf-demand t)
@@ -762,20 +987,3 @@
    (!= d (Empty)))
   ((set (arithPolyNfOf (Mk (@/_total (Args t (Args d (Empty)))))) p))
   :ruleset arith_poly)
-
-;; final EO rule:
-;;   (= a b)  if  get_arith_poly_norm(a) = get_arith_poly_norm(b)
-(rule
-  ((= eq (Mk (@= (Args a (Args b (Empty)))))))
-  ((arithPolyNfOf-demand a)
-   (arithPolyNfOf-demand b))
-  :ruleset arith_poly)
-
-(rule
-  ((= eq (Mk (@= (Args a (Args b (Empty))))))
-   (= (arithPolyNfOf a) p)
-   (= (arithPolyNfOf b) p))
-  ((union eq (ArithEqKey p)))
-  :ruleset arith_poly)
-
-  
