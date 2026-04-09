@@ -122,10 +122,7 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
     decls
 }
 
-pub fn poly_goal_check_terms() -> (Vec<EggStatement>, EggExpr, EggExpr) {
-    let lhs = EggExpr::Literal("goal_lhs".to_string());
-    let rhs = EggExpr::Literal("goal_rhs".to_string());
-
+pub fn poly_goal_check_terms(lhs: EggExpr, rhs: EggExpr) -> (Vec<EggStatement>, EggExpr, EggExpr) {
     let setup = vec![
         EggStatement::Call(Box::new(EggExpr::Call(
             "arithGoalPolyNfOf-demand".to_string(),
@@ -146,11 +143,8 @@ pub fn poly_goal_check_terms() -> (Vec<EggStatement>, EggExpr, EggExpr) {
     (setup, lhs_cmp, rhs_cmp)
 }
 
-pub fn poly_goal_guard_term() -> EggExpr {
-    EggExpr::Call(
-        "arithGoalPolyCanMatch".to_string(),
-        vec![EggExpr::Literal("goal_lhs".to_string())],
-    )
+pub fn poly_goal_guard_term(lhs: EggExpr) -> EggExpr {
+    EggExpr::Call("arithGoalPolyCanMatch".to_string(), vec![lhs])
 }
 
 struct ArithPolyAtomHash;
@@ -195,7 +189,7 @@ pub mod tests {
     use crate::ast::rare_rules::RareStatements;
     use crate::ast::{ProofNode, Rc, StepNode};
     use crate::parser::{parse_instance_with_pool, Config, Parser};
-    use crate::rare::engine::{run_egglog, run_egglog_with_options, RunEgglogOptions};
+    use crate::rare::engine::{run_egglog, RunEgglogOptions};
     use egglog::EGraph;
     use indexmap::IndexMap;
     use std::io::Cursor;
@@ -432,7 +426,8 @@ pub mod tests {
         let conclusion = parse_term(&mut pool, conclusion_str);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let (result, code) = run_egglog(&mut pool, conclusion, &root, &rules);
+        let goals = [(conclusion, &root)];
+        let (result, code) = run_egglog(&mut pool, &goals, &rules, RunEgglogOptions::default());
         if debug {
             println!(
                 "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
@@ -450,7 +445,8 @@ pub mod tests {
         let conclusion = parse_term(&mut pool, conclusion_str);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let (result, code) = run_egglog_with_options(&mut pool, conclusion, &root, &rules, options);
+        let goals = vec![(conclusion, &root)];
+        let (result, code) = run_egglog(&mut pool, &goals, &rules, options);
         (result.map(|_| ()), code)
     }
 
@@ -478,20 +474,20 @@ pub mod tests {
             .find("(run-schedule (repeat 1 (run list-ruleset)))")
             .expect("missing goal schedule round");
         let raw_check = code
-            .find("(check (= goal_lhs goal_rhs))")
+            .find("(check (= goal_lhs_0 goal_rhs_0))")
             .expect("missing raw goal check");
-        let poly_guard_setup = nth_occurrence(code, "(arithGoalPolyNfOf-demand goal_lhs)", 0);
+        let poly_guard_setup = nth_occurrence(code, "(arithGoalPolyNfOf-demand goal_lhs_0)", 0);
         let poly_guard_run =
             nth_occurrence(code, "(run-schedule (repeat 1 (run arith_poly_guard)))", 0);
         let poly_guard = code
-            .find("(check (= (arithGoalPolyCanMatch goal_lhs) true))")
+            .find("(check (= (arithGoalPolyCanMatch goal_lhs_0) true))")
             .expect("missing poly guard check");
-        let poly_setup = nth_occurrence(code, "(arithGoalPolyNfOf-demand goal_lhs)", 1);
+        let poly_setup = nth_occurrence(code, "(arithGoalPolyNfOf-demand goal_lhs_0)", 1);
         let poly_saturation = code
             .find("(run-schedule (saturate (run arith_poly)))")
             .expect("missing poly saturation");
         let poly_check = code
-            .find("(check (= (arithGoalPolyNfOf goal_lhs) (arithGoalPolyNfOf goal_rhs)))")
+            .find("(check (= (arithGoalPolyNfOf goal_lhs_0) (arithGoalPolyNfOf goal_rhs_0)))")
             .expect("missing poly goal check");
 
         assert_eq!(
@@ -524,29 +520,31 @@ pub mod tests {
             .find("(run-schedule (repeat 1 (run list-ruleset)))")
             .expect("missing goal schedule round");
         let raw_check = code
-            .find("(check (= goal_lhs goal_rhs))")
+            .find("(check (= goal_lhs_0 goal_rhs_0))")
             .expect("missing raw goal check");
-        let poly_guard_setup = nth_occurrence(code, "(arithGoalPolyNfOf-demand goal_lhs)", 0);
+        let poly_guard_setup = nth_occurrence(code, "(arithGoalPolyNfOf-demand goal_lhs_0)", 0);
         let poly_guard_run =
             nth_occurrence(code, "(run-schedule (repeat 1 (run arith_poly_guard)))", 0);
         let poly_guard = code
-            .find("(check (= (arithGoalPolyCanMatch goal_lhs) true))")
+            .find("(check (= (arithGoalPolyCanMatch goal_lhs_0) true))")
             .expect("missing poly guard check");
         assert!(
-            !code.contains("(check (= (arithGoalPolyNfOf goal_lhs) (arithGoalPolyNfOf goal_rhs)))"),
+            !code.contains(
+                "(check (= (arithGoalPolyNfOf goal_lhs_0) (arithGoalPolyNfOf goal_rhs_0)))"
+            ),
             "numeric fallback should have stopped at the guard, got:\n{}",
             code
         );
-        let rel_guard_setup = nth_occurrence(code, "(arithRelBoolKeyOf-demand goal_lhs)", 0);
+        let rel_guard_setup = nth_occurrence(code, "(arithRelBoolKeyOf-demand goal_lhs_0)", 0);
         let rel_guard_run =
             nth_occurrence(code, "(run-schedule (repeat 1 (run arith_poly_guard)))", 1);
         let rel_guard = code
-            .find("(check (= (arithRelBoolCanMatch goal_lhs) true))")
+            .find("(check (= (arithRelBoolCanMatch goal_lhs_0) true))")
             .expect("missing relation-bool guard check");
-        let rel_setup = nth_occurrence(code, "(arithRelBoolKeyOf-demand goal_lhs)", 1);
+        let rel_setup = nth_occurrence(code, "(arithRelBoolKeyOf-demand goal_lhs_0)", 1);
         let rel_saturation = nth_occurrence(code, "(run-schedule (saturate (run arith_poly)))", 0);
         let rel_check = code
-            .find("(check (= (arithRelBoolKeyOf goal_lhs) (arithRelBoolKeyOf goal_rhs)))")
+            .find("(check (= (arithRelBoolKeyOf goal_lhs_0) (arithRelBoolKeyOf goal_rhs_0)))")
             .expect("missing relation-bool goal check");
 
         assert_eq!(
@@ -593,8 +591,8 @@ pub mod tests {
         assert!(
             !code.contains("(run-schedule (repeat 1 (run arith_poly)))")
                 && !code.contains("(run-schedule (saturate (run arith_poly)))")
-                && !code.contains("arithGoalPolyNfOf-demand goal_lhs")
-                && !code.contains("arithRelBoolKeyOf-demand goal_lhs"),
+                && !code.contains("arithGoalPolyNfOf-demand goal_lhs_0")
+                && !code.contains("arithRelBoolKeyOf-demand goal_lhs_0"),
             "expected no arithmetic machinery in generated code, got:\n{}",
             code
         );
@@ -609,7 +607,8 @@ pub mod tests {
         let rules = parse_rare_rules(&mut pool, rare_source);
         let conclusion = parse_term(&mut pool, conclusion_str);
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let (result, code) = run_egglog(&mut pool, conclusion, &root, &rules);
+        let goals = [(conclusion, &root)];
+        let (result, code) = run_egglog(&mut pool, &goals, &rules, RunEgglogOptions::default());
         if debug {
             println!(
                 "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
@@ -626,7 +625,8 @@ pub mod tests {
         let conclusion = parse_term(&mut pool, conclusion_str);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let (_, code) = run_egglog(&mut pool, conclusion, &root, &rules);
+        let goals = [(conclusion, &root)];
+        let (_, code) = run_egglog(&mut pool, &goals, &rules, RunEgglogOptions::default());
         println!(
             "\n=== Generated egglog code for: {} ===\n{}\n=== End ===\n",
             conclusion_str, code

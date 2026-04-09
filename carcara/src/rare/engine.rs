@@ -122,9 +122,10 @@ fn build_arith_shape_term(op: Operator, args: &[EggExpr]) -> Option<EggExpr> {
             let first = it.next()?;
             Some(match it.next() {
                 None => mk_unary_term("@arith_pos1", first),
-                Some(second) => it.fold(mk_binary_term("@arith_add2", first, second), |acc, next| {
-                    mk_binary_term("@arith_add2", acc, next)
-                }),
+                Some(second) => it
+                    .fold(mk_binary_term("@arith_add2", first, second), |acc, next| {
+                        mk_binary_term("@arith_add2", acc, next)
+                    }),
             })
         }
         Operator::Sub => {
@@ -132,9 +133,10 @@ fn build_arith_shape_term(op: Operator, args: &[EggExpr]) -> Option<EggExpr> {
             let first = it.next()?;
             Some(match it.next() {
                 None => mk_unary_term("@arith_neg1", first),
-                Some(second) => it.fold(mk_binary_term("@arith_sub2", first, second), |acc, next| {
-                    mk_binary_term("@arith_sub2", acc, next)
-                }),
+                Some(second) => it
+                    .fold(mk_binary_term("@arith_sub2", first, second), |acc, next| {
+                        mk_binary_term("@arith_sub2", acc, next)
+                    }),
             })
         }
         _ => None,
@@ -617,9 +619,7 @@ pub fn to_egg_expr(
                 register_function_call(func_cache, &head.to_string(), true, args.len(), None);
                 let arg_exprs = args
                     .iter()
-                    .map(|x| {
-                        to_egg_expr(x, subs, func_cache, var_map, collect_functions_shape)
-                    })
+                    .map(|x| to_egg_expr(x, subs, func_cache, var_map, collect_functions_shape))
                     .collect::<Option<Vec<_>>>()?;
                 let args_list = build_args_list(arg_exprs.iter().cloned().map(Some))?;
 
@@ -841,34 +841,37 @@ pub fn to_egg_expr(
 
 fn construct_premises(
     pool: &mut PrimitivePool,
-    premises: &Rc<ProofNode>,
+    nodes: &[(Rc<Term>, &Rc<ProofNode>)],
     var_map: &mut HashMap<String, u64>,
     func_cache: &mut EggFunctions,
 ) -> EggLanguage {
-    let mut grounds_terms = vec![];
+    let mut grounds_terms = IndexSet::new();
 
-    for premise in premises.get_assumptions() {
-        let clause: Option<Rc<Term>> = clauses_to_or(pool, premise.clause());
-        if let Some(clause) = clause {
-            let expr = get_equational_terms(&clause);
-            if let Some((Operator::Equals, lhs, rhs)) = expr {
-                grounds_terms.push(EggStatement::Union(
-                    Box::new(
-                        to_egg_expr(lhs, &IndexMap::new(), func_cache, var_map, false).unwrap(),
-                    ),
-                    Box::new(
-                        to_egg_expr(rhs, &IndexMap::new(), func_cache, var_map, false).unwrap(),
-                    ),
-                ));
-            }
+    for (_, node) in nodes {
+        for premise in node.get_assumptions() {
+            let clause: Option<Rc<Term>> = clauses_to_or(pool, premise.clause());
+            if let Some(clause) = clause {
+                let expr = get_equational_terms(&clause);
+                if let Some((Operator::Equals, lhs, rhs)) = expr {
+                    grounds_terms.insert(EggStatement::Union(
+                        Box::new(
+                            to_egg_expr(lhs, &IndexMap::new(), func_cache, var_map, false).unwrap(),
+                        ),
+                        Box::new(
+                            to_egg_expr(rhs, &IndexMap::new(), func_cache, var_map, false).unwrap(),
+                        ),
+                    ));
+                }
 
-            if let Some(ground) = create_avaliable_premise(&clause, func_cache, var_map, false) {
-                grounds_terms.push(ground)
+                if let Some(ground) = create_avaliable_premise(&clause, func_cache, var_map, false)
+                {
+                    grounds_terms.insert(ground);
+                }
             }
         }
     }
 
-    grounds_terms
+    grounds_terms.into_iter().collect()
 }
 
 fn construct_rules(
@@ -1056,28 +1059,26 @@ fn construct_rules(
     rules
 }
 
-fn set_goal(lhs_expr: EggExpr, rhs_expr: EggExpr) -> Vec<EggStatement> {
+fn goal_names(goal_index: usize) -> (String, String) {
+    (
+        format!("goal_lhs_{goal_index}"),
+        format!("goal_rhs_{goal_index}"),
+    )
+}
+
+fn set_goal(goal_index: usize, lhs_expr: EggExpr, rhs_expr: EggExpr) -> Vec<EggStatement> {
+    let (goal_lhs_name, goal_rhs_name) = goal_names(goal_index);
     let mut goal = vec![];
-    goal.push(EggStatement::Let(
-        "goal_lhs".to_string(),
-        Box::new(lhs_expr),
-    ));
-
-    goal.push(EggStatement::Let(
-        "goal_rhs".to_string(),
-        Box::new(rhs_expr),
-    ));
-
+    goal.push(EggStatement::Let(goal_lhs_name.clone(), Box::new(lhs_expr)));
+    goal.push(EggStatement::Let(goal_rhs_name.clone(), Box::new(rhs_expr)));
     goal.push(EggStatement::Premise(
         "Avaliable".to_string(),
-        Box::new(EggExpr::Literal("goal_lhs".to_string())),
+        Box::new(EggExpr::Literal(goal_lhs_name)),
     ));
-
     goal.push(EggStatement::Premise(
         "Avaliable".to_string(),
-        Box::new(EggExpr::Literal("goal_rhs".to_string())),
+        Box::new(EggExpr::Literal(goal_rhs_name)),
     ));
-
     goal
 }
 
@@ -1178,10 +1179,11 @@ fn run_program(egraph: &mut EGraph, program: Vec<Command>) -> Result<(), String>
         .map(|_| ())
 }
 
-fn equal_terms() -> (EggExpr, EggExpr) {
+fn equal_terms(goal_index: usize) -> (EggExpr, EggExpr) {
+    let (goal_lhs_name, goal_rhs_name) = goal_names(goal_index);
     (
-        EggExpr::Literal("goal_lhs".to_string()),
-        EggExpr::Literal("goal_rhs".to_string()),
+        EggExpr::Literal(goal_lhs_name),
+        EggExpr::Literal(goal_rhs_name),
     )
 }
 
@@ -1300,17 +1302,13 @@ fn run_goal_fallback_attempts(
     Err(errors.join("\n"))
 }
 
-fn check_goal_attempt(
+fn check_goal_against_current_state(
     egraph: &mut EGraph,
     code_str: &mut String,
     lhs_expr: &EggExpr,
     rhs_expr: &EggExpr,
     fallback_plans: &[GoalFallbackPlan],
-    iter: i16,
-    enable_arith_poly: bool,
 ) -> Result<(), String> {
-    run_goal_schedule_round(egraph, code_str, iter, enable_arith_poly)?;
-
     match run_and_record_check(egraph, code_str, lhs_expr.clone(), rhs_expr.clone()) {
         Ok(()) => Ok(()),
         Err(raw_error) => {
@@ -1324,35 +1322,80 @@ fn check_goal_attempt(
     }
 }
 
-// The schedule runs evaluation before unrestricted rewrites. A later rewrite can expose
-// new evaluable terms, so we allow a small number of full schedule/check rounds.
-fn check_goal_with_retry_rounds(
-    egraph: &mut EGraph,
-    code_str: &mut String,
+#[derive(Clone)]
+struct GoalCheckTarget {
+    goal_index: usize,
+    goal_label: String,
     lhs_expr: EggExpr,
     rhs_expr: EggExpr,
-    fallback_plans: &[GoalFallbackPlan],
+    fallback_plans: Vec<GoalFallbackPlan>,
+}
+
+fn check_goals_with_retry_rounds(
+    egraph: &mut EGraph,
+    code_str: &mut String,
+    goals: &[GoalCheckTarget],
     enable_arith_poly: bool,
     options: RunEgglogOptions,
 ) -> Result<(), String> {
-    let mut last_error = None;
+    let mut pending: Vec<_> = (0..goals.len()).collect();
+    let mut last_errors = vec![None; goals.len()];
+
     for i in 0..options.normalized_max_goal_schedule_rounds() {
         println!("Running goal check schedule round {}...", i + 1);
-        match check_goal_attempt(
-            egraph,
-            code_str,
-            &lhs_expr,
-            &rhs_expr,
-            fallback_plans,
-            (i + 1) as i16,
-            enable_arith_poly,
-        ) {
-            Ok(()) => return Ok(()),
-            Err(error) => last_error = Some(error),
+        run_goal_schedule_round(egraph, code_str, (i + 1) as i16, enable_arith_poly)?;
+
+        let mut next_pending = Vec::new();
+        for goal_idx in pending {
+            let goal = &goals[goal_idx];
+            match check_goal_against_current_state(
+                egraph,
+                code_str,
+                &goal.lhs_expr,
+                &goal.rhs_expr,
+                &goal.fallback_plans,
+            ) {
+                Ok(()) => last_errors[goal_idx] = None,
+                Err(error) => {
+                    last_errors[goal_idx] = Some(error);
+                    next_pending.push(goal_idx);
+                }
+            }
         }
+
+        if next_pending.is_empty() {
+            return Ok(());
+        }
+        pending = next_pending;
     }
 
-    Err(last_error.unwrap_or_else(|| "goal equality check failed".to_string()))
+    let errors = pending
+        .into_iter()
+        .map(|goal_idx| {
+            let goal = &goals[goal_idx];
+            (
+                goal.goal_label.as_str(),
+                last_errors[goal_idx]
+                    .take()
+                    .unwrap_or_else(|| "goal equality check failed".to_string()),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if errors.len() == 1 {
+        let (goal_label, error) = errors.into_iter().next().unwrap();
+        return Err(format!(
+            "Elaboration failed {} failed:\n{}",
+            goal_label, error
+        ));
+    }
+
+    let errors = errors
+        .into_iter()
+        .map(|(goal_label, error)| format!("Elaboration failed {} failed:\n{}", goal_label, error))
+        .collect::<Vec<_>>();
+
+    Err(errors.join("\n\n"))
 }
 
 fn declare_functions(
@@ -1447,25 +1490,53 @@ fn declare_functions(
     decls
 }
 
-pub fn run_egglog(
-    pool: &mut PrimitivePool,
-    conclusion: Rc<Term>,
-    root: &Rc<ProofNode>,
-    database: &Rules,
-) -> (Result<EGraph, String>, String) {
-    run_egglog_with_options(
-        pool,
-        conclusion,
-        root,
-        database,
-        RunEgglogOptions::default(),
-    )
+fn get_fallback_plans(goal_index: usize, enable_arith_poly: bool) -> Vec<GoalFallbackPlan> {
+    if !enable_arith_poly {
+        return Vec::new();
+    }
+
+    let (goal_lhs, goal_rhs) = equal_terms(goal_index);
+    vec![
+        GoalFallbackPlan::new(
+            "arithPolyNfOf",
+            vec![
+                EggStatement::Call(Box::new(EggExpr::Call(
+                    "arithGoalPolyNfOf-demand".to_string(),
+                    vec![goal_lhs.clone()],
+                ))),
+                EggStatement::Run {
+                    ruleset: Some("arith_poly_guard".to_string()),
+                    iterations: 1,
+                },
+            ],
+            arith_poly_norm::poly_goal_guard_term(goal_lhs.clone()),
+            arith_poly_norm::poly_goal_check_terms(goal_lhs.clone(), goal_rhs.clone()),
+        ),
+        GoalFallbackPlan::new(
+            "arithRelBoolKeyOf",
+            vec![
+                EggStatement::Call(Box::new(EggExpr::Call(
+                    "arithRelBoolKeyOf-demand".to_string(),
+                    vec![goal_lhs.clone()],
+                ))),
+                EggStatement::Run {
+                    ruleset: Some("arith_poly_guard".to_string()),
+                    iterations: 1,
+                },
+            ],
+            arith_poly_norm_rel::relation_bool_goal_guard_term(goal_lhs.clone()),
+            arith_poly_norm_rel::relation_bool_goal_check_terms(goal_lhs, goal_rhs),
+        ),
+    ]
 }
 
-pub fn run_egglog_with_options(
+fn goal_log_label(node: &Rc<ProofNode>, conclusion: &Rc<Term>) -> String {
+    format!("{}: {:?}", node.id(), conclusion)
+}
+
+pub fn run_egglog(
     pool: &mut PrimitivePool,
-    conclusion: Rc<Term>,
-    root: &Rc<ProofNode>,
+    nodes: &[(Rc<Term>, &Rc<ProofNode>)],
     database: &Rules,
     options: RunEgglogOptions,
 ) -> (Result<EGraph, String>, String) {
@@ -1485,73 +1556,61 @@ pub fn run_egglog_with_options(
     }
 
     let rules = construct_rules(&rules, &mut egg_functions, &mut var_map);
+    let premises = construct_premises(pool, nodes, &mut var_map, &mut egg_functions);
 
-    let premises = construct_premises(pool, root, &mut var_map, &mut egg_functions);
-    let Some((_, lhs, rhs)) = get_equational_terms(&conclusion) else {
-        return (Err("Failed to set goal".to_string()), String::new());
-    };
-    let goal_lhs_expr = to_egg_expr(
-        lhs,
-        &IndexMap::new(),
-        &mut egg_functions,
-        &mut var_map,
-        false,
-    )
-    .unwrap();
-    let goal_rhs_expr = to_egg_expr(
-        rhs,
-        &IndexMap::new(),
-        &mut egg_functions,
-        &mut var_map,
-        false,
-    )
-    .unwrap();
+    let mut goals_ast = Vec::new();
+    let mut goals = Vec::with_capacity(nodes.len());
+    for (goal_index, (conclusion, node)) in nodes.iter().enumerate() {
+        let goal_label = goal_log_label(node, conclusion);
+        println!("Elaborating {}", goal_label);
+
+        let Some((_, lhs, rhs)) = get_equational_terms(conclusion) else {
+            return (Err("Failed to set goal".to_string()), String::new());
+        };
+
+        let goal_lhs_expr = to_egg_expr(
+            lhs,
+            &IndexMap::new(),
+            &mut egg_functions,
+            &mut var_map,
+            false,
+        )
+        .unwrap();
+        let goal_rhs_expr = to_egg_expr(
+            rhs,
+            &IndexMap::new(),
+            &mut egg_functions,
+            &mut var_map,
+            false,
+        )
+        .unwrap();
+
+        goals_ast.extend(set_goal(goal_index, goal_lhs_expr, goal_rhs_expr));
+        goals_ast.extend(available_subterm_premises(
+            lhs,
+            &mut egg_functions,
+            &mut var_map,
+        ));
+        goals_ast.extend(available_subterm_premises(
+            rhs,
+            &mut egg_functions,
+            &mut var_map,
+        ));
+
+        let (raw_lhs, raw_rhs) = equal_terms(goal_index);
+        goals.push(GoalCheckTarget {
+            goal_index,
+            goal_label,
+            lhs_expr: raw_lhs,
+            rhs_expr: raw_rhs,
+            fallback_plans: Vec::new(),
+        });
+    }
+
     let enable_arith_poly = arith_poly_norm::uses_arith_machinery(&egg_functions);
-    let fallback_plans = enable_arith_poly.then(|| {
-        vec![
-            GoalFallbackPlan::new(
-                "arithPolyNfOf",
-                vec![
-                    EggStatement::Call(Box::new(EggExpr::Call(
-                        "arithGoalPolyNfOf-demand".to_string(),
-                        vec![EggExpr::Literal("goal_lhs".to_string())],
-                    ))),
-                    EggStatement::Run {
-                        ruleset: Some("arith_poly_guard".to_string()),
-                        iterations: 1,
-                    },
-                ],
-                arith_poly_norm::poly_goal_guard_term(),
-                arith_poly_norm::poly_goal_check_terms(),
-            ),
-            GoalFallbackPlan::new(
-                "arithRelBoolKeyOf",
-                vec![
-                    EggStatement::Call(Box::new(EggExpr::Call(
-                        "arithRelBoolKeyOf-demand".to_string(),
-                        vec![EggExpr::Literal("goal_lhs".to_string())],
-                    ))),
-                    EggStatement::Run {
-                        ruleset: Some("arith_poly_guard".to_string()),
-                        iterations: 1,
-                    },
-                ],
-                arith_poly_norm_rel::relation_bool_goal_guard_term(),
-                arith_poly_norm_rel::relation_bool_goal_check_terms(),
-            ),
-        ]
-    });
-    let mut goal = set_goal(goal_lhs_expr, goal_rhs_expr);
-    goal.extend(available_subterm_premises(
-        lhs,
-        &mut egg_functions,
-        &mut var_map,
-    ));
-    goal.extend(available_subterm_premises(
-        rhs,
-        &mut egg_functions,
-        &mut var_map,
-    ));
+    for goal in &mut goals {
+        goal.fallback_plans = get_fallback_plans(goal.goal_index, enable_arith_poly);
+    }
 
     let mut declarations = declare_functions(&mut egg_functions, &database.consts, &mut var_map);
 
@@ -1568,7 +1627,7 @@ pub fn run_egglog_with_options(
     ast.extend(declarations);
     ast.extend(rules);
     ast.extend(premises);
-    ast.extend(goal);
+    ast.extend(goals_ast);
 
     let (egglog, mut code_str) = compile_program(ast);
 
@@ -1588,17 +1647,15 @@ pub fn run_egglog_with_options(
     });
 
     let result = run_program(&mut egraph, egglog).and_then(|_| {
-        let (raw_lhs, raw_rhs) = equal_terms();
-        check_goal_with_retry_rounds(
+        check_goals_with_retry_rounds(
             &mut egraph,
             &mut code_str,
-            raw_lhs,
-            raw_rhs,
-            fallback_plans.as_deref().unwrap_or(&[]),
+            &goals,
             enable_arith_poly,
             options,
         )
     });
+
     (result.map(|_| egraph), code_str)
 }
 
@@ -1608,11 +1665,24 @@ pub fn reconstruct_rule(
     root: &Rc<ProofNode>,
     database: &Rules,
 ) {
-    println!("Elaborating {:?}", conclusion);
-    let (result, egglogcode) = run_egglog(pool, conclusion, root, database);
+    let goals = [(conclusion, root)];
+    let (result, egglogcode) = run_egglog(pool, &goals, database, RunEgglogOptions::default());
     println!("Generated egglog code:\n{}", egglogcode);
     match result {
         Ok(_) => println!("Elaboration succeeded"),
-        Err(error) => println!("Elaboration failed: {}", error),
+        Err(error) => println!("{}", error),
+    }
+}
+
+pub fn reconstruct_global_rules(
+    pool: &mut PrimitivePool,
+    nodes: &[(Rc<Term>, &Rc<ProofNode>)],
+    database: &Rules,
+) {
+    let (result, egglogcode) = run_egglog(pool, nodes, database, RunEgglogOptions::default());
+    println!("Generated egglog code:\n{}", egglogcode);
+    match result {
+        Ok(_) => println!("Elaboration succeeded"),
+        Err(error) => println!("{}", error),
     }
 }

@@ -13,7 +13,7 @@ pub mod tests {
     use crate::ast::rare_rules::RareStatements;
     use crate::ast::{ProofNode, Rc, StepNode};
     use crate::parser::{parse_instance_with_pool, Config, Parser};
-    use crate::rare::engine::{run_egglog, run_egglog_with_options, RunEgglogOptions};
+    use crate::rare::engine::{run_egglog, RunEgglogOptions};
     use indexmap::IndexMap;
     use std::io::Cursor;
 
@@ -39,6 +39,22 @@ pub mod tests {
         (declare-rare-rule late-eval ()
           :args ()
           :conclusion (= f (or false true))
+        )
+    "#;
+
+    const MULTI_ROUND_RETRY_DEFINITIONS: &str = r#"
+        (declare-fun f () Bool)
+        (declare-fun g () Bool)
+    "#;
+
+    const MULTI_ROUND_RETRY_RULES: &str = r#"
+        (declare-rare-rule late-eval-f ()
+          :args ()
+          :conclusion (= f (or false true))
+        )
+        (declare-rare-rule late-eval-g ()
+          :args ()
+          :conclusion (= g (or false true))
         )
     "#;
 
@@ -102,8 +118,16 @@ pub mod tests {
         pool: &mut PrimitivePool,
         conclusion: Rc<crate::ast::Term>,
     ) -> Rc<ProofNode> {
+        dummy_proof_node_with_id(pool, "test", conclusion)
+    }
+
+    fn dummy_proof_node_with_id(
+        _pool: &mut PrimitivePool,
+        id: &str,
+        conclusion: Rc<crate::ast::Term>,
+    ) -> Rc<ProofNode> {
         let step = StepNode {
-            id: "test".to_string(),
+            id: id.to_string(),
             depth: 0,
             clause: vec![conclusion],
             rule: "hole".to_string(),
@@ -127,7 +151,8 @@ pub mod tests {
         let conclusion = parse_term(&mut pool, conclusion_str);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let (result, code) = run_egglog(&mut pool, conclusion, &root, &rules);
+        let goals = [(conclusion, &root)];
+        let (result, code) = run_egglog(&mut pool, &goals, &rules, RunEgglogOptions::default());
         if debug {
             println!(
                 "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
@@ -148,7 +173,8 @@ pub mod tests {
         let conclusion = parse_term_with_definitions(&mut pool, definitions, conclusion_str);
         let rules = parse_rare_rules(&mut pool, definitions, rules_source);
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let (result, code) = run_egglog_with_options(&mut pool, conclusion, &root, &rules, options);
+        let goals = vec![(conclusion, &root)];
+        let (result, code) = run_egglog(&mut pool, &goals, &rules, options);
         if debug {
             println!(
                 "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
@@ -158,6 +184,47 @@ pub mod tests {
         result.map(|_| ())
     }
 
+    fn try_elaborate_multi_with_rules_and_options(
+        definitions: &str,
+        conclusions: &[&str],
+        rules_source: &str,
+        options: RunEgglogOptions,
+        debug: bool,
+    ) -> (Result<(), String>, String) {
+        let mut pool = PrimitivePool::new();
+        let rules = parse_rare_rules(&mut pool, definitions, rules_source);
+        let conclusions = conclusions
+            .iter()
+            .map(|term| parse_term_with_definitions(&mut pool, definitions, term))
+            .collect::<Vec<_>>();
+        let roots = conclusions
+            .iter()
+            .enumerate()
+            .map(|(index, conclusion)| {
+                dummy_proof_node_with_id(&mut pool, &format!("test_{index}"), conclusion.clone())
+            })
+            .collect::<Vec<_>>();
+        let goals = conclusions
+            .iter()
+            .zip(roots.iter())
+            .map(|(conclusion, root)| (conclusion.clone(), root))
+            .collect::<Vec<_>>();
+        let (result, code) = run_egglog(&mut pool, &goals, &rules, options);
+        if debug {
+            println!(
+                "\n=== Generated batch egglog code ===\n{}\n=== End batch egglog code ===\n",
+                code
+            );
+        }
+        (result.map(|_| ()), code)
+    }
+
+    fn goal_schedule_round_count(code: &str) -> usize {
+        code.lines()
+            .filter(|line| line.contains("(run list-ruleset)))"))
+            .count()
+    }
+
     /// Just print the generated egglog code without running it
     #[allow(dead_code)]
     fn print_egglog_code(conclusion_str: &str) {
@@ -165,7 +232,8 @@ pub mod tests {
         let conclusion = parse_term(&mut pool, conclusion_str);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let (_, code) = run_egglog(&mut pool, conclusion, &root, &rules);
+        let goals = [(conclusion, &root)];
+        let (_, code) = run_egglog(&mut pool, &goals, &rules, RunEgglogOptions::default());
         println!(
             "\n=== Generated egglog code for: {} ===\n{}\n=== End ===\n",
             conclusion_str, code
@@ -197,6 +265,35 @@ pub mod tests {
             retried.is_ok(),
             "goal schedule retries failed: {:?}",
             retried.err()
+        );
+    }
+
+    #[test]
+    fn test_goal_schedule_retry_rounds_are_shared_across_batch_goals() {
+        let (result, code) = try_elaborate_multi_with_rules_and_options(
+            MULTI_ROUND_RETRY_DEFINITIONS,
+            &["(= f true)", "(= g true)"],
+            MULTI_ROUND_RETRY_RULES,
+            RunEgglogOptions::default(),
+            debug_egglog(),
+        );
+
+        assert!(
+            result.is_ok(),
+            "batched goal schedule retries failed: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            goal_schedule_round_count(&code),
+            2,
+            "expected shared retry rounds across the whole batch, got:\n{}",
+            code
+        );
+        assert!(
+            code.contains("(check (= goal_lhs_0 goal_rhs_0))")
+                && code.contains("(check (= goal_lhs_1 goal_rhs_1))"),
+            "expected both batch goals to be checked, got:\n{}",
+            code
         );
     }
 

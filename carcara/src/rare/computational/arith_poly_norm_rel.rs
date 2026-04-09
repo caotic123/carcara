@@ -5,10 +5,10 @@ pub fn arith_poly_norm_rel_rules() -> Vec<EggStatement> {
     vec![EggStatement::Raw(egglog_content.to_string())]
 }
 
-pub fn relation_bool_goal_check_terms() -> (Vec<EggStatement>, EggExpr, EggExpr) {
-    let lhs = EggExpr::Literal("goal_lhs".to_string());
-    let rhs = EggExpr::Literal("goal_rhs".to_string());
-
+pub fn relation_bool_goal_check_terms(
+    lhs: EggExpr,
+    rhs: EggExpr,
+) -> (Vec<EggStatement>, EggExpr, EggExpr) {
     let setup = vec![
         EggStatement::Call(Box::new(EggExpr::Call(
             "arithRelBoolKeyOf-demand".to_string(),
@@ -29,9 +29,6 @@ pub fn relation_bool_goal_check_terms() -> (Vec<EggStatement>, EggExpr, EggExpr)
     (setup, lhs_cmp, rhs_cmp)
 }
 
-pub fn relation_bool_goal_guard_term() -> EggExpr {
-    EggExpr::Call(
-        "arithRelBoolCanMatch".to_string(),
-        vec![EggExpr::Literal("goal_lhs".to_string())],
-    )
+pub fn relation_bool_goal_guard_term(lhs: EggExpr) -> EggExpr {
+    EggExpr::Call("arithRelBoolCanMatch".to_string(), vec![lhs])
 }

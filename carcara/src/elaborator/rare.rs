@@ -1,14 +1,22 @@
-use crate::{ast::*, checker::error::CheckerError, rare::engine::reconstruct_rule};
+use crate::{ast::*, rare::engine::reconstruct_rule};
 
-use super::{Elaborator, IdHelper};
+use super::{ElaborationStep, Elaborator, IdHelper};
 
 pub fn elaborate_rule(
     elaborator: &mut Elaborator,
     root: &Rc<ProofNode>,
     step: &StepNode,
+    pipeline: &[ElaborationStep],
 ) -> Option<Rc<ProofNode>> {
+    if pipeline
+        .iter()
+        .any(|step| matches!(step, ElaborationStep::GlobalRareElaboration))
+    {
+        return Some(Rc::new(ProofNode::Step(step.clone())));
+    }
+
     let mut ids = IdHelper::new(&step.id);
-    let rules_reconstruction = reconstruct_rule(
+    reconstruct_rule(
         elaborator.pool,
         step.clause[0].clone(),
         root,
