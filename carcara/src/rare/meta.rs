@@ -64,6 +64,7 @@ fn to_expr(e: EggExpr) -> Expr {
                 egglog::ast::Literal::String(s.into()),
             )],
         ),
+        RawString(s) => Expr::Lit(dummy_span(), egglog::ast::Literal::String(s.into())),
 
         Real(r) => Expr::Call(
             dummy_span(),

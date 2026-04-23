@@ -48,7 +48,7 @@ pub struct RunEgglogOptions {
 
 impl Default for RunEgglogOptions {
     fn default() -> Self {
-        Self { max_goal_schedule_rounds: 3 }
+        Self { max_goal_schedule_rounds: 1}
     }
 }
 
@@ -113,6 +113,22 @@ fn mk_unary_term(name: &str, arg: EggExpr) -> EggExpr {
 
 fn mk_binary_term(name: &str, lhs: EggExpr, rhs: EggExpr) -> EggExpr {
     mk_term_call(name, binary_args(lhs, rhs))
+}
+
+fn bigrat_expr(numer: &rug::Integer, denom: &rug::Integer) -> EggExpr {
+    EggExpr::Call(
+        "bigrat".to_string(),
+        vec![
+            EggExpr::Call(
+                "from-string".to_string(),
+                vec![EggExpr::RawString(numer.to_string())],
+            ),
+            EggExpr::Call(
+                "from-string".to_string(),
+                vec![EggExpr::RawString(denom.to_string())],
+            ),
+        ],
+    )
 }
 
 fn build_arith_shape_term(op: Operator, args: &[EggExpr]) -> Option<EggExpr> {
@@ -276,6 +292,11 @@ pub fn create_headers() -> EggLanguage {
                     ),
                 },
             ],
+        ),
+        EggStatement::Constructor(
+            "RatConst".to_string(),
+            vec![ConstType::ConstrType("BigRat".to_string())],
+            ConstType::ConstrType("Term".to_string()),
         ),
         EggStatement::Sort(
             "AssocArgs".to_owned(),
@@ -552,7 +573,17 @@ pub fn to_egg_expr(
                 Constant::Integer(i) => Some(EggExpr::Num(i.clone())),
                 Constant::String(s) => Some(EggExpr::String(s.clone())),
                 Constant::BitVec(i, j) => Some(EggExpr::BitVec(i.clone(), j.clone())),
-                Constant::Real(d) => Some(EggExpr::Real((d.clone().into_numer_denom()))),
+                Constant::Real(d) => {
+                    let (numer, denom) = d.clone().into_numer_denom();
+                    if numer.to_i64().is_some() && denom.to_i64().is_some() {
+                        Some(EggExpr::Real((numer, denom)))
+                    } else {
+                        Some(EggExpr::Call(
+                            "RatConst".to_string(),
+                            vec![bigrat_expr(&numer, &denom)],
+                        ))
+                    }
+                }
             },
             Term::Var(name, sort) => {
                 if let Some(argument) = subs.get(name) {

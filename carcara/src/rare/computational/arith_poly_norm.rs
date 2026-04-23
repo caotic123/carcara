@@ -353,19 +353,37 @@ pub mod tests {
           :ruleset arith_poly)
     "#;
 
-    /// Parse a term from a string with arithmetic definitions
-    fn parse_term(pool: &mut PrimitivePool, term_str: &str) -> Rc<crate::ast::Term> {
-        let config = Config {
+    /// Base parser config for these synthetic arithmetic elaboration tests.
+    fn base_parser_config() -> Config {
+        Config {
             apply_function_defs: true,
             expand_lets: false,
             allow_int_real_subtyping: false,
             strict: false,
             parse_hole_args: false,
-        };
+        }
+    }
+
+    fn parser_config_allow_int_real_subtyping() -> Config {
+        Config {
+            allow_int_real_subtyping: true,
+            ..base_parser_config()
+        }
+    }
+
+    fn parse_term_with_config(
+        pool: &mut PrimitivePool,
+        term_str: &str,
+        config: Config,
+    ) -> Rc<crate::ast::Term> {
         let mut parser = Parser::new(pool, config, DEFINITIONS.as_bytes()).expect("parser error");
         parser.parse_problem().expect("parse problem error");
         parser.reset(term_str.as_bytes()).expect("reset error");
         parser.parse_term().expect("parse term error")
+    }
+
+    fn parse_term(pool: &mut PrimitivePool, term_str: &str) -> Rc<crate::ast::Term> {
+        parse_term_with_config(pool, term_str, base_parser_config())
     }
 
     /// Create an empty Rules database (arith_poly_norm rules are hardcoded in egglog)
@@ -378,18 +396,11 @@ pub mod tests {
     }
 
     fn parse_rare_rules(pool: &mut PrimitivePool, source: &str) -> RareStatements {
-        let config = Config {
-            apply_function_defs: true,
-            expand_lets: false,
-            allow_int_real_subtyping: false,
-            strict: false,
-            parse_hole_args: false,
-        };
         let (_, _, rules) = parse_instance_with_pool(
             Cursor::new(b"".as_slice()),
             Cursor::new(b"".as_slice()),
             Some(Cursor::new(source.as_bytes())),
-            config,
+            base_parser_config(),
             pool,
         )
         .expect("rare rules parse error");
@@ -398,7 +409,7 @@ pub mod tests {
 
     /// Create a minimal proof node with no premises
     fn dummy_proof_node(
-        pool: &mut PrimitivePool,
+        _pool: &mut PrimitivePool,
         conclusion: Rc<crate::ast::Term>,
     ) -> Rc<ProofNode> {
         let step = StepNode {
@@ -422,8 +433,24 @@ pub mod tests {
 
     /// Try to elaborate with explicit debug flag
     fn try_elaborate_with_debug(conclusion_str: &str, debug: bool) -> Result<(), String> {
+        try_elaborate_with_config(conclusion_str, debug, base_parser_config())
+    }
+
+    fn try_elaborate_allow_int_real_subtyping(conclusion_str: &str) -> Result<(), String> {
+        try_elaborate_with_config(
+            conclusion_str,
+            debug_egglog(),
+            parser_config_allow_int_real_subtyping(),
+        )
+    }
+
+    fn try_elaborate_with_config(
+        conclusion_str: &str,
+        debug: bool,
+        config: Config,
+    ) -> Result<(), String> {
         let mut pool = PrimitivePool::new();
-        let conclusion = parse_term(&mut pool, conclusion_str);
+        let conclusion = parse_term_with_config(&mut pool, conclusion_str, config);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
         let goals = [(conclusion, &root)];
@@ -1357,6 +1384,19 @@ pub mod tests {
         assert!(
             result.is_ok(),
             "raw n-ary left-assoc des-binarization regressions failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_large_rational_constant_product_regression() {
+        let result = try_elaborate_allow_int_real_subtyping(
+            "(= (* 869935717340370465/1896947217628294663 -79) \
+                -68724921669889266735/1896947217628294663)",
+        );
+        assert!(
+            result.is_ok(),
+            "large rational constant product regression failed: {:?}",
             result.err()
         );
     }
