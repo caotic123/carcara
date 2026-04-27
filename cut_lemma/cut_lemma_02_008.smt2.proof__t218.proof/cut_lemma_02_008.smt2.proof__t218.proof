@@ -1,0 +1,1 @@
+(step t218 (cl (! (= (! (+ (! (+ (! (+ (! (+ (! (+ x7 x6) :named @p_5) (! (- x17) :named @p_6)) :named @p_4) x4) :named @p_3) (! (- x13) :named @p_7)) :named @p_2) x18) :named @p_1) (! (+ @p_6 @p_7 x18 x7 x6 x4) :named @p_8)) :named @p_0)) :rule hole :args ("TRUST_THEORY_REWRITE" @p_0 3 6))

@@ -12,11 +12,16 @@ pub fn global_rare_elaboration(elaborator: &mut Elaborator, root: &Rc<ProofNode>
         .iter()
         .map(|(conclusion, node)| (conclusion.clone(), node))
         .collect();
+    let print_generated_egglog = elaborator
+        .config
+        .hole_options
+        .as_ref()
+        .is_some_and(|options| options.print_generated_egglog);
     reconstruct_global_rules(
         elaborator.pool,
         &goal_refs,
         elaborator.rules,
-        elaborator.config.print_generated_egglog,
+        print_generated_egglog,
     );
 
     root.clone()

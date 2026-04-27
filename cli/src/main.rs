@@ -194,11 +194,12 @@ impl From<CheckingOptions> for checker::Config {
     }
 }
 
-#[derive(ArgEnum, Clone)]
+#[derive(ArgEnum, Clone, Copy, PartialEq, Eq)]
 enum ElaborationStep {
     Polyeq,
     LiaGeneric,
     Local,
+    GlobalRareElaboration,
     Uncrowd,
     Reordering,
     Hole,
@@ -247,6 +248,10 @@ struct ElaborationOptions {
         default_values = &["polyeq", "lia-generic", "local", "uncrowd", "reordering", "hole"]
     )]
     pipeline: Vec<ElaborationStep>,
+
+    /// Print the generated egglog program when elaborating RARE steps.
+    #[clap(long)]
+    print_generated_egglog: bool,
 }
 
 impl From<ElaborationOptions> for (elaborator::Config, Vec<elaborator::ElaborationStep>) {
@@ -258,6 +263,9 @@ impl From<ElaborationOptions> for (elaborator::Config, Vec<elaborator::Elaborati
                 ElaborationStep::Polyeq => elaborator::ElaborationStep::Polyeq,
                 ElaborationStep::LiaGeneric => elaborator::ElaborationStep::LiaGeneric,
                 ElaborationStep::Local => elaborator::ElaborationStep::Local,
+                ElaborationStep::GlobalRareElaboration => {
+                    elaborator::ElaborationStep::GlobalRareElaboration
+                }
                 ElaborationStep::Uncrowd => elaborator::ElaborationStep::Uncrowd,
                 ElaborationStep::Reordering => elaborator::ElaborationStep::Reordering,
                 ElaborationStep::Hole => elaborator::ElaborationStep::Hole,
@@ -279,6 +287,7 @@ impl From<ElaborationOptions> for (elaborator::Config, Vec<elaborator::Elaborati
                 .split_whitespace()
                 .map(Into::into)
                 .collect(),
+            print_generated_egglog: val.print_generated_egglog,
         });
 
         let config = elaborator::Config {

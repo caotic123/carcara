@@ -33,9 +33,6 @@ pub struct Config {
     pub uncrowd_rotation: bool,
 
     pub hole_options: Option<HoleOptions>,
-
-    /// If `true`, print the egglog program generated for RARE elaboration.
-    pub print_generated_egglog: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -69,6 +66,9 @@ pub struct HoleOptions {
 
     /// The arguments to pass to the solver.
     pub arguments: Vec<Box<str>>,
+
+    /// If `true`, print the egglog program generated for RARE elaboration.
+    pub print_generated_egglog: bool,
 }
 
 pub struct Elaborator<'e> {

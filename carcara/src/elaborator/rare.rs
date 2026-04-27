@@ -16,12 +16,17 @@ pub fn elaborate_rule(
     }
 
     let mut ids = IdHelper::new(&step.id);
+    let print_generated_egglog = elaborator
+        .config
+        .hole_options
+        .as_ref()
+        .is_some_and(|options| options.print_generated_egglog);
     reconstruct_rule(
         elaborator.pool,
         step.clause[0].clone(),
         root,
         elaborator.rules,
-        elaborator.config.print_generated_egglog,
+        print_generated_egglog,
     );
 
     return Some(Rc::new(ProofNode::Step(StepNode {
