@@ -21,6 +21,7 @@ pub fn elaborate_rule(
         step.clause[0].clone(),
         root,
         elaborator.rules,
+        elaborator.config.print_generated_egglog,
     );
 
     return Some(Rc::new(ProofNode::Step(StepNode {

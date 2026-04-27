@@ -33,6 +33,9 @@ pub struct Config {
     pub uncrowd_rotation: bool,
 
     pub hole_options: Option<HoleOptions>,
+
+    /// If `true`, print the egglog program generated for RARE elaboration.
+    pub print_generated_egglog: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

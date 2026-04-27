@@ -3,6 +3,7 @@ use std::{
     iter::once,
     panic::{catch_unwind, AssertUnwindSafe},
     sync::Arc,
+    time::Instant,
 };
 
 use crate::{
@@ -48,7 +49,7 @@ pub struct RunEgglogOptions {
 
 impl Default for RunEgglogOptions {
     fn default() -> Self {
-        Self { max_goal_schedule_rounds: 1}
+        Self { max_goal_schedule_rounds: 1 }
     }
 }
 
@@ -1690,18 +1691,31 @@ pub fn run_egglog(
     (result.map(|_| egraph), code_str)
 }
 
+fn format_seconds(duration: std::time::Duration) -> String {
+    format!("{:.6}s", duration.as_secs_f64())
+}
+
 pub fn reconstruct_rule(
     pool: &mut PrimitivePool,
     conclusion: Rc<Term>,
     root: &Rc<ProofNode>,
     database: &Rules,
+    print_generated_egglog: bool,
 ) {
     let goals = [(conclusion, root)];
+    let egglog_start = Instant::now();
     let (result, egglogcode) = run_egglog(pool, &goals, database, RunEgglogOptions::default());
-    println!("Generated egglog code:\n{}", egglogcode);
+    let egglog_time = egglog_start.elapsed();
+    if print_generated_egglog {
+        println!("{}", egglogcode);
+    }
     match result {
-        Ok(_) => println!("Elaboration succeeded"),
-        Err(error) => println!("{}", error),
+        Ok(_) => println!("Elaboration succeeded in {}", format_seconds(egglog_time)),
+        Err(error) => println!(
+            "Elaboration failed in {}: {}",
+            format_seconds(egglog_time),
+            error
+        ),
     }
 }
 
@@ -1709,11 +1723,20 @@ pub fn reconstruct_global_rules(
     pool: &mut PrimitivePool,
     nodes: &[(Rc<Term>, &Rc<ProofNode>)],
     database: &Rules,
+    print_generated_egglog: bool,
 ) {
+    let egglog_start = Instant::now();
     let (result, egglogcode) = run_egglog(pool, nodes, database, RunEgglogOptions::default());
-    println!("Generated egglog code:\n{}", egglogcode);
+    let egglog_time = egglog_start.elapsed();
+    if print_generated_egglog {
+        println!("{}", egglogcode);
+    }
     match result {
-        Ok(_) => println!("Elaboration succeeded"),
-        Err(error) => println!("{}", error),
+        Ok(_) => println!("Elaboration succeeded in {}", format_seconds(egglog_time)),
+        Err(error) => println!(
+            "Elaboration failed in {}: {}",
+            format_seconds(egglog_time),
+            error
+        ),
     }
 }

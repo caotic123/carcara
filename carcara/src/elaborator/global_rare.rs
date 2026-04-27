@@ -12,7 +12,12 @@ pub fn global_rare_elaboration(elaborator: &mut Elaborator, root: &Rc<ProofNode>
         .iter()
         .map(|(conclusion, node)| (conclusion.clone(), node))
         .collect();
-    reconstruct_global_rules(elaborator.pool, &goal_refs, elaborator.rules);
+    reconstruct_global_rules(
+        elaborator.pool,
+        &goal_refs,
+        elaborator.rules,
+        elaborator.config.print_generated_egglog,
+    );
 
     root.clone()
 }
