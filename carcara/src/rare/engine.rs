@@ -1680,13 +1680,13 @@ fn format_seconds(duration: std::time::Duration) -> String {
 pub fn reconstruct_rule(
     pool: &mut PrimitivePool,
     conclusion: Rc<Term>,
-    root: &Rc<ProofNode>,
+    node: &Rc<ProofNode>,
     database: &Rules,
     options: RunEgglogOptions,
     print_generated_egglog: bool,
 ) {
     let egglog_start = Instant::now();
-    let (result, egglogcode) = run_egglog(pool, (conclusion, root), database, options);
+    let (result, egglogcode) = run_egglog(pool, (conclusion, node), database, options);
     let egglog_time = egglog_start.elapsed();
     if print_generated_egglog {
         println!("{}", egglogcode);

@@ -150,7 +150,7 @@ impl<'e> Elaborator<'e> {
                                     && s.args.len() > 0
                                     && *s.args[0] == Term::new_string("TRUST_THEORY_REWRITE") =>
                             {
-                                rare::elaborate_rule(self, root, s).unwrap_or_else(|| node.clone())
+                                rare::elaborate_rule(self, node).unwrap_or_else(|| node.clone())
                             }
                             _ => node.clone(),
                         })

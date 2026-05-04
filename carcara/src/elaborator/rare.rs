@@ -2,11 +2,8 @@ use crate::{ast::*, rare::engine::reconstruct_rule};
 
 use super::{Elaborator, IdHelper};
 
-pub fn elaborate_rule(
-    elaborator: &mut Elaborator,
-    root: &Rc<ProofNode>,
-    step: &StepNode,
-) -> Option<Rc<ProofNode>> {
+pub fn elaborate_rule(elaborator: &mut Elaborator, node: &Rc<ProofNode>) -> Option<Rc<ProofNode>> {
+    let step = node.as_step()?;
     let mut ids = IdHelper::new(&step.id);
     let print_generated_egglog = elaborator
         .config
@@ -16,7 +13,7 @@ pub fn elaborate_rule(
     reconstruct_rule(
         elaborator.pool,
         step.clause[0].clone(),
-        root,
+        node,
         elaborator.rules,
         elaborator.config.rare_egglog_options,
         print_generated_egglog,
