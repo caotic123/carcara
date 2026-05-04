@@ -1,9 +1,53 @@
+use std::sync::Arc;
+
 use crate::rare::language::EggStatement;
+use egglog::{
+    ast::{Span, Symbol},
+    constraint::{SimpleTypeConstraint, TypeConstraint},
+    sort::{BigRatSort, FromSort, I64Sort},
+    ArcSort, EGraph, PrimitiveLike, Value,
+};
+use num::{rational::BigRational, ToPrimitive};
+
+struct BigRatFloorI64;
+
+impl PrimitiveLike for BigRatFloorI64 {
+    fn name(&self) -> Symbol {
+        Symbol::from("bigrat_floor_i64")
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            self.name(),
+            vec![Arc::new(BigRatSort), Arc::new(I64Sort)],
+            span.clone(),
+        )
+        .into_box()
+    }
+
+    fn apply(
+        &self,
+        values: &[Value],
+        _sorts: (&[ArcSort], &ArcSort),
+        _egraph: Option<&mut EGraph>,
+    ) -> Option<Value> {
+        if values.len() != 1 {
+            return None;
+        }
+
+        let value = BigRational::load(&BigRatSort, &values[0]);
+        value.floor().to_i64().map(Value::from)
+    }
+}
 
 pub fn evaluation_rules() -> Vec<EggStatement> {
     // Include the egglog file content at compile time
     let egglog_content = include_str!("evaluation.egglog");
     vec![EggStatement::Raw(egglog_content.to_string())]
+}
+
+pub fn register_evaluation_primitives(egraph: &mut EGraph) {
+    egraph.add_primitive(BigRatFloorI64);
 }
 
 /// Test module for evaluation rules debugging using the engine
@@ -35,6 +79,10 @@ pub mod tests {
         (declare-fun f () Bool)
     "#;
 
+    const DEEP_ROUND_RETRY_DEFINITIONS: &str = r#"
+        (declare-fun f () Bool)
+    "#;
+
     const ROUND_RETRY_RULES: &str = r#"
         (declare-rare-rule late-eval ()
           :args ()
@@ -42,19 +90,10 @@ pub mod tests {
         )
     "#;
 
-    const MULTI_ROUND_RETRY_DEFINITIONS: &str = r#"
-        (declare-fun f () Bool)
-        (declare-fun g () Bool)
-    "#;
-
-    const MULTI_ROUND_RETRY_RULES: &str = r#"
-        (declare-rare-rule late-eval-f ()
+    const DEEP_ROUND_RETRY_RULES: &str = r#"
+        (declare-rare-rule late-eval ()
           :args ()
-          :conclusion (= f (or false true))
-        )
-        (declare-rare-rule late-eval-g ()
-          :args ()
-          :conclusion (= g (or false true))
+          :conclusion (= f (or false (or false (or false (or false (or false (or false (or false (or false true)))))))))
         )
     "#;
 
@@ -151,8 +190,12 @@ pub mod tests {
         let conclusion = parse_term(&mut pool, conclusion_str);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let goals = [(conclusion, &root)];
-        let (result, code) = run_egglog(&mut pool, &goals, &rules, RunEgglogOptions::default());
+        let (result, code) = run_egglog(
+            &mut pool,
+            (conclusion, &root),
+            &rules,
+            RunEgglogOptions::default(),
+        );
         if debug {
             println!(
                 "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
@@ -173,8 +216,7 @@ pub mod tests {
         let conclusion = parse_term_with_definitions(&mut pool, definitions, conclusion_str);
         let rules = parse_rare_rules(&mut pool, definitions, rules_source);
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let goals = vec![(conclusion, &root)];
-        let (result, code) = run_egglog(&mut pool, &goals, &rules, options);
+        let (result, code) = run_egglog(&mut pool, (conclusion, &root), &rules, options);
         if debug {
             println!(
                 "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
@@ -184,35 +226,21 @@ pub mod tests {
         result.map(|_| ())
     }
 
-    fn try_elaborate_multi_with_rules_and_options(
+    fn try_elaborate_with_rules_and_options_and_code(
         definitions: &str,
-        conclusions: &[&str],
+        conclusion_str: &str,
         rules_source: &str,
         options: RunEgglogOptions,
         debug: bool,
     ) -> (Result<(), String>, String) {
         let mut pool = PrimitivePool::new();
+        let conclusion = parse_term_with_definitions(&mut pool, definitions, conclusion_str);
         let rules = parse_rare_rules(&mut pool, definitions, rules_source);
-        let conclusions = conclusions
-            .iter()
-            .map(|term| parse_term_with_definitions(&mut pool, definitions, term))
-            .collect::<Vec<_>>();
-        let roots = conclusions
-            .iter()
-            .enumerate()
-            .map(|(index, conclusion)| {
-                dummy_proof_node_with_id(&mut pool, &format!("test_{index}"), conclusion.clone())
-            })
-            .collect::<Vec<_>>();
-        let goals = conclusions
-            .iter()
-            .zip(roots.iter())
-            .map(|(conclusion, root)| (conclusion.clone(), root))
-            .collect::<Vec<_>>();
-        let (result, code) = run_egglog(&mut pool, &goals, &rules, options);
+        let root = dummy_proof_node(&mut pool, conclusion.clone());
+        let (result, code) = run_egglog(&mut pool, (conclusion, &root), &rules, options);
         if debug {
             println!(
-                "\n=== Generated batch egglog code ===\n{}\n=== End batch egglog code ===\n",
+                "\n=== Generated egglog code ===\n{}\n=== End egglog code ===\n",
                 code
             );
         }
@@ -232,8 +260,12 @@ pub mod tests {
         let conclusion = parse_term(&mut pool, conclusion_str);
         let rules = empty_rules();
         let root = dummy_proof_node(&mut pool, conclusion.clone());
-        let goals = [(conclusion, &root)];
-        let (_, code) = run_egglog(&mut pool, &goals, &rules, RunEgglogOptions::default());
+        let (_, code) = run_egglog(
+            &mut pool,
+            (conclusion, &root),
+            &rules,
+            RunEgglogOptions::default(),
+        );
         println!(
             "\n=== Generated egglog code for: {} ===\n{}\n=== End ===\n",
             conclusion_str, code
@@ -246,7 +278,10 @@ pub mod tests {
             ROUND_RETRY_DEFINITIONS,
             "(= f true)",
             ROUND_RETRY_RULES,
-            RunEgglogOptions { max_goal_schedule_rounds: 1 },
+            RunEgglogOptions {
+                max_goal_schedule_rounds: 1,
+                ..RunEgglogOptions::default()
+            },
             debug_egglog(),
         );
         assert!(
@@ -269,30 +304,46 @@ pub mod tests {
     }
 
     #[test]
-    fn test_goal_schedule_retry_rounds_are_shared_across_batch_goals() {
-        let (result, code) = try_elaborate_multi_with_rules_and_options(
-            MULTI_ROUND_RETRY_DEFINITIONS,
-            &["(= f true)", "(= g true)"],
-            MULTI_ROUND_RETRY_RULES,
-            RunEgglogOptions::default(),
+    fn test_continous_saturation_retries_one_run_until_success() {
+        let bounded = try_elaborate_with_rules_and_options(
+            DEEP_ROUND_RETRY_DEFINITIONS,
+            "(= f true)",
+            DEEP_ROUND_RETRY_RULES,
+            RunEgglogOptions {
+                max_goal_schedule_rounds: 1,
+                ..RunEgglogOptions::default()
+            },
             debug_egglog(),
         );
+        assert!(
+            bounded.is_err(),
+            "single bounded goal schedule round unexpectedly succeeded"
+        );
 
+        let (result, code) = try_elaborate_with_rules_and_options_and_code(
+            DEEP_ROUND_RETRY_DEFINITIONS,
+            "(= f true)",
+            DEEP_ROUND_RETRY_RULES,
+            RunEgglogOptions {
+                continuous_saturation: true,
+                ..RunEgglogOptions::default()
+            },
+            debug_egglog(),
+        );
         assert!(
             result.is_ok(),
-            "batched goal schedule retries failed: {:?}",
+            "continuous goal schedule failed: {:?}",
             result.err()
         );
-        assert_eq!(
-            goal_schedule_round_count(&code),
-            2,
-            "expected shared retry rounds across the whole batch, got:\n{}",
+        assert!(
+            goal_schedule_round_count(&code) > 1,
+            "expected more than one one-run round, got:\n{}",
             code
         );
         assert!(
-            code.contains("(check (= goal_lhs_0 goal_rhs_0))")
-                && code.contains("(check (= goal_lhs_1 goal_rhs_1))"),
-            "expected both batch goals to be checked, got:\n{}",
+            !code.contains("(run-schedule (repeat 2 (run list-ruleset)))")
+                && !code.contains("(run-schedule (repeat 3 (run list-ruleset)))"),
+            "continuous saturation should run one iteration per round, got:\n{}",
             code
         );
     }
@@ -651,6 +702,63 @@ pub mod tests {
     fn test_mult_integers() {
         let result = try_elaborate("(= (* 3 4) 12)");
         assert!(result.is_ok(), "mult integers failed: {:?}", result.err());
+    }
+
+    /// Real multiplication that exceeds egglog i64 capacity should evaluate through BigRat.
+    #[test]
+    fn test_real_multiplication_overflow_uses_bigrat() {
+        let result = try_elaborate("(= (* 3037000500.0 3037000500.0) 9223372037000250000.0)");
+        assert!(
+            result.is_ok(),
+            "overflowing real multiplication failed: {:?}",
+            result.err()
+        );
+    }
+
+    /// Real addition whose result exceeds i64 should evaluate through BigRat.
+    #[test]
+    fn test_real_addition_overflow_uses_bigrat() {
+        let result = try_elaborate("(= (+ 9223372036854775800.0 10.0) 9223372036854775810.0)");
+        assert!(
+            result.is_ok(),
+            "overflowing real addition failed: {:?}",
+            result.err()
+        );
+    }
+
+    /// Real subtraction whose result exceeds i64 should evaluate through BigRat.
+    #[test]
+    fn test_real_subtraction_overflow_uses_bigrat() {
+        let result =
+            try_elaborate("(= (- (- 9223372036854775800.0) 10.0) (- 9223372036854775810.0))");
+        assert!(
+            result.is_ok(),
+            "overflowing real subtraction failed: {:?}",
+            result.err()
+        );
+    }
+
+    /// Real division whose cross-product exceeds i64 should evaluate through BigRat.
+    #[test]
+    fn test_real_division_overflow_uses_bigrat() {
+        let result =
+            try_elaborate("(= (/ 3037000500.0 (/ 1.0 3037000500.0)) 9223372037000250000.0)");
+        assert!(
+            result.is_ok(),
+            "overflowing real division failed: {:?}",
+            result.err()
+        );
+    }
+
+    /// Real comparison whose cross-product exceeds i64 should evaluate through BigRat.
+    #[test]
+    fn test_real_comparison_overflow_uses_bigrat() {
+        let result = try_elaborate("(= (not (< 3037000500.0 (/ 1.0 3037000500.0))) true)");
+        assert!(
+            result.is_ok(),
+            "overflowing real comparison failed: {:?}",
+            result.err()
+        );
     }
 
     /// Test integer division: 10 div 3 = 3

@@ -1,5 +1,17 @@
 (ruleset evaluation)
 
+(let eval_rat_zero (bigrat (bigint 0) (bigint 1)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+; Rational Constants
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Keep Real as a compatibility input encoding, but evaluate rationals as BigRat.
+(rewrite
+ (Mk (Real n d))
+ (Mk (RatConst (bigrat (bigint n) (bigint d))))
+ :ruleset evaluation)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Boolean Operations
 ;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -36,7 +48,7 @@
  (Mk (Bool (xor x y)))
  :ruleset evaluation)
 
-; implies (no native =>, use: x => y ≡ ¬x ∨ y)
+; implies (no native =>, use: x => y == not x or y)
 (constructor @=> (Term) Term)
 
 (rewrite
@@ -93,18 +105,17 @@
  :when ((!= x y))
  :ruleset evaluation)
 
-; = for rationals: n1/d1 == n2/d2 ⟺ n1*d2 == n2*d1 (equal case)
+; = for rationals
 (rewrite
- (Mk (@= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (@= (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
  (Mk (Bool true))
- :when ((= (* n1 d2) (* n2 d1)))
+ :when ((= q1 q2))
  :ruleset evaluation)
 
-; = for rationals: not equal case
 (rewrite
- (Mk (@= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (@= (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
  (Mk (Bool false))
- :when ((!= (* n1 d2) (* n2 d1)))
+ :when ((!= q1 q2))
  :ruleset evaluation)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -128,17 +139,17 @@
  :when ((>= x y))
  :ruleset evaluation)
 
-; < for rationals: n1/d1 < n2/d2 ⟺ n1*d2 < n2*d1 (assuming positive denominators)
+; < for rationals
 (rewrite
- (Mk (@< (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (@< (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
  (Mk (Bool true))
- :when ((< (* n1 d2) (* n2 d1)))
+ :when ((< q1 q2))
  :ruleset evaluation)
 
 (rewrite
- (Mk (@< (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (@< (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
  (Mk (Bool false))
- :when ((>= (* n1 d2) (* n2 d1)))
+ :when ((>= q1 q2))
  :ruleset evaluation)
 
 ; <= (less than or equal)
@@ -160,21 +171,21 @@
 
 ; <= for rationals
 (rewrite
- (Mk (@<= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (@<= (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
  (Mk (Bool true))
- :when ((<= (* n1 d2) (* n2 d1)))
+ :when ((<= q1 q2))
  :ruleset evaluation)
 
 (rewrite
- (Mk (@<= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (@<= (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
  (Mk (Bool false))
- :when ((> (* n1 d2) (* n2 d1)))
+ :when ((> q1 q2))
  :ruleset evaluation)
 
 ; > (greater than)
 (constructor @> (Term) Term)
 
-; > for integers: true case (x > y ⟺ y < x)
+; > for integers: true case
 (rewrite
  (Mk (@> (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
  (Mk (Bool true))
@@ -190,15 +201,15 @@
 
 ; > for rationals
 (rewrite
- (Mk (@> (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (@> (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
  (Mk (Bool true))
- :when ((> (* n1 d2) (* n2 d1)))
+ :when ((> q1 q2))
  :ruleset evaluation)
 
 (rewrite
- (Mk (@> (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (@> (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
  (Mk (Bool false))
- :when ((<= (* n1 d2) (* n2 d1)))
+ :when ((<= q1 q2))
  :ruleset evaluation)
 
 ; >= (greater than or equal)
@@ -220,15 +231,15 @@
 
 ; >= for rationals
 (rewrite
- (Mk (@>= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (@>= (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
  (Mk (Bool true))
- :when ((>= (* n1 d2) (* n2 d1)))
+ :when ((>= q1 q2))
  :ruleset evaluation)
 
 (rewrite
- (Mk (@>= (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
+ (Mk (@>= (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
  (Mk (Bool false))
- :when ((< (* n1 d2) (* n2 d1)))
+ :when ((< q1 q2))
  :ruleset evaluation)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -244,10 +255,10 @@
  (Mk (Num (+ x y)))
  :ruleset evaluation)
 
-; + for rationals: n1/d1 + n2/d2 = (n1*d2 + n2*d1) / (d1*d2)
+; + for rationals
 (rewrite
- (Mk (@+ (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
- (Mk (Real (+ (* n1 d2) (* n2 d1)) (* d1 d2)))
+ (Mk (@+ (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
+ (Mk (RatConst (+ q1 q2)))
  :ruleset evaluation)
 
 ; - (subtraction, binary)
@@ -259,10 +270,10 @@
  (Mk (Num (- x y)))
  :ruleset evaluation)
 
-; - for rationals: n1/d1 - n2/d2 = (n1*d2 - n2*d1) / (d1*d2)
+; - for rationals (binary)
 (rewrite
- (Mk (@- (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
- (Mk (Real (- (* n1 d2) (* n2 d1)) (* d1 d2)))
+ (Mk (@- (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
+ (Mk (RatConst (- q1 q2)))
  :ruleset evaluation)
 
 ; - (unary negation)
@@ -273,8 +284,8 @@
 
 ; - (unary negation for rationals)
 (rewrite
- (Mk (@- (Args (Mk (Real n d)) (Empty))))
- (Mk (Real (- 0 n) d))
+ (Mk (@- (Args (Mk (RatConst q)) (Empty))))
+ (Mk (RatConst (neg q)))
  :ruleset evaluation)
 
 ; * (multiplication)
@@ -286,10 +297,10 @@
  (Mk (Num (* x y)))
  :ruleset evaluation)
 
-; * for rationals: (n1/d1) * (n2/d2) = (n1*n2) / (d1*d2)
+; * for rationals
 (rewrite
- (Mk (@* (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
- (Mk (Real (* n1 n2) (* d1 d2)))
+ (Mk (@* (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
+ (Mk (RatConst (* q1 q2)))
  :ruleset evaluation)
 
 ; / (division, returns rational)
@@ -298,46 +309,46 @@
 ; / for integers: x / y = x / y as rational
 (rewrite
  (Mk (@/ (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
- (Mk (Real x y))
+ (Mk (RatConst (bigrat (bigint x) (bigint y))))
  :when ((!= y 0))
  :ruleset evaluation)
 
-; / for rationals: (n1/d1) / (n2/d2) = (n1*d2) / (d1*n2)
+; / for rationals
 (rewrite
- (Mk (@/ (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
- (Mk (Real (* n1 d2) (* d1 n2)))
- :when ((!= n2 0))
+ (Mk (@/ (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
+ (Mk (RatConst (/ q1 q2)))
+ :when ((!= q2 eval_rat_zero))
  :ruleset evaluation)
 
-; /_total (total division, returns 0/1 for division by zero)
+; /_total (total division, returns 0 for division by zero)
 (constructor @/_total (Term) Term)
 
-; /_total for integers: returns 0/1 when y = 0
+; /_total for integers: returns 0 when y = 0
 (rewrite
  (Mk (@/_total (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
- (Mk (Real 0 1))
+ (Mk (RatConst eval_rat_zero))
  :when ((= y 0))
  :ruleset evaluation)
 
 ; /_total for integers: normal case
 (rewrite
  (Mk (@/_total (Args (Mk (Num x)) (Args (Mk (Num y)) (Empty)))))
- (Mk (Real x y))
+ (Mk (RatConst (bigrat (bigint x) (bigint y))))
  :when ((!= y 0))
  :ruleset evaluation)
 
-; /_total for rationals: returns 0/1 when n2 = 0
+; /_total for rationals: returns 0 when q2 = 0
 (rewrite
- (Mk (@/_total (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
- (Mk (Real 0 1))
- :when ((= n2 0))
+ (Mk (@/_total (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
+ (Mk (RatConst eval_rat_zero))
+ :when ((= q2 eval_rat_zero))
  :ruleset evaluation)
 
 ; /_total for rationals: normal case
 (rewrite
- (Mk (@/_total (Args (Mk (Real n1 d1)) (Args (Mk (Real n2 d2)) (Empty)))))
- (Mk (Real (* n1 d2) (* d1 n2)))
- :when ((!= n2 0))
+ (Mk (@/_total (Args (Mk (RatConst q1)) (Args (Mk (RatConst q2)) (Empty)))))
+ (Mk (RatConst (/ q1 q2)))
+ :when ((!= q2 eval_rat_zero))
  :ruleset evaluation)
 
 ; div (integer division, floor)
@@ -374,13 +385,13 @@
 ; to_real for integers: x -> x/1
 (rewrite
  (Mk (@to_real (Args (Mk (Num x)) (Empty))))
- (Mk (Real x 1))
+ (Mk (RatConst (bigrat (bigint x) (bigint 1))))
  :ruleset evaluation)
 
 ; to_real for rationals: identity
 (rewrite
- (Mk (@to_real (Args (Mk (Real n d)) (Empty))))
- (Mk (Real n d))
+ (Mk (@to_real (Args (Mk (RatConst q)) (Empty))))
+ (Mk (RatConst q))
  :ruleset evaluation)
 
 ; to_int (floor of rational to integer)
@@ -392,23 +403,10 @@
  (Mk (Num x))
  :ruleset evaluation)
 
-; to_int for rationals: floor(n/d), assuming normalized positive denominators
+; to_int for rationals. This succeeds when the floored result fits Num's i64 encoding.
 (rewrite
- (Mk (@to_int (Args (Mk (Real n d)) (Empty))))
- (Mk (Num (/ n d)))
- :when ((= (% n d) 0))
- :ruleset evaluation)
-
-(rewrite
- (Mk (@to_int (Args (Mk (Real n d)) (Empty))))
- (Mk (Num (/ n d)))
- :when ((>= n 0))
- :ruleset evaluation)
-
-(rewrite
- (Mk (@to_int (Args (Mk (Real n d)) (Empty))))
- (Mk (Num (- (/ n d) 1)))
- :when ((< n 0) (!= (% n d) 0))
+ (Mk (@to_int (Args (Mk (RatConst q)) (Empty))))
+ (Mk (Num (bigrat_floor_i64 q)))
  :ruleset evaluation)
 
 ; is_int (check if value is integer)
@@ -420,18 +418,18 @@
  (Mk (Bool true))
  :ruleset evaluation)
 
-; is_int for rationals: true if n mod d == 0
+; is_int for rationals: true if denominator is 1
 (rewrite
- (Mk (@is_int (Args (Mk (Real n d)) (Empty))))
+ (Mk (@is_int (Args (Mk (RatConst q)) (Empty))))
  (Mk (Bool true))
- :when ((= (% n d) 0))
+ :when ((= (denom q) (bigint 1)))
  :ruleset evaluation)
 
-; is_int for rationals: false if n mod d != 0
+; is_int for rationals: false if denominator is not 1
 (rewrite
- (Mk (@is_int (Args (Mk (Real n d)) (Empty))))
+ (Mk (@is_int (Args (Mk (RatConst q)) (Empty))))
  (Mk (Bool false))
- :when ((!= (% n d) 0))
+ :when ((!= (denom q) (bigint 1)))
  :ruleset evaluation)
 
 ; abs (absolute value)
@@ -451,19 +449,10 @@
  :when ((< x 0))
  :ruleset evaluation)
 
-; abs for rationals: positive case (n/d >= 0 when n and d have same sign)
-; For simplicity, assuming positive denominators (standard form)
+; abs for rationals
 (rewrite
- (Mk (@abs (Args (Mk (Real n d)) (Empty))))
- (Mk (Real n d))
- :when ((>= n 0))
- :ruleset evaluation)
-
-; abs for rationals: negative case
-(rewrite
- (Mk (@abs (Args (Mk (Real n d)) (Empty))))
- (Mk (Real (- 0 n) d))
- :when ((< n 0))
+ (Mk (@abs (Args (Mk (RatConst q)) (Empty))))
+ (Mk (RatConst (abs q)))
  :ruleset evaluation)
 
 ; Note: int.log2, int.pow2, int.ispow2 are not standard SMT-LIB operators

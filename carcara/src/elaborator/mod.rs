@@ -1,4 +1,3 @@
-mod global_rare;
 mod hole;
 mod lia_generic;
 mod polyeq;
@@ -11,6 +10,7 @@ mod uncrowding;
 
 use crate::{
     ast::{rare_rules::Rules, *},
+    rare::engine::RunEgglogOptions,
     CheckerError,
 };
 use indexmap::IndexSet;
@@ -32,6 +32,9 @@ pub struct Config {
     /// further minimize the number of `contraction` steps added.
     pub uncrowd_rotation: bool,
 
+    /// Options for RARE elaboration through egglog.
+    pub rare_egglog_options: RunEgglogOptions,
+
     pub hole_options: Option<HoleOptions>,
 }
 
@@ -40,7 +43,6 @@ pub enum ElaborationStep {
     Polyeq,
     LiaGeneric,
     Local,
-    GlobalRareElaboration,
     Uncrowd,
     Reordering,
     Hole,
@@ -123,9 +125,6 @@ impl<'e> Elaborator<'e> {
                 }
                 ElaborationStep::LiaGeneric => current.clone(),
                 ElaborationStep::Local => self.elaborate_local(&current),
-                ElaborationStep::GlobalRareElaboration => {
-                    global_rare::global_rare_elaboration(self, &current)
-                }
                 ElaborationStep::Uncrowd => mutate(&current, |_, node| match node.as_ref() {
                     ProofNode::Step(s)
                         if (s.rule == "resolution" || s.rule == "th_resolution")
@@ -151,8 +150,7 @@ impl<'e> Elaborator<'e> {
                                     && s.args.len() > 0
                                     && *s.args[0] == Term::new_string("TRUST_THEORY_REWRITE") =>
                             {
-                                rare::elaborate_rule(self, root, s, &pipeline)
-                                    .unwrap_or_else(|| node.clone())
+                                rare::elaborate_rule(self, root, s).unwrap_or_else(|| node.clone())
                             }
                             _ => node.clone(),
                         })

@@ -54,6 +54,7 @@ fn run_test(problem_path: &Path, proof_path: &Path) -> CarcaraResult<()> {
         lia_options: None,
         hole_options: None,
         uncrowd_rotation: true,
+        rare_egglog_options: Default::default(),
     };
     let node = ast::ProofNode::from_commands(proof.commands.clone());
     let elaborated_node = elaborator::Elaborator::new(&mut pool, &problem, config.clone())

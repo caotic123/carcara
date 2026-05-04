@@ -144,6 +144,7 @@ dependencies = [
  "egglog",
  "indexmap 2.11.0",
  "log",
+ "num",
  "rand",
  "rug",
  "test-generator",

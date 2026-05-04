@@ -8,6 +8,7 @@ use carcara::{
     benchmarking::OnlineBenchmarkResults,
     check, check_and_elaborate, check_parallel, checker, elaborator, generate_lia_smt_instances,
     parser,
+    rare::engine::RunEgglogOptions,
 };
 use clap::{AppSettings, ArgEnum, Args, Parser, Subcommand};
 use const_format::{formatcp, str_index};
@@ -199,7 +200,6 @@ enum ElaborationStep {
     Polyeq,
     LiaGeneric,
     Local,
-    GlobalRareElaboration,
     Uncrowd,
     Reordering,
     Hole,
@@ -252,6 +252,10 @@ struct ElaborationOptions {
     /// Print the generated egglog program when elaborating RARE steps.
     #[clap(long)]
     print_generated_egglog: bool,
+
+    /// Keep running RARE egglog schedules one step at a time until goals are saturated.
+    #[clap(long = "continous-saturation")]
+    continous_saturation: bool,
 }
 
 impl From<ElaborationOptions> for (elaborator::Config, Vec<elaborator::ElaborationStep>) {
@@ -263,9 +267,6 @@ impl From<ElaborationOptions> for (elaborator::Config, Vec<elaborator::Elaborati
                 ElaborationStep::Polyeq => elaborator::ElaborationStep::Polyeq,
                 ElaborationStep::LiaGeneric => elaborator::ElaborationStep::LiaGeneric,
                 ElaborationStep::Local => elaborator::ElaborationStep::Local,
-                ElaborationStep::GlobalRareElaboration => {
-                    elaborator::ElaborationStep::GlobalRareElaboration
-                }
                 ElaborationStep::Uncrowd => elaborator::ElaborationStep::Uncrowd,
                 ElaborationStep::Reordering => elaborator::ElaborationStep::Reordering,
                 ElaborationStep::Hole => elaborator::ElaborationStep::Hole,
@@ -293,6 +294,10 @@ impl From<ElaborationOptions> for (elaborator::Config, Vec<elaborator::Elaborati
         let config = elaborator::Config {
             lia_options,
             uncrowd_rotation: val.uncrowd_rotate,
+            rare_egglog_options: RunEgglogOptions {
+                continuous_saturation: val.continous_saturation,
+                ..RunEgglogOptions::default()
+            },
             hole_options,
         };
         (config, pipeline)

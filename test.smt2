@@ -1,6 +1,0 @@
-(set-logic QF_UFLIA)
-(declare-fun x () Int)
-(declare-fun y () Int)
-(assert (and (> x 1) (> y 1)))
-(assert (distinct (* (* 2 x) y) (* x (* 2 y))))
-(check-sat)

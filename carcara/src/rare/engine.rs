@@ -15,7 +15,7 @@ use crate::{
         computational::{
             aci_norm::singleton_operators, arith_poly_norm, arith_poly_norm_rel,
             core::declare_special_eunoia_eliminations, defunctionalization::elaborate_rule,
-            distinct_elim::declare_logic_operators,
+            distinct_elim::declare_logic_operators, evaluation,
         },
         language::*,
         meta::lower_egg_language,
@@ -45,11 +45,15 @@ pub struct EggFunctions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RunEgglogOptions {
     pub max_goal_schedule_rounds: usize,
+    pub continuous_saturation: bool,
 }
 
 impl Default for RunEgglogOptions {
     fn default() -> Self {
-        Self { max_goal_schedule_rounds: 1 }
+        Self {
+            max_goal_schedule_rounds: 3,
+            continuous_saturation: false,
+        }
     }
 }
 
@@ -1091,25 +1095,26 @@ fn construct_rules(
     rules
 }
 
-fn goal_names(goal_index: usize) -> (String, String) {
-    (
-        format!("goal_lhs_{goal_index}"),
-        format!("goal_rhs_{goal_index}"),
-    )
-}
+const GOAL_LHS_NAME: &str = "goal_lhs";
+const GOAL_RHS_NAME: &str = "goal_rhs";
 
-fn set_goal(goal_index: usize, lhs_expr: EggExpr, rhs_expr: EggExpr) -> Vec<EggStatement> {
-    let (goal_lhs_name, goal_rhs_name) = goal_names(goal_index);
+fn set_goal(lhs_expr: EggExpr, rhs_expr: EggExpr) -> Vec<EggStatement> {
     let mut goal = vec![];
-    goal.push(EggStatement::Let(goal_lhs_name.clone(), Box::new(lhs_expr)));
-    goal.push(EggStatement::Let(goal_rhs_name.clone(), Box::new(rhs_expr)));
-    goal.push(EggStatement::Premise(
-        "Avaliable".to_string(),
-        Box::new(EggExpr::Literal(goal_lhs_name)),
+    goal.push(EggStatement::Let(
+        GOAL_LHS_NAME.to_string(),
+        Box::new(lhs_expr),
+    ));
+    goal.push(EggStatement::Let(
+        GOAL_RHS_NAME.to_string(),
+        Box::new(rhs_expr),
     ));
     goal.push(EggStatement::Premise(
         "Avaliable".to_string(),
-        Box::new(EggExpr::Literal(goal_rhs_name)),
+        Box::new(EggExpr::Literal(GOAL_LHS_NAME.to_string())),
+    ));
+    goal.push(EggStatement::Premise(
+        "Avaliable".to_string(),
+        Box::new(EggExpr::Literal(GOAL_RHS_NAME.to_string())),
     ));
     goal
 }
@@ -1211,11 +1216,10 @@ fn run_program(egraph: &mut EGraph, program: Vec<Command>) -> Result<(), String>
         .map(|_| ())
 }
 
-fn equal_terms(goal_index: usize) -> (EggExpr, EggExpr) {
-    let (goal_lhs_name, goal_rhs_name) = goal_names(goal_index);
+fn equal_terms() -> (EggExpr, EggExpr) {
     (
-        EggExpr::Literal(goal_lhs_name),
-        EggExpr::Literal(goal_rhs_name),
+        EggExpr::Literal(GOAL_LHS_NAME.to_string()),
+        EggExpr::Literal(GOAL_RHS_NAME.to_string()),
     )
 }
 
@@ -1356,78 +1360,56 @@ fn check_goal_against_current_state(
 
 #[derive(Clone)]
 struct GoalCheckTarget {
-    goal_index: usize,
     goal_label: String,
     lhs_expr: EggExpr,
     rhs_expr: EggExpr,
     fallback_plans: Vec<GoalFallbackPlan>,
 }
 
-fn check_goals_with_retry_rounds(
+fn check_goal_with_retry_rounds(
     egraph: &mut EGraph,
     code_str: &mut String,
-    goals: &[GoalCheckTarget],
+    goal: &GoalCheckTarget,
     enable_arith_poly: bool,
     options: RunEgglogOptions,
 ) -> Result<(), String> {
-    let mut pending: Vec<_> = (0..goals.len()).collect();
-    let mut last_errors = vec![None; goals.len()];
+    let mut last_error = None;
 
-    for i in 0..options.normalized_max_goal_schedule_rounds() {
-        println!("Running goal check schedule round {}...", i + 1);
-        run_goal_schedule_round(egraph, code_str, (i + 1) as i16, enable_arith_poly)?;
+    let mut round = 0;
+    loop {
+        if !options.continuous_saturation && round >= options.normalized_max_goal_schedule_rounds()
+        {
+            break;
+        }
 
-        let mut next_pending = Vec::new();
-        for goal_idx in pending {
-            let goal = &goals[goal_idx];
-            match check_goal_against_current_state(
-                egraph,
-                code_str,
-                &goal.lhs_expr,
-                &goal.rhs_expr,
-                &goal.fallback_plans,
-            ) {
-                Ok(()) => last_errors[goal_idx] = None,
-                Err(error) => {
-                    last_errors[goal_idx] = Some(error);
-                    next_pending.push(goal_idx);
-                }
+        round += 1;
+        let iterations = if options.continuous_saturation {
+            1
+        } else {
+            round as i16
+        };
+        println!("Running goal check schedule round {}...", round);
+        run_goal_schedule_round(egraph, code_str, iterations, enable_arith_poly)?;
+
+        match check_goal_against_current_state(
+            egraph,
+            code_str,
+            &goal.lhs_expr,
+            &goal.rhs_expr,
+            &goal.fallback_plans,
+        ) {
+            Ok(()) => {
+                return Ok(());
             }
+            Err(error) => last_error = Some(error),
         }
-
-        if next_pending.is_empty() {
-            return Ok(());
-        }
-        pending = next_pending;
     }
 
-    let errors = pending
-        .into_iter()
-        .map(|goal_idx| {
-            let goal = &goals[goal_idx];
-            (
-                goal.goal_label.as_str(),
-                last_errors[goal_idx]
-                    .take()
-                    .unwrap_or_else(|| "goal equality check failed".to_string()),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    if errors.len() == 1 {
-        let (goal_label, error) = errors.into_iter().next().unwrap();
-        return Err(format!(
-            "Elaboration failed {} failed:\n{}",
-            goal_label, error
-        ));
-    }
-
-    let errors = errors
-        .into_iter()
-        .map(|(goal_label, error)| format!("Elaboration failed {} failed:\n{}", goal_label, error))
-        .collect::<Vec<_>>();
-
-    Err(errors.join("\n\n"))
+    Err(format!(
+        "Elaboration failed {} failed:\n{}",
+        goal.goal_label,
+        last_error.unwrap_or_else(|| "goal equality check failed".to_string())
+    ))
 }
 
 fn declare_functions(
@@ -1522,12 +1504,12 @@ fn declare_functions(
     decls
 }
 
-fn get_fallback_plans(goal_index: usize, enable_arith_poly: bool) -> Vec<GoalFallbackPlan> {
+fn get_fallback_plans(enable_arith_poly: bool) -> Vec<GoalFallbackPlan> {
     if !enable_arith_poly {
         return Vec::new();
     }
 
-    let (goal_lhs, goal_rhs) = equal_terms(goal_index);
+    let (goal_lhs, goal_rhs) = equal_terms();
     vec![
         GoalFallbackPlan::new(
             "arithPolyNfOf",
@@ -1568,7 +1550,7 @@ fn goal_log_label(node: &Rc<ProofNode>, conclusion: &Rc<Term>) -> String {
 
 pub fn run_egglog(
     pool: &mut PrimitivePool,
-    nodes: &[(Rc<Term>, &Rc<ProofNode>)],
+    node: (Rc<Term>, &Rc<ProofNode>),
     database: &Rules,
     options: RunEgglogOptions,
 ) -> (Result<EGraph, String>, String) {
@@ -1588,61 +1570,60 @@ pub fn run_egglog(
     }
 
     let rules = construct_rules(&rules, &mut egg_functions, &mut var_map);
-    let premises = construct_premises(pool, nodes, &mut var_map, &mut egg_functions);
+    let premises = construct_premises(
+        pool,
+        std::slice::from_ref(&node),
+        &mut var_map,
+        &mut egg_functions,
+    );
 
-    let mut goals_ast = Vec::new();
-    let mut goals = Vec::with_capacity(nodes.len());
-    for (goal_index, (conclusion, node)) in nodes.iter().enumerate() {
-        let goal_label = goal_log_label(node, conclusion);
-        println!("Elaborating {}", goal_label);
+    let (conclusion, proof_node) = node.clone();
+    let goal_label = goal_log_label(proof_node, &conclusion);
+    println!("Elaborating {}", goal_label);
 
-        let Some((_, lhs, rhs)) = get_equational_terms(conclusion) else {
-            return (Err("Failed to set goal".to_string()), String::new());
-        };
+    let Some((_, lhs, rhs)) = get_equational_terms(&conclusion) else {
+        return (Err("Failed to set goal".to_string()), String::new());
+    };
 
-        let goal_lhs_expr = to_egg_expr(
-            lhs,
-            &IndexMap::new(),
-            &mut egg_functions,
-            &mut var_map,
-            false,
-        )
-        .unwrap();
-        let goal_rhs_expr = to_egg_expr(
-            rhs,
-            &IndexMap::new(),
-            &mut egg_functions,
-            &mut var_map,
-            false,
-        )
-        .unwrap();
+    let goal_lhs_expr = to_egg_expr(
+        lhs,
+        &IndexMap::new(),
+        &mut egg_functions,
+        &mut var_map,
+        false,
+    )
+    .unwrap();
+    let goal_rhs_expr = to_egg_expr(
+        rhs,
+        &IndexMap::new(),
+        &mut egg_functions,
+        &mut var_map,
+        false,
+    )
+    .unwrap();
 
-        goals_ast.extend(set_goal(goal_index, goal_lhs_expr, goal_rhs_expr));
-        goals_ast.extend(available_subterm_premises(
-            lhs,
-            &mut egg_functions,
-            &mut var_map,
-        ));
-        goals_ast.extend(available_subterm_premises(
-            rhs,
-            &mut egg_functions,
-            &mut var_map,
-        ));
+    let mut goals_ast = set_goal(goal_lhs_expr, goal_rhs_expr);
+    goals_ast.extend(available_subterm_premises(
+        lhs,
+        &mut egg_functions,
+        &mut var_map,
+    ));
+    goals_ast.extend(available_subterm_premises(
+        rhs,
+        &mut egg_functions,
+        &mut var_map,
+    ));
 
-        let (raw_lhs, raw_rhs) = equal_terms(goal_index);
-        goals.push(GoalCheckTarget {
-            goal_index,
-            goal_label,
-            lhs_expr: raw_lhs,
-            rhs_expr: raw_rhs,
-            fallback_plans: Vec::new(),
-        });
-    }
+    let (raw_lhs, raw_rhs) = equal_terms();
+    let mut goal = GoalCheckTarget {
+        goal_label,
+        lhs_expr: raw_lhs,
+        rhs_expr: raw_rhs,
+        fallback_plans: Vec::new(),
+    };
 
     let enable_arith_poly = arith_poly_norm::uses_arith_machinery(&egg_functions);
-    for goal in &mut goals {
-        goal.fallback_plans = get_fallback_plans(goal.goal_index, enable_arith_poly);
-    }
+    goal.fallback_plans = get_fallback_plans(enable_arith_poly);
 
     let mut declarations = declare_functions(&mut egg_functions, &database.consts, &mut var_map);
 
@@ -1664,6 +1645,7 @@ pub fn run_egglog(
     let (egglog, mut code_str) = compile_program(ast);
 
     let mut egraph = EGraph::default();
+    evaluation::register_evaluation_primitives(&mut egraph);
     if enable_arith_poly {
         arith_poly_norm::register_arith_poly_primitives(&mut egraph);
     }
@@ -1679,10 +1661,10 @@ pub fn run_egglog(
     });
 
     let result = run_program(&mut egraph, egglog).and_then(|_| {
-        check_goals_with_retry_rounds(
+        check_goal_with_retry_rounds(
             &mut egraph,
             &mut code_str,
-            &goals,
+            &goal,
             enable_arith_poly,
             options,
         )
@@ -1700,33 +1682,11 @@ pub fn reconstruct_rule(
     conclusion: Rc<Term>,
     root: &Rc<ProofNode>,
     database: &Rules,
-    print_generated_egglog: bool,
-) {
-    let goals = [(conclusion, root)];
-    let egglog_start = Instant::now();
-    let (result, egglogcode) = run_egglog(pool, &goals, database, RunEgglogOptions::default());
-    let egglog_time = egglog_start.elapsed();
-    if print_generated_egglog {
-        println!("{}", egglogcode);
-    }
-    match result {
-        Ok(_) => println!("Elaboration succeeded in {}", format_seconds(egglog_time)),
-        Err(error) => println!(
-            "Elaboration failed in {}: {}",
-            format_seconds(egglog_time),
-            error
-        ),
-    }
-}
-
-pub fn reconstruct_global_rules(
-    pool: &mut PrimitivePool,
-    nodes: &[(Rc<Term>, &Rc<ProofNode>)],
-    database: &Rules,
+    options: RunEgglogOptions,
     print_generated_egglog: bool,
 ) {
     let egglog_start = Instant::now();
-    let (result, egglogcode) = run_egglog(pool, nodes, database, RunEgglogOptions::default());
+    let (result, egglogcode) = run_egglog(pool, (conclusion, root), database, options);
     let egglog_time = egglog_start.elapsed();
     if print_generated_egglog {
         println!("{}", egglogcode);
