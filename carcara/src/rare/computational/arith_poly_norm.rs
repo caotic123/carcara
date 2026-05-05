@@ -68,53 +68,33 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
             format!("@{}", func),
             vec![EggExpr::Literal("args".to_string())],
         )));
+        let atom = EggExpr::Call(
+            "AAtom".to_string(),
+            vec![
+                EggExpr::Call(
+                    "arith_source_atom_hash".to_string(),
+                    vec![wrapped_app.clone()],
+                ),
+                EggExpr::NativeBool(is_int_result),
+            ],
+        );
         decls.push(EggStatement::Rule {
             ruleset: Some("arith_poly_guard".to_string()),
             body: vec![egg_expr!(("arithGoalPolyNfOf-demand" {wrapped_app.clone()}))],
-            head: vec![
-                EggExpr::Set(
-                    Box::new(EggExpr::Call(
-                        "arithGoalPolyCanMatch".to_string(),
-                        vec![wrapped_app.clone()],
-                    )),
-                    Box::new(EggExpr::NativeBool(true)),
-                ),
-                egg_expr!(("arithPolyNfOf-demand" {wrapped_app.clone()})),
-            ],
-        });
-        decls.push(EggStatement::Rule {
-            ruleset: Some("arith_poly".to_string()),
-            body: vec![
-                egg_expr!((= ("arithPolyNfOf" {wrapped_app.clone()}) "p")),
-                egg_expr!(("arithGoalPolyNfOf-demand" {wrapped_app.clone()})),
-            ],
-            head: vec![egg_expr!((set ("arithGoalPolyNfOf" {wrapped_app.clone()}) "p"))],
-        });
-        decls.push(EggStatement::Rule {
-            ruleset: Some("arith_poly".to_string()),
-            body: vec![egg_expr!(("arithPolyNfOf-demand" {wrapped_app.clone()}))],
-            head: vec![egg_expr!(("atomPolyN-demand" {wrapped_app.clone()}))],
-        });
-        decls.push(EggStatement::Rule {
-            ruleset: Some("arith_poly".to_string()),
-            body: vec![
-                egg_expr!((= ("atomPolyN" {wrapped_app.clone()}) "p")),
-                egg_expr!(("arithPolyNfOf-demand" {wrapped_app.clone()})),
-            ],
-            head: vec![egg_expr!((set ("arithPolyNfOf" {wrapped_app.clone()}) "p"))],
-        });
-        decls.push(EggStatement::Rule {
-            ruleset: Some("arith_poly".to_string()),
-            body: vec![egg_expr!(("atomMonN-demand" {wrapped_app.clone()}))],
             head: vec![EggExpr::Set(
                 Box::new(EggExpr::Call(
-                    "atomHashIsInt".to_string(),
-                    vec![EggExpr::Call(
-                        "arith_poly_atom_hash".to_string(),
-                        vec![wrapped_app],
-                    )],
+                    "arithGoalPolyCanMatch".to_string(),
+                    vec![wrapped_app.clone()],
                 )),
-                Box::new(EggExpr::NativeBool(is_int_result)),
+                Box::new(EggExpr::NativeBool(true)),
+            )],
+        });
+        decls.push(EggStatement::Rule {
+            ruleset: Some("arith_poly".to_string()),
+            body: vec![egg_expr!(("arithCopyOf-demand" {wrapped_app.clone()}))],
+            head: vec![EggExpr::Set(
+                Box::new(EggExpr::Call("arithCopyOf".to_string(), vec![wrapped_app])),
+                Box::new(atom),
             )],
         });
     }
@@ -147,11 +127,11 @@ pub fn poly_goal_guard_term(lhs: EggExpr) -> EggExpr {
     EggExpr::Call("arithGoalPolyCanMatch".to_string(), vec![lhs])
 }
 
-struct ArithPolyAtomHash;
+struct ArithSourceAtomHash;
 
-impl PrimitiveLike for ArithPolyAtomHash {
+impl PrimitiveLike for ArithSourceAtomHash {
     fn name(&self) -> Symbol {
-        Symbol::from("arith_poly_atom_hash")
+        Symbol::from("arith_source_atom_hash")
     }
 
     fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
@@ -178,7 +158,39 @@ impl PrimitiveLike for ArithPolyAtomHash {
     }
 }
 
+struct ArithPolyAtomHash;
+
+impl PrimitiveLike for ArithPolyAtomHash {
+    fn name(&self) -> Symbol {
+        Symbol::from("arith_poly_atom_hash")
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            self.name(),
+            vec![
+                Arc::new(EqSort { name: Symbol::from("ArithTerm") }),
+                Arc::new(I64Sort),
+            ],
+            span.clone(),
+        )
+        .into_box()
+    }
+
+    fn apply(
+        &self,
+        values: &[Value],
+        _sorts: (&[ArcSort], &ArcSort),
+        _egraph: Option<&mut EGraph>,
+    ) -> Option<Value> {
+        Some(Value::from(
+            str_to_u64(&format!("arith-atoms:{}", values[0].bits)) as i64,
+        ))
+    }
+}
+
 pub fn register_arith_poly_primitives(egraph: &mut EGraph) {
+    egraph.add_primitive(ArithSourceAtomHash);
     egraph.add_primitive(ArithPolyAtomHash);
 }
 
@@ -300,58 +312,7 @@ pub mod tests {
           (Mk Term))
     "#;
 
-    const RAW_ARITH_SHAPE_HELPERS: &str = r#"
-        (relation rawAddShape-demand (Term DesbinN))
-        (relation rawSubShape-demand (Term DesbinN))
-
-        (rule
-          ((= t (Mk (@+ (Args x (Empty))))))
-          ((set (arithSyntaxOf t) (Mk (@arith_pos1 (Args x (Empty))))))
-          :ruleset arith_poly)
-
-        (rule
-          ((= t (Mk (@+ (Args x (Args y rest))))))
-          ((rawAddShape-demand t (Desbin x (Args y rest))))
-          :ruleset arith_poly)
-
-        (rule
-          ((rawAddShape-demand torig (Desbin acc (Args z rest)))
-           (!= rest (Empty)))
-          ((rawAddShape-demand
-            torig
-            (Desbin (Mk (@arith_add2 (Args acc (Args z (Empty))))) rest)))
-          :ruleset arith_poly)
-
-        (rule
-          ((rawAddShape-demand torig (Desbin acc (Args z (Empty)))))
-          ((set (arithSyntaxOf torig)
-                (Mk (@arith_add2 (Args acc (Args z (Empty)))))))
-          :ruleset arith_poly)
-
-        (rule
-          ((= t (Mk (@- (Args x (Empty))))))
-          ((set (arithSyntaxOf t) (Mk (@arith_neg1 (Args x (Empty))))))
-          :ruleset arith_poly)
-
-        (rule
-          ((= t (Mk (@- (Args x (Args y rest))))))
-          ((rawSubShape-demand t (Desbin x (Args y rest))))
-          :ruleset arith_poly)
-
-        (rule
-          ((rawSubShape-demand torig (Desbin acc (Args z rest)))
-           (!= rest (Empty)))
-          ((rawSubShape-demand
-            torig
-            (Desbin (Mk (@arith_sub2 (Args acc (Args z (Empty))))) rest)))
-          :ruleset arith_poly)
-
-        (rule
-          ((rawSubShape-demand torig (Desbin acc (Args z (Empty)))))
-          ((set (arithSyntaxOf torig)
-                (Mk (@arith_sub2 (Args acc (Args z (Empty)))))))
-          :ruleset arith_poly)
-    "#;
+    const RAW_ARITH_SHAPE_HELPERS: &str = "";
 
     /// Base parser config for these synthetic arithmetic elaboration tests.
     fn base_parser_config() -> Config {
@@ -842,10 +803,12 @@ pub mod tests {
             (let p20 (Mk (@>= (Args p19 (Args real_neg_14 (Empty))))))
 
             (union lhs_scaled rhs_scaled)
+            (arithRelBoolKeyOf-demand p13)
+            (arithRelBoolKeyOf-demand p20)
 
             (run-schedule (saturate (run arith_poly)))
 
-            (check (= p13 p20))
+            (check (= (arithRelBoolKeyOf p13) (arithRelBoolKeyOf p20)))
             "#,
         );
         assert!(
@@ -874,9 +837,12 @@ pub mod tests {
             (let p13 (Mk (@>= (Args num_2 (Args p12 (Empty))))))
             (let p20 (Mk (@>= (Args p19 (Args real_neg_14 (Empty))))))
 
+            (arithRelBoolKeyOf-demand p13)
+            (arithRelBoolKeyOf-demand p20)
+
             (run-schedule (saturate (run arith_poly)))
 
-            (check (= p13 p20))
+            (check (= (arithRelBoolKeyOf p13) (arithRelBoolKeyOf p20)))
             "#,
         );
         assert!(
@@ -975,10 +941,12 @@ pub mod tests {
             (let p15 (Mk (@>= (Args p14 (Args num_0 (Empty))))))
 
             (union lhs_scaled rhs_scaled)
+            (arithRelBoolKeyOf-demand p17)
+            (arithRelBoolKeyOf-demand p15)
 
             (run-schedule (saturate (run arith_poly)))
 
-            (check (= p17 p15))
+            (check (= (arithRelBoolKeyOf p17) (arithRelBoolKeyOf p15)))
             "#,
         );
         assert!(
@@ -1003,9 +971,12 @@ pub mod tests {
             (let p17 (Mk (@>= (Args num_1 (Args p16 (Empty))))))
             (let p15 (Mk (@>= (Args p14 (Args num_0 (Empty))))))
 
+            (arithRelBoolKeyOf-demand p17)
+            (arithRelBoolKeyOf-demand p15)
+
             (run-schedule (saturate (run arith_poly)))
 
-            (check (= p17 p15))
+            (check (= (arithRelBoolKeyOf p17) (arithRelBoolKeyOf p15)))
             "#,
         );
         assert!(
@@ -1267,12 +1238,12 @@ pub mod tests {
             (let int_v (Mk (Var 7 int_sort)))
             (let real_v (Mk (Var 7 real_sort)))
 
-            (arithPolyNfOf-demand int_v)
-            (arithPolyNfOf-demand real_v)
+            (arithGoalPolyNfOf-demand int_v)
+            (arithGoalPolyNfOf-demand real_v)
 
             (run-schedule (saturate (run arith_poly)))
 
-            (check (!= (arithPolyNfOf int_v) (arithPolyNfOf real_v)))
+            (check (!= (arithGoalPolyNfOf int_v) (arithGoalPolyNfOf real_v)))
             "#,
         );
         assert!(
@@ -1288,56 +1259,50 @@ pub mod tests {
             r#"
             (let x1 (Mk (Var 1 int_sort)))
             (let x2 (Mk (Var 2 int_sort)))
-            (let y1 (Mk (Var 3 int_sort)))
-            (let y2 (Mk (Var 4 int_sort)))
             (let z1 (Mk (Var 5 int_sort)))
             (let z2 (Mk (Var 6 int_sort)))
             (let w1 (Mk (Var 7 int_sort)))
             (let w2 (Mk (Var 8 int_sort)))
 
+            (let num_0 (Mk (Num 0)))
             (let num_2 (Mk (Num 2)))
             (let num_3 (Mk (Num 3)))
             (let num_neg_2 (Mk (Num -2)))
-            (let num_neg_3 (Mk (Num -3)))
 
             (let diff_x (Mk (@arith_sub2 (Args x1 (Args x2 (Empty))))))
-            (let diff_y (Mk (@arith_sub2 (Args y1 (Args y2 (Empty))))))
-            (let diff_y_real (Mk (@to_real (Args diff_y (Empty)))))
             (let diff_z (Mk (@arith_sub2 (Args z1 (Args z2 (Empty))))))
             (let diff_w (Mk (@arith_sub2 (Args w1 (Args w2 (Empty))))))
 
-            (let prem_eq_lhs (Mk (@* (Args num_2 (Args diff_x (Empty))))))
-            (let prem_eq_rhs (Mk (@* (Args num_3 (Args diff_y_real (Empty))))))
-            (union prem_eq_lhs prem_eq_rhs)
-
             (let eq_lhs (Mk (@= (Args x1 (Args x2 (Empty))))))
-            (let eq_rhs (Mk (@= (Args y1 (Args y2 (Empty))))))
+            (let eq_rhs (Mk (@= (Args (Mk (@* (Args num_2 (Args diff_x (Empty))))) (Args num_0 (Empty))))))
 
             (let ge_lhs (Mk (@>= (Args x1 (Args x2 (Empty))))))
-            (let ge_rhs (Mk (@>= (Args y1 (Args y2 (Empty))))))
+            (let ge_rhs (Mk (@>= (Args (Mk (@* (Args num_3 (Args diff_x (Empty))))) (Args num_0 (Empty))))))
 
-            (let prem_neg_lhs (Mk (@* (Args num_neg_2 (Args diff_x (Empty))))))
-            (let prem_neg_rhs (Mk (@* (Args num_neg_3 (Args diff_y (Empty))))))
-            (union prem_neg_lhs prem_neg_rhs)
-
-            (let prem_bad_lhs (Mk (@* (Args num_2 (Args diff_x (Empty))))))
-            (let prem_bad_rhs (Mk (@* (Args num_neg_3 (Args diff_y (Empty))))))
-            (union prem_bad_lhs prem_bad_rhs)
-            (let prem_mismatch_lhs (Mk (@* (Args num_2 (Args diff_z (Empty))))))
-            (let prem_mismatch_rhs (Mk (@* (Args num_neg_3 (Args diff_w (Empty))))))
-            (union prem_mismatch_lhs prem_mismatch_rhs)
+            (let ge_neg (Mk (@>= (Args (Mk (@* (Args num_neg_2 (Args diff_x (Empty))))) (Args num_0 (Empty))))))
 
             (let lt_lhs (Mk (@< (Args x1 (Args x2 (Empty))))))
-            (let lt_rhs (Mk (@< (Args y1 (Args y2 (Empty))))))
+            (let lt_rhs (Mk (@not (Args (Mk (@>= (Args x1 (Args x2 (Empty))))) (Empty)))))
             (let bad_ge_lhs (Mk (@>= (Args z1 (Args z2 (Empty))))))
             (let bad_ge_rhs (Mk (@>= (Args w1 (Args w2 (Empty))))))
 
+            (arithRelBoolKeyOf-demand eq_lhs)
+            (arithRelBoolKeyOf-demand eq_rhs)
+            (arithRelBoolKeyOf-demand ge_lhs)
+            (arithRelBoolKeyOf-demand ge_rhs)
+            (arithRelBoolKeyOf-demand ge_neg)
+            (arithRelBoolKeyOf-demand lt_lhs)
+            (arithRelBoolKeyOf-demand lt_rhs)
+            (arithRelBoolKeyOf-demand bad_ge_lhs)
+            (arithRelBoolKeyOf-demand bad_ge_rhs)
+
             (run-schedule (saturate (run arith_poly)))
 
-            (check (= eq_lhs eq_rhs))
-            (check (= ge_lhs ge_rhs))
-            (check (= lt_lhs lt_rhs))
-            (check (!= bad_ge_lhs bad_ge_rhs))
+            (check (= (arithRelBoolKeyOf eq_lhs) (arithRelBoolKeyOf eq_rhs)))
+            (check (= (arithRelBoolKeyOf ge_lhs) (arithRelBoolKeyOf ge_rhs)))
+            (check (!= (arithRelBoolKeyOf ge_lhs) (arithRelBoolKeyOf ge_neg)))
+            (check (= (arithRelBoolKeyOf lt_lhs) (arithRelBoolKeyOf lt_rhs)))
+            (check (!= (arithRelBoolKeyOf bad_ge_lhs) (arithRelBoolKeyOf bad_ge_rhs)))
             "#,
         );
         assert!(
@@ -1382,24 +1347,24 @@ pub mod tests {
               (Mk (@/_total
                     (Args (Mk (@/_total (Args r (Args s (Empty))))) (Args t (Empty))))))
 
-            (arithPolyNfOf-demand add_n)
-            (arithPolyNfOf-demand add_b)
-            (arithPolyNfOf-demand sub_n)
-            (arithPolyNfOf-demand sub_b)
-            (arithPolyNfOf-demand mul_n)
-            (arithPolyNfOf-demand mul_b)
-            (arithPolyNfOf-demand div_n)
-            (arithPolyNfOf-demand div_b)
-            (arithPolyNfOf-demand div_total_n)
-            (arithPolyNfOf-demand div_total_b)
+            (arithGoalPolyNfOf-demand add_n)
+            (arithGoalPolyNfOf-demand add_b)
+            (arithGoalPolyNfOf-demand sub_n)
+            (arithGoalPolyNfOf-demand sub_b)
+            (arithGoalPolyNfOf-demand mul_n)
+            (arithGoalPolyNfOf-demand mul_b)
+            (arithGoalPolyNfOf-demand div_n)
+            (arithGoalPolyNfOf-demand div_b)
+            (arithGoalPolyNfOf-demand div_total_n)
+            (arithGoalPolyNfOf-demand div_total_b)
 
             (run-schedule (saturate (run arith_poly)))
 
-            (check (= (arithPolyNfOf add_n) (arithPolyNfOf add_b)))
-            (check (= (arithPolyNfOf sub_n) (arithPolyNfOf sub_b)))
-            (check (= (arithPolyNfOf mul_n) (arithPolyNfOf mul_b)))
-            (check (= (arithPolyNfOf div_n) (arithPolyNfOf div_b)))
-            (check (= (arithPolyNfOf div_total_n) (arithPolyNfOf div_total_b)))
+            (check (= (arithGoalPolyNfOf add_n) (arithGoalPolyNfOf add_b)))
+            (check (= (arithGoalPolyNfOf sub_n) (arithGoalPolyNfOf sub_b)))
+            (check (= (arithGoalPolyNfOf mul_n) (arithGoalPolyNfOf mul_b)))
+            (check (= (arithGoalPolyNfOf div_n) (arithGoalPolyNfOf div_b)))
+            (check (= (arithGoalPolyNfOf div_total_n) (arithGoalPolyNfOf div_total_b)))
             "#,
         );
         assert!(
