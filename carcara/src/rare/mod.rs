@@ -494,7 +494,11 @@ mod tests {
     #[test]
     fn test_bv_nary_flatten_and_singleton() {
         let mut pool = PrimitivePool::new();
-        let (a, b, c) = (bv(&mut pool, 1, 4), bv(&mut pool, 2, 4), bv(&mut pool, 3, 4));
+        let (a, b, c) = (
+            bv(&mut pool, 1, 4),
+            bv(&mut pool, 2, 4),
+            bv(&mut pool, 3, 4),
+        );
 
         // Flatten a rare list of bitvectors into its parent (not collapsed to a singleton).
         let list = rare_list(&mut pool, vec![a.clone(), b.clone()]);
