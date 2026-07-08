@@ -78,10 +78,13 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 format!("@{}", name)
             };
 
-            self.state.sort_defs.entry(alias).or_insert_with(|| SortDef {
-                body: self.pool.add(Term::Sort(Sort::Type)),
-                params: Vec::default(),
-            });
+            self.state
+                .sort_defs
+                .entry(alias)
+                .or_insert_with(|| SortDef {
+                    body: self.pool.add(Term::Sort(Sort::Type)),
+                    params: Vec::default(),
+                });
         }
 
         Ok((name, TypeParameter { term, attribute }))

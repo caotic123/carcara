@@ -6,6 +6,7 @@ mod storage;
 use super::{Binder, Operator, Rc, Sort, Substitution, Term};
 use crate::ast::{Constant, ParamOperator};
 use indexmap::{IndexMap, IndexSet};
+use rug::az::UnwrappedAs;
 use storage::Storage;
 
 pub trait TermPool {
@@ -137,10 +138,7 @@ impl PrimitivePool {
                 | Operator::BvSRem
                 | Operator::BvSMod
                 | Operator::BvAShr => {
-                    let sort = match self.compute_sort(&args[0]).as_sort().unwrap().clone() {
-                        Sort::RareList(inner) => inner.as_sort().unwrap().clone(),
-                        sort => sort,
-                    };
+                    let sort = self.unwrap_sort(&args[0]);
                     match sort {
                         Sort::BitVec(width) => Sort::BitVec(width),
                         Sort::ParamSort(v, head) => {
@@ -227,10 +225,7 @@ impl PrimitivePool {
                 Operator::RealDiv | Operator::ToReal => Sort::Real,
                 Operator::IntDiv | Operator::Mod | Operator::Abs | Operator::ToInt => Sort::Int,
                 Operator::Select => {
-                    let sort = match self.compute_sort(&args[0]).as_sort().unwrap().clone() {
-                        Sort::RareList(inner) => inner.as_sort().unwrap().clone(),
-                        sort => sort,
-                    };
+                    let sort = self.unwrap_sort(&args[0]);
                     match sort {
                         Sort::Array(_, y) => y.as_sort().unwrap().clone(),
                         Sort::ParamSort(v, head) => {
@@ -243,10 +238,7 @@ impl PrimitivePool {
                         _ => unreachable!(),
                     }
                 }
-                Operator::Store => match self.compute_sort(&args[0]).as_sort().unwrap().clone() {
-                    Sort::RareList(inner) => inner.as_sort().unwrap().clone(),
-                    sort => sort,
-                },
+                Operator::Store => self.unwrap_sort(&args[0]),
                 Operator::StrLen | Operator::IndexOf | Operator::StrToCode | Operator::StrToInt => {
                     Sort::Int
                 }
@@ -337,10 +329,7 @@ impl PrimitivePool {
                     }
                     ParamOperator::ZeroExtend | ParamOperator::SignExtend => {
                         let extension_width = op_args[0].as_integer().unwrap().to_usize().unwrap();
-                        let sort = match self.compute_sort(&args[0]).as_sort().unwrap().clone() {
-                            Sort::RareList(inner) => inner.as_sort().unwrap().clone(),
-                            sort => sort,
-                        };
+                        let sort = self.unwrap_sort(&args[0]);
                         match sort {
                             Sort::BitVec(bv_width) => Sort::BitVec(extension_width + bv_width),
                             Sort::ParamSort(v, head) => {
@@ -362,10 +351,7 @@ impl PrimitivePool {
                     }
                     ParamOperator::Repeat => {
                         let repetitions = op_args[0].as_integer().unwrap();
-                        let sort = match self.compute_sort(&args[0]).as_sort().unwrap().clone() {
-                            Sort::RareList(inner) => inner.as_sort().unwrap().clone(),
-                            sort => sort,
-                        };
+                        let sort = self.unwrap_sort(&args[0]);
                         match sort {
                             Sort::BitVec(bv_width) => {
                                 Sort::BitVec((repetitions * bv_width).to_usize().unwrap())
@@ -495,6 +481,13 @@ impl PrimitivePool {
         };
         self.free_vars_cache.insert(term.clone(), set);
         self.free_vars_cache.get(term).unwrap().clone()
+    }
+
+    pub fn unwrap_sort(&mut self, arg: &Rc<Term>) -> Sort {
+        match self.compute_sort(arg).as_sort().unwrap().clone() {
+            Sort::RareList(inner) => inner.as_sort().unwrap().clone(),
+            sort => sort,
+        }
     }
 }
 
