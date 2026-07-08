@@ -206,7 +206,7 @@ impl PrimitivePool {
                     }
                 }
                 Operator::Ite => self.compute_sort(&args[1]).as_sort().unwrap().clone(),
-                Operator::Add | Operator::Sub | Operator::Mult => {
+                Operator::Add | Operator::Sub | Operator::Mult | Operator::Abs => {
                     if args
                         .iter()
                         .any(|a| self.compute_sort(a).as_sort().unwrap() == &Sort::Real)
@@ -217,7 +217,7 @@ impl PrimitivePool {
                     }
                 }
                 Operator::RealDiv | Operator::ToReal => Sort::Real,
-                Operator::IntDiv | Operator::Mod | Operator::Abs | Operator::ToInt => Sort::Int,
+                Operator::IntDiv | Operator::Mod | Operator::ToInt => Sort::Int,
                 Operator::Select => match self.compute_sort(&args[0]).as_sort().unwrap() {
                     Sort::Array(_, y) => y.as_sort().unwrap().clone(),
                     Sort::ParamSort(v, head) => {
@@ -255,6 +255,8 @@ impl PrimitivePool {
                 | Operator::ReKleeneCross
                 | Operator::ReOption
                 | Operator::ReRange => Sort::RegLan,
+                Operator::Pow2 | Operator::Log2 => Sort::Int,
+                Operator::IsPow2 => Sort::Bool,
                 Operator::RareList => Sort::RareList,
             },
             Term::App(f, args) => {
