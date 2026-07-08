@@ -225,7 +225,7 @@ impl PrimitivePool {
                     }
                 }
                 Operator::RealDiv | Operator::ToReal => Sort::Real,
-                Operator::IntDiv | Operator::Mod | Operator::Abs | Operator::ToInt => Sort::Int,
+                Operator::IntDiv | Operator::Mod | Operator::ToInt => Sort::Int,
                 Operator::Select => {
                     let sort = match self.compute_sort(&args[0]).as_sort().unwrap().clone() {
                         Sort::RareList(inner) => inner.as_sort().unwrap().clone(),
