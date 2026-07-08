@@ -38,6 +38,9 @@ pub enum CheckerError {
     LinearArithmetic(#[from] LinearArithmeticError),
 
     #[error(transparent)]
+    Polynomial(#[from] PolynomialError),
+
+    #[error(transparent)]
     Subproof(#[from] SubproofError),
 
     #[error("reflexivity failed with terms '{0}' and '{1}'")]
@@ -150,6 +153,9 @@ pub enum CheckerError {
 
     #[error("expected term '{0}' to be an non-negative integer constant")]
     ExpectedNonnegInteger(Rc<Term>),
+
+    #[error("expected term '{0}' to be a bitvector constant")]
+    ExpectedBitvector(Rc<Term>),
 
     #[error("expected operation term, got '{0}'")]
     ExpectedOperationTerm(Rc<Term>),
@@ -340,14 +346,33 @@ pub enum LinearArithmeticError {
     #[error("final disequality is not tautological: '{}'", DisplayLinearComb(.0, .1))]
     DisequalityIsNotTautology(Operator, Box<LinearComb>),
 
-    #[error("terms are not equal after arithmetic normalization: '{0}' and '{1}'")]
-    LinearCombNotEqual(Rc<Term>, Rc<Term>),
-
     #[error("expected term '{0}' to be less than term '{1}'")]
     ExpectedLessThan(Rc<Term>, Rc<Term>),
 
     #[error("expected term '{0}' to be less than or equal to term '{1}'")]
     ExpectedLessEq(Rc<Term>, Rc<Term>),
+}
+
+/// Errors relevant to the polynomial simplification rules.
+#[derive(Debug, Error)]
+pub enum PolynomialError {
+    #[error("terms are not equal after polynomial normalization: '{0}' and '{1}'")]
+    PolynomialsNotEqual(Rc<Term>, Rc<Term>),
+
+    #[error("expected bitvector sort, got '{0}'")]
+    ExpectedBvSort(Sort),
+
+    #[error("coefficient can't be zero: '{0}'")]
+    CoeffIsZero(Rational),
+
+    #[error("coefficients should have the same signum: '{0}' and '{1}'")]
+    CoeffDifferentSignums(Rational, Rational),
+
+    #[error("coefficient should be odd: '{0}'")]
+    CoeffEven(Integer),
+
+    #[error("invalid relation operators: '{0}' and '{1}'")]
+    InvalidOperators(Operator, Operator),
 }
 
 /// Errors relevant to all rules that end subproofs (not just the `subproof` rule).

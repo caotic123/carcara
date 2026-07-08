@@ -214,7 +214,7 @@ impl PrimitivePool {
                     }
                 }
                 Operator::Ite => self.compute_sort(&args[1]).as_sort().unwrap().clone(),
-                Operator::Add | Operator::Sub | Operator::Mult => {
+                Operator::Add | Operator::Sub | Operator::Mult | Operator::Abs => {
                     if args
                         .iter()
                         .any(|a| self.compute_sort(a).as_sort().unwrap() == &Sort::Real)
@@ -242,7 +242,7 @@ impl PrimitivePool {
                         }
                         _ => unreachable!(),
                     }
-                }
+                },
                 Operator::Store => match self.compute_sort(&args[0]).as_sort().unwrap().clone() {
                     Sort::RareList(inner) => inner.as_sort().unwrap().clone(),
                     sort => sort,
@@ -272,14 +272,16 @@ impl PrimitivePool {
                 | Operator::ReKleeneCross
                 | Operator::ReOption
                 | Operator::ReRange => Sort::RegLan,
-                Operator::RareList => {
+                  Operator::RareList => {
                     let element_sort = if let Some(arg) = args.first() {
                         self.compute_sort(arg)
                     } else {
                         self.add(Term::Sort(Sort::Var("T".to_owned())))
                     };
                     Sort::RareList(element_sort)
-                }
+                },
+                Operator::Pow2 | Operator::Log2 => Sort::Int,
+                Operator::IsPow2 => Sort::Bool
             },
             Term::App(f, args) => {
                 match self.compute_sort(f).as_sort().unwrap() {
