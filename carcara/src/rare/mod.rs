@@ -33,6 +33,8 @@ pub fn get_rules() -> Vec<(RewriteTerm, RewriteTerm)> {
         build_equation!((Or x) ~> x),
         build_equation!((Or true) ~> true),
         build_equation!((And false) ~> false),
+        build_equation!((Or) ~> true),
+        build_equation!((And) ~> false),
         // Arithmetic
         build_equation!((Add (RareList ..x..)) ~> (Add x)),
         build_equation!((Add x) ~> x),
