@@ -41,6 +41,31 @@ pub struct EggFunctions {
     pub assoc_calls: IndexMap<String, IndexSet<EggExpr>>,
 }
 
+impl EggFunctions {
+    /// Merge `other` into `self`, with the same per-name semantics as
+    /// `register_function_call`.
+    fn absorb(&mut self, other: EggFunctions) {
+        for (name, (is_op, arity, result_sort)) in other.names {
+            self.names
+                .entry(name)
+                .and_modify(|info| {
+                    info.0 = is_op;
+                    info.1 = arity;
+                    if info.2.is_none() {
+                        info.2 = result_sort.clone();
+                    }
+                })
+                .or_insert((is_op, arity, result_sort));
+        }
+        for (name, shapes) in other.shapes {
+            self.shapes.entry(name).or_default().extend(shapes);
+        }
+        for (name, calls) in other.assoc_calls {
+            self.assoc_calls.entry(name).or_default().extend(calls);
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RunEgglogOptions {
     pub max_goal_schedule_rounds: usize,
@@ -1489,11 +1514,17 @@ pub fn run_egglog(
     }
 
     let rules = construct_rules(&rules, &mut egg_functions, &mut var_map);
+
+    // Functions coming from the premises and the goal are collected separately
+    // from the ones coming from the RARE rule database, so that the arith poly
+    // norm machinery is only enabled when the proof step itself involves
+    // arithmetic, and not just because some rule in the database does.
+    let mut goal_functions = EggFunctions::default();
     let premises = construct_premises(
         pool,
         std::slice::from_ref(&node),
         &mut var_map,
-        &mut egg_functions,
+        &mut goal_functions,
     );
 
     let (conclusion, proof_node) = node.clone();
@@ -1507,7 +1538,7 @@ pub fn run_egglog(
     let goal_lhs_expr = to_egg_expr(
         lhs,
         &IndexMap::new(),
-        &mut egg_functions,
+        &mut goal_functions,
         &mut var_map,
         false,
     )
@@ -1515,7 +1546,7 @@ pub fn run_egglog(
     let goal_rhs_expr = to_egg_expr(
         rhs,
         &IndexMap::new(),
-        &mut egg_functions,
+        &mut goal_functions,
         &mut var_map,
         false,
     )
@@ -1524,12 +1555,12 @@ pub fn run_egglog(
     let mut goals_ast = set_goal(goal_lhs_expr, goal_rhs_expr);
     goals_ast.extend(available_subterm_premises(
         lhs,
-        &mut egg_functions,
+        &mut goal_functions,
         &mut var_map,
     ));
     goals_ast.extend(available_subterm_premises(
         rhs,
-        &mut egg_functions,
+        &mut goal_functions,
         &mut var_map,
     ));
 
@@ -1541,8 +1572,10 @@ pub fn run_egglog(
         fallback_plans: Vec::new(),
     };
 
-    let enable_arith_poly = arith_poly_norm::uses_arith_machinery(&egg_functions);
+    let enable_arith_poly = arith_poly_norm::uses_arith_machinery(&goal_functions);
     goal.fallback_plans = get_fallback_plans(enable_arith_poly);
+
+    egg_functions.absorb(goal_functions);
 
     let mut declarations = declare_functions(&mut egg_functions, &database.consts, &mut var_map);
 
