@@ -45,6 +45,8 @@ pub struct EggFunctions {
 pub struct RunEgglogOptions {
     pub max_goal_schedule_rounds: usize,
     pub continuous_saturation: bool,
+    /// If `true`, print the egglog program generated for each proof step.
+    pub print_egglog: bool,
 }
 
 impl Default for RunEgglogOptions {
@@ -52,6 +54,7 @@ impl Default for RunEgglogOptions {
         Self {
             max_goal_schedule_rounds: 3,
             continuous_saturation: false,
+            print_egglog: false,
         }
     }
 }
@@ -1591,12 +1594,11 @@ pub fn reconstruct_rule(
     node: &Rc<ProofNode>,
     database: &Rules,
     options: RunEgglogOptions,
-    print_generated_egglog: bool,
 ) {
     let egglog_start = Instant::now();
     let (result, egglogcode) = run_egglog(pool, (conclusion, node), database, options);
     let egglog_time = egglog_start.elapsed();
-    if print_generated_egglog {
+    if options.print_egglog {
         println!("{}", egglogcode);
     }
     match result {

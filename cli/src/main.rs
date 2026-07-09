@@ -249,9 +249,9 @@ struct ElaborationOptions {
     )]
     pipeline: Vec<ElaborationStep>,
 
-    /// Print the generated egglog program when elaborating RARE steps.
+    /// Print the egglog program generated for each proof step.
     #[clap(long)]
-    print_generated_egglog: bool,
+    print_egglog: bool,
 
     /// Keep running RARE egglog schedules one step at a time until goals are saturated.
     #[clap(long = "continous-saturation")]
@@ -288,7 +288,6 @@ impl From<ElaborationOptions> for (elaborator::Config, Vec<elaborator::Elaborati
                 .split_whitespace()
                 .map(Into::into)
                 .collect(),
-            print_generated_egglog: val.print_generated_egglog,
         });
 
         let config = elaborator::Config {
@@ -296,6 +295,7 @@ impl From<ElaborationOptions> for (elaborator::Config, Vec<elaborator::Elaborati
             uncrowd_rotation: val.uncrowd_rotate,
             rare_egglog_options: RunEgglogOptions {
                 continuous_saturation: val.continous_saturation,
+                print_egglog: val.print_egglog,
                 ..RunEgglogOptions::default()
             },
             hole_options,
