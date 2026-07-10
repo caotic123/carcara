@@ -6,7 +6,6 @@ mod storage;
 use super::{Binder, Operator, Rc, Sort, Substitution, Term};
 use crate::ast::{Constant, ParamOperator};
 use indexmap::{IndexMap, IndexSet};
-use rug::az::UnwrappedAs;
 use storage::Storage;
 
 pub trait TermPool {
