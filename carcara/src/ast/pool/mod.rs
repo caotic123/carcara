@@ -212,7 +212,7 @@ impl PrimitivePool {
                     }
                 }
                 Operator::Ite => self.compute_sort(&args[1]).as_sort().unwrap().clone(),
-                Operator::Add | Operator::Sub | Operator::Mult => {
+                Operator::Add | Operator::Sub | Operator::Mult | Operator::Abs => {
                     if args
                         .iter()
                         .any(|a| self.compute_sort(a).as_sort().unwrap() == &Sort::Real)
@@ -223,7 +223,7 @@ impl PrimitivePool {
                     }
                 }
                 Operator::RealDiv | Operator::ToReal => Sort::Real,
-                Operator::IntDiv | Operator::Mod | Operator::Abs | Operator::ToInt => Sort::Int,
+                Operator::IntDiv | Operator::Mod | Operator::ToInt => Sort::Int,
                 Operator::Select => {
                     let sort = self.unwrap_sort(&args[0]);
                     match sort {
@@ -272,6 +272,8 @@ impl PrimitivePool {
                     };
                     Sort::RareList(element_sort)
                 }
+                Operator::Pow2 | Operator::Log2 => Sort::Int,
+                Operator::IsPow2 => Sort::Bool,
             },
             Term::App(f, args) => {
                 match self.compute_sort(f).as_sort().unwrap() {

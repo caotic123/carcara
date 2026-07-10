@@ -174,6 +174,8 @@ macro_rules! match_term {
     (@GET_VARIANT <=)       => { $crate::ast::Operator::LessEq };
     (@GET_VARIANT >=)       => { $crate::ast::Operator::GreaterEq };
 
+    (@GET_VARIANT to_real)  => { $crate::ast::Operator::ToReal };
+
     (@GET_VARIANT cl)    => { $crate::ast::Operator::Cl };
     (@GET_VARIANT delete)    => { $crate::ast::Operator::Delete };
 
@@ -190,6 +192,7 @@ macro_rules! match_term {
     (@GET_VARIANT bvxnor)   => { $crate::ast::Operator::BvXNor };
     (@GET_VARIANT bvcomp)   => { $crate::ast::Operator::BvComp };
     (@GET_VARIANT bvadd)    => { $crate::ast::Operator::BvAdd };
+    (@GET_VARIANT bvsub)    => { $crate::ast::Operator::BvSub };
     (@GET_VARIANT bvmul)    => { $crate::ast::Operator::BvMul };
     (@GET_VARIANT bvudiv)   => { $crate::ast::Operator::BvUDiv };
     (@GET_VARIANT bvurem)   => { $crate::ast::Operator::BvURem };
@@ -224,9 +227,9 @@ macro_rules! match_term {
     (@GET_VARIANT strinre)    => { $crate::ast::Operator::StrInRe };
     (@GET_VARIANT reinter)    => { $crate::ast::Operator::ReIntersection };
 
-    // In the last case it can match a literal integer
+    // In the last case it can match a literal of an integer or rational
     ($lit:literal = $var:expr) => {
-        if let Some(i) = $var.as_integer() {
+        if let Some(i) = $var.as_number() {
             if i == $lit {
                 Some(())
             } else {
