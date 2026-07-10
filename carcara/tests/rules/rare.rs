@@ -122,6 +122,85 @@ const BV_CONCAT_EXTRACT_MERGE_ALETHE: &str = r#"
   :premises (t2 t1))
 "#;
 
+const SMALL_RARE_RULES: &str = r#"
+(declare-rare-rule bv-concat-extract-merge ((xs1 (_ BitVec 1) :list) (s1 (_ BitVec 8)) (ys1 (_ BitVec 1) :list))
+  :premises ((= 2 (+ 1 1)))
+  :args (xs1 s1 ys1)
+  :conclusion (= (concat xs1 ((_ extract 7 2) s1) ((_ extract 1 1) s1) ys1) (concat xs1 ((_ extract 7 1) s1) ys1))
+)
+(declare-rare-rule bool-and-de-morgan ((x1 Bool) (y1 Bool))
+  :args (x1 y1)
+  :conclusion (= (not (and x1 y1)) (or (not x1) (not y1)))
+)
+"#;
+
+const DD_CHECK_CC_BVXOR_XSIMP_SMT2: &str = r#"
+; EXPECT: unsat
+(set-logic ALL)
+(declare-const _x (_ BitVec 1))
+(declare-const s (_ BitVec 64))
+(declare-const t (_ BitVec 64))
+(assert (distinct (= (bvxor s t) (bvand (bvxor s t) ((_ zero_extend 63) _x))) (exists ((x (_ BitVec 64))) (and (= t (bvxor x s)) (= x (bvand x ((_ zero_extend 63) _x)))))))
+(check-sat)
+"#;
+
+const DD_CHECK_CC_BVXOR_XSIMP_ALETHE: &str = r#"
+(anchor :step t38 :args ((x (_ BitVec 64)) (:= (x (_ BitVec 64)) x)))
+(step t38.t0 (cl (= (not (and (= t (bvxor s x)) (= x (concat (_ bv0 63) (bvand _x ((_ extract 0 0) x)))))) (or (not (= t (bvxor s x))) (not (= x (concat (_ bv0 63) (bvand _x ((_ extract 0 0) x)))))))) :rule rare_rewrite :args ("bool-and-de-morgan" (= t (bvxor s x)) (= x (concat (_ bv0 63) (bvand _x ((_ extract 0 0) x))))))
+(step t38 (cl (= (forall ((x (_ BitVec 64))) (not (and (= t (bvxor s x)) (= x (concat (_ bv0 63) (bvand _x ((_ extract 0 0) x))))))) (forall ((x (_ BitVec 64))) (or (not (= t (bvxor s x))) (not (= x (concat (_ bv0 63) (bvand _x ((_ extract 0 0) x))))))))) :rule bind)
+(step t73 (cl) :rule hole)
+"#;
+
+const BV_CONCAT_EXTRACT_MERGE_SMT2: &str = r#"
+; EXPECT: unsat
+(set-logic ALL)
+
+(declare-fun x () (_ BitVec 8))
+
+(assert
+  (and
+    (= 2 (+ 1 1))
+    (not
+      (=
+        (concat ((_ extract 0 0) x) ((_ extract 7 2) x) ((_ extract 1 1) x) ((_ extract 0 0) x))
+        (concat ((_ extract 0 0) x) ((_ extract 7 1) x) ((_ extract 0 0) x))))))
+
+(check-sat)
+"#;
+
+const BV_CONCAT_EXTRACT_MERGE_ALETHE: &str = r#"
+(assume a0
+  (and
+    (= 2 (+ 1 1))
+    (not
+      (=
+        (concat ((_ extract 0 0) x) ((_ extract 7 2) x) ((_ extract 1 1) x) ((_ extract 0 0) x))
+        (concat ((_ extract 0 0) x) ((_ extract 7 1) x) ((_ extract 0 0) x))))))
+
+(step t0 (cl (= 2 (+ 1 1)))
+  :rule and
+  :premises (a0)
+  :args (0))
+
+(step t1 (cl (not (=
+                    (concat ((_ extract 0 0) x) ((_ extract 7 2) x) ((_ extract 1 1) x) ((_ extract 0 0) x))
+                    (concat ((_ extract 0 0) x) ((_ extract 7 1) x) ((_ extract 0 0) x)))))
+  :rule and
+  :premises (a0)
+  :args (1))
+
+(step t2 (cl (=
+              (concat ((_ extract 0 0) x) ((_ extract 7 2) x) ((_ extract 1 1) x) ((_ extract 0 0) x))
+              (concat ((_ extract 0 0) x) ((_ extract 7 1) x) ((_ extract 0 0) x))))
+  :rule rare_rewrite
+  :premises (t0)
+  :args ("bv-concat-extract-merge" ((_ extract 0 0) x) x ((_ extract 0 0) x)))
+
+(step t3 (cl)
+  :rule resolution
+  :premises (t2 t1))
+"#;
+
 fn run_rare_tests(test_name: &str, definitions: &str, cases: &[(&str, bool)]) {
     for (i, (proof, expected)) in cases.iter().enumerate() {
         let (mut problem, mut proof, rare_rules, mut pool) = parser::parse_instance(
@@ -308,6 +387,13 @@ fn rare_rewrite_nary_list() {
 
 #[test]
 fn encoded_rare_examples() {
+    run_rare_file_test(
+        "dd_check_cc_bvxor_xsimp",
+        DD_CHECK_CC_BVXOR_XSIMP_SMT2,
+        DD_CHECK_CC_BVXOR_XSIMP_ALETHE,
+        SMALL_RARE_RULES,
+        true,
+    );
     run_rare_file_test(
         "bv-concat-extract-merge",
         BV_CONCAT_EXTRACT_MERGE_SMT2,
