@@ -70,64 +70,6 @@ const SMALL_RARE_RULES: &str = r#"
   :args (xs1 s1 ys1)
   :conclusion (= (concat xs1 ((_ extract 7 2) s1) ((_ extract 1 1) s1) ys1) (concat xs1 ((_ extract 7 1) s1) ys1))
 )
-"#;
-
-const BV_CONCAT_EXTRACT_MERGE_SMT2: &str = r#"
-; EXPECT: unsat
-(set-logic ALL)
-
-(declare-fun x () (_ BitVec 8))
-
-(assert
-  (and
-    (= 2 (+ 1 1))
-    (not
-      (=
-        (concat ((_ extract 0 0) x) ((_ extract 7 2) x) ((_ extract 1 1) x) ((_ extract 0 0) x))
-        (concat ((_ extract 0 0) x) ((_ extract 7 1) x) ((_ extract 0 0) x))))))
-
-(check-sat)
-"#;
-
-const BV_CONCAT_EXTRACT_MERGE_ALETHE: &str = r#"
-(assume a0
-  (and
-    (= 2 (+ 1 1))
-    (not
-      (=
-        (concat ((_ extract 0 0) x) ((_ extract 7 2) x) ((_ extract 1 1) x) ((_ extract 0 0) x))
-        (concat ((_ extract 0 0) x) ((_ extract 7 1) x) ((_ extract 0 0) x))))))
-
-(step t0 (cl (= 2 (+ 1 1)))
-  :rule and
-  :premises (a0)
-  :args (0))
-
-(step t1 (cl (not (=
-                    (concat ((_ extract 0 0) x) ((_ extract 7 2) x) ((_ extract 1 1) x) ((_ extract 0 0) x))
-                    (concat ((_ extract 0 0) x) ((_ extract 7 1) x) ((_ extract 0 0) x)))))
-  :rule and
-  :premises (a0)
-  :args (1))
-
-(step t2 (cl (=
-              (concat ((_ extract 0 0) x) ((_ extract 7 2) x) ((_ extract 1 1) x) ((_ extract 0 0) x))
-              (concat ((_ extract 0 0) x) ((_ extract 7 1) x) ((_ extract 0 0) x))))
-  :rule rare_rewrite
-  :premises (t0)
-  :args ("bv-concat-extract-merge" ((_ extract 0 0) x) x ((_ extract 0 0) x)))
-
-(step t3 (cl)
-  :rule resolution
-  :premises (t2 t1))
-"#;
-
-const SMALL_RARE_RULES: &str = r#"
-(declare-rare-rule bv-concat-extract-merge ((xs1 (_ BitVec 1) :list) (s1 (_ BitVec 8)) (ys1 (_ BitVec 1) :list))
-  :premises ((= 2 (+ 1 1)))
-  :args (xs1 s1 ys1)
-  :conclusion (= (concat xs1 ((_ extract 7 2) s1) ((_ extract 1 1) s1) ys1) (concat xs1 ((_ extract 7 1) s1) ys1))
-)
 (declare-rare-rule bool-and-de-morgan ((x1 Bool) (y1 Bool))
   :args (x1 y1)
   :conclusion (= (not (and x1 y1)) (or (not x1) (not y1)))
