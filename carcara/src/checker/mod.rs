@@ -8,6 +8,7 @@ use crate::{
     ast::{rare_rules::Rules, *},
     benchmarking::{CollectResults, OnlineBenchmarkResults},
     external::{ExternalTool, SatTools},
+    rare::engine::{RareCheckContext, RunEgglogOptions},
     CarcaraResult, Error,
 };
 use error::CheckerError;
@@ -82,6 +83,13 @@ pub struct Config {
     pub rule_checkers: IndexMap<String, ExternalTool>,
 
     pub sat_ref_config: SatRefConfig,
+
+    /// If `true`, validate `hole` steps marked as `TRUST_THEORY_REWRITE` with egglog. A step that
+    /// cannot be validated remains a hole.
+    pub check_hole_rewrites: bool,
+
+    /// Options controlling egglog checks of trusted theory rewrites.
+    pub hole_rewrite_options: RunEgglogOptions,
 }
 
 impl Config {
@@ -104,6 +112,11 @@ impl Config {
         self.allowed_rules = values;
         self
     }
+
+    pub fn check_hole_rewrites(mut self, value: bool) -> Self {
+        self.check_hole_rewrites = value;
+        self
+    }
 }
 
 pub struct ProofChecker<'c> {
@@ -113,10 +126,14 @@ pub struct ProofChecker<'c> {
     reached_empty_clause: bool,
     is_holey: bool,
     rare_rules: &'c Rules,
+    rare_check_context: Option<RareCheckContext<'c>>,
 }
 
 impl<'c> ProofChecker<'c> {
     pub fn new(pool: &'c mut PrimitivePool, rare_rules: &'c Rules, config: Config) -> Self {
+        let rare_check_context = config
+            .check_hole_rewrites
+            .then(|| RareCheckContext::new(rare_rules));
         ProofChecker {
             pool,
             config,
@@ -124,6 +141,7 @@ impl<'c> ProofChecker<'c> {
             reached_empty_clause: false,
             is_holey: false,
             rare_rules,
+            rare_check_context,
         }
     }
 
@@ -171,7 +189,7 @@ impl<'c> ProofChecker<'c> {
                     };
                     self.check_step(step, previous_command, &iter, &mut stats, &problem.prelude)
                         .map_err(|e| Error::Checker {
-                            inner: e,
+                            inner: Box::new(e),
                             rule: step.rule.as_str().into(),
                             step: step.id.as_str().into(),
                         })?;
@@ -212,7 +230,7 @@ impl<'c> ProofChecker<'c> {
                 ProofCommand::Assume { id, term } => {
                     if !self.check_assume(id, term, &problem.premises, &iter, &mut stats) {
                         return Err(Error::Checker {
-                            inner: CheckerError::Assume(term.clone()),
+                            inner: Box::new(CheckerError::Assume(term.clone())),
                             rule: "assume".into(),
                             step: id.as_str().into(),
                         });
@@ -303,6 +321,7 @@ impl<'c> ProofChecker<'c> {
             current_subproof: iter.current_subproof(),
             subproof_depth: iter.depth(),
             is_holey: &mut self.is_holey,
+            rare_check_context: self.rare_check_context.as_ref(),
         };
 
         let result = check_step_core(step, rule_args, context, stats);

@@ -1,174 +1,207 @@
 use super::{Parser, ParserError, Reserved, SortDef, Token};
-use crate::ast::*;
-use crate::CarcaraResult;
-use crate::{ast::rare_rules::*, Error};
+use crate::{
+    ast::{rare_rules::*, *},
+    CarcaraResult, Error,
+};
+use indexmap::IndexMap;
 
 #[derive(Debug, Clone)]
 enum Body {
     Conclusion(Rc<Term>),
-    Premise(Vec<Rc<Term>>),
+    Premises(Vec<Rc<Term>>),
     Args(Vec<String>),
 }
 
-struct BodyDefinition<'a> {
-    args: &'a Vec<String>,
-    premises: &'a Vec<Rc<Term>>,
+fn parse_parameter(parser: &mut Parser<'_, '_>) -> CarcaraResult<(String, TypeParameter)> {
+    parser.expect_token(Token::OpenParen)?;
+    let name = parser.expect_symbol()?;
+    let base_sort = parser.parse_sort(true)?;
+
+    let attribute = match &parser.current_token {
+        Token::CloseParen => {
+            parser.expect_token(Token::CloseParen)?;
+            AttributeParameters::None
+        }
+        Token::Keyword(_) => {
+            let attribute = parser.expect_keyword()?;
+            parser.expect_token(Token::CloseParen)?;
+            if attribute != "list" {
+                return Err(Error::Parser(
+                    ParserError::InvalidRareArgAttribute(attribute),
+                    parser.current_position,
+                ));
+            }
+            AttributeParameters::List
+        }
+        token => {
+            return Err(Error::Parser(
+                ParserError::UnexpectedToken(token.clone()),
+                parser.current_position,
+            ));
+        }
+    };
+
+    let parameter_sort = if attribute == AttributeParameters::List {
+        parser
+            .pool
+            .add(Term::Sort(Sort::RareList(base_sort.clone())))
+    } else {
+        base_sort.clone()
+    };
+
+    // A list parameter may also occur where a single element is expected, so bind its local
+    // variable to the element sort while retaining the list sort in the rule metadata.
+    parser.insert_sorted_var((name.clone(), base_sort.clone()));
+    parser.state.sort_defs.insert(
+        name.clone(),
+        SortDef {
+            body: base_sort.clone(),
+            params: Vec::new(),
+        },
+    );
+
+    // Accept both `T` and `@T` references for rare type parameters declared as `Type`.
+    if matches!(base_sort.as_sort(), Some(Sort::Type)) {
+        let alias = if let Some(stripped) = name.strip_prefix('@') {
+            stripped.to_owned()
+        } else {
+            format!("@{name}")
+        };
+        parser
+            .state
+            .sort_defs
+            .entry(alias)
+            .or_insert_with(|| SortDef {
+                body: parser.pool.add(Term::Sort(Sort::Type)),
+                params: Vec::new(),
+            });
+    }
+
+    Ok((name, TypeParameter { term: parameter_sort, attribute }))
+}
+
+fn parse_body(parser: &mut Parser<'_, '_>) -> CarcaraResult<Body> {
+    let attribute = parser.expect_keyword()?;
+    match attribute.as_str() {
+        "conclusion" => Ok(Body::Conclusion(parser.parse_term()?)),
+        "args" => {
+            parser.expect_token(Token::OpenParen)?;
+            Ok(Body::Args(
+                parser.parse_sequence(Parser::expect_symbol, false)?,
+            ))
+        }
+        "premises" => {
+            parser.expect_token(Token::OpenParen)?;
+            Ok(Body::Premises(
+                parser.parse_sequence(Parser::parse_term, false)?,
+            ))
+        }
+        _ => Err(Error::Parser(
+            ParserError::InvalidRareFunctionAttribute(attribute),
+            parser.current_position,
+        )),
+    }
+}
+
+#[derive(Default)]
+struct BodyDefinition {
+    args: Vec<String>,
+    premises: Vec<Rc<Term>>,
     conclusion: Option<Rc<Term>>,
 }
 
-impl<'p, 's> Parser<'p, 's> {
-    fn parse_rare_parameters(&mut self) -> CarcaraResult<(String, TypeParameter)> {
-        self.expect_token(Token::OpenParen)?;
-        let name = self.expect_symbol()?;
-        let base_term = self.parse_sort(true)?;
+fn parse_rule(parser: &mut Parser<'_, '_>) -> CarcaraResult<RuleDefinition> {
+    parser.expect_token(Token::ReservedWord(Reserved::DeclareRareRule))?;
+    let name = parser.expect_symbol()?;
 
-        let attribute = match self.current_token.clone() {
-            Token::CloseParen => {
-                self.expect_token(Token::CloseParen)?;
-                AttributeParameters::None
-            }
-            Token::Keyword(_) => {
-                let kind_of_arg = self.expect_keyword()?;
-                self.expect_token(Token::CloseParen)?;
-                if kind_of_arg == "list" {
-                    AttributeParameters::List
-                } else {
-                    return Err(Error::Parser(
-                        ParserError::InvalidRareArgAttribute(kind_of_arg),
-                        self.current_position,
-                    ));
-                }
-            }
-            token => {
-                return Err(Error::Parser(
-                    ParserError::UnexpectedToken(token),
-                    self.current_position,
-                ));
-            }
-        };
+    parser.state.symbol_table.push_scope();
+    let result = (|| {
+        parser.expect_token(Token::OpenParen)?;
+        let parameters = parser.parse_sequence(parse_parameter, false)?;
 
-        let term = if attribute == AttributeParameters::List {
-            self.pool.add(Term::Sort(Sort::RareList(base_term.clone())))
-        } else {
-            base_term.clone()
-        };
-
-        let binding_sort = if attribute == AttributeParameters::List {
-            base_term.clone()
-        } else {
-            term.clone()
-        };
-
-        self.insert_sorted_var((name.clone(), binding_sort.clone()));
-        self.state.sort_defs.insert(
-            name.clone(),
-            SortDef {
-                body: binding_sort,
-                params: Vec::default(),
-            },
-        );
-
-        // Accept both `T` and `@T` references for rare type parameters declared as `Type`.
-        // This keeps compatibility with rule files that declare `(T0 Type)` but use `@T0`.
-        if matches!(base_term.as_sort(), Some(Sort::Type)) {
-            let alias = if let Some(stripped) = name.strip_prefix('@') {
-                stripped.to_owned()
-            } else {
-                format!("@{}", name)
-            };
-
-            self.state
-                .sort_defs
-                .entry(alias)
-                .or_insert_with(|| SortDef {
-                    body: self.pool.add(Term::Sort(Sort::Type)),
-                    params: Vec::default(),
-                });
-        }
-
-        Ok((name, TypeParameter { term, attribute }))
-    }
-
-    fn parse_body(&mut self) -> CarcaraResult<Body> {
-        let qualified_arg = self.expect_keyword()?;
-        match qualified_arg.as_str() {
-            "conclusion" => {
-                let rewrite_term = self.parse_term()?;
-                Ok(Body::Conclusion(rewrite_term))
-            }
-            "args" => {
-                self.expect_token(Token::OpenParen)?;
-                let args = self.parse_sequence(Parser::expect_symbol, false)?;
-                Ok(Body::Args(args))
-            }
-            "premises" => {
-                self.expect_token(Token::OpenParen)?;
-                let terms = self.parse_sequence(
-                    |parser| {
-                        let term = parser.parse_term()?;
-                        Ok(term)
-                    },
-                    false,
-                )?;
-                Ok(Body::Premise(terms))
-            }
-            _ => Err(Error::Parser(
-                ParserError::InvalidRareFunctionAttribute(qualified_arg),
-                self.current_position,
-            )),
-        }
-    }
-
-    fn parse_rule(&mut self) -> CarcaraResult<RuleDefinition> {
-        self.expect_token(Token::OpenParen)?;
-        self.expect_token(Token::ReservedWord(Reserved::DeclareRareRule))?;
-        let name = self.expect_symbol()?;
-        self.expect_token(Token::OpenParen)?;
-        let parameters = self.parse_sequence(Self::parse_rare_parameters, false)?;
-
-        let body_definitions = BodyDefinition {
-            args: &vec![],
-            premises: &vec![],
-            conclusion: None,
-        };
-
-        let body = self.parse_sequence(Self::parse_body, false)?;
-        let body = body.iter().fold(body_definitions, |mut body, x| {
-            match x {
-                Body::Conclusion(term) => body.conclusion = Some((*term).clone()),
-                Body::Premise(term) => body.premises = term,
+        let mut body = BodyDefinition::default();
+        for item in parser.parse_sequence(parse_body, false)? {
+            match item {
+                Body::Conclusion(term) => body.conclusion = Some(term),
+                Body::Premises(premises) => body.premises = premises,
                 Body::Args(args) => body.args = args,
             }
-            body
-        });
+        }
 
-        if body.conclusion.is_none() {
+        let conclusion = body.conclusion.ok_or_else(|| {
+            Error::Parser(
+                ParserError::UndefinedRareConclusion(name.clone()),
+                parser.current_position,
+            )
+        })?;
+        if !matches!(
+            conclusion.as_ref(),
+            Term::Op(Operator::Equals, args) if args.len() == 2
+        ) {
             return Err(Error::Parser(
-                ParserError::UndefinedRareConclusion(name),
-                self.current_position,
+                ParserError::InvalidRareConclusion(name.clone()),
+                parser.current_position,
+            ));
+        }
+        if body.premises.iter().any(|premise| {
+            !matches!(
+                premise.as_ref(),
+                Term::Op(Operator::Equals | Operator::Distinct, args) if args.len() == 2
+            )
+        }) {
+            return Err(Error::Parser(
+                ParserError::InvalidRarePremise(name.clone()),
+                parser.current_position,
+            ));
+        }
+
+        let parameters: IndexMap<_, _> = parameters.into_iter().collect();
+        if let Some(argument) = body
+            .args
+            .iter()
+            .find(|argument| !parameters.contains_key(*argument))
+        {
+            return Err(Error::Parser(
+                ParserError::UndeclaredRareArgument(name.clone(), argument.clone()),
+                parser.current_position,
             ));
         }
 
         Ok(RuleDefinition {
             name,
-            parameters: parameters.iter().cloned().collect(),
-            arguments: body.args.clone(),
-            premises: body.premises.clone(),
-            conclusion: body.conclusion.unwrap(),
+            parameters,
+            arguments: body.args,
+            premises: body.premises,
+            conclusion,
             is_elaborated: false,
         })
-    }
+    })();
+    parser.state.symbol_table.pop_scope();
+    result
+}
 
+impl<'p, 's> Parser<'p, 's> {
     pub(crate) fn parse_rare(&mut self) -> CarcaraResult<Rules> {
-        let mut rules = vec![];
+        let mut rules = Vec::new();
         while self.current_token != Token::Eof {
-            rules.push(self.parse_rule()?);
+            self.expect_token(Token::OpenParen)?;
+            match self.current_token {
+                Token::ReservedWord(Reserved::DeclareRareRule) => {
+                    rules.push(parse_rule(self)?);
+                }
+                _ => {
+                    return Err(Error::Parser(
+                        ParserError::UnexpectedToken(self.current_token.clone()),
+                        self.current_position,
+                    ));
+                }
+            }
         }
 
         Ok(RareStatements {
             rules: rules
-                .iter()
-                .map(|x| (x.name.clone(), (*x).clone()))
+                .into_iter()
+                .map(|rule| (rule.name.clone(), rule))
                 .collect(),
         })
     }

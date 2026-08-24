@@ -22,7 +22,8 @@
 #![warn(clippy::map_unwrap_or)]
 #![warn(clippy::match_wildcard_for_single_variants)]
 #![warn(clippy::mixed_read_write_in_expression)]
-#![warn(clippy::multiple_crate_versions)]
+// Several transitive dependencies in egg/egglog currently require different major versions.
+#![allow(clippy::multiple_crate_versions)]
 #![warn(clippy::redundant_closure_for_method_calls)]
 #![warn(clippy::redundant_pub_crate)]
 #![warn(clippy::semicolon_if_nothing_returned)]
@@ -41,7 +42,7 @@ mod drup;
 pub mod elaborator;
 pub mod external;
 pub mod parser;
-mod rare;
+pub mod rare;
 mod resolution;
 pub mod slice;
 pub mod translation;
@@ -76,7 +77,7 @@ pub enum Error {
 
     #[error("checking failed on step '{step}' with rule '{rule}': {inner}")]
     Checker {
-        inner: CheckerError,
+        inner: Box<CheckerError>,
         rule: Box<str>,
         step: Box<str>,
     },
@@ -332,4 +333,201 @@ pub fn generate_lia_smt_instances<'s>(
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PROBLEM: &str = r#"
+        (set-logic ALL)
+        (declare-fun f (Bool) Bool)
+        (assert (not (= (not true) false)))
+        (assert (not (= true false)))
+        (assert (not (= (f true) true)))
+        (assert (not (= (f false) false)))
+        (assert (not (distinct true true)))
+        (check-sat)
+    "#;
+
+    const VALID_HOLE_REWRITE_PROOF: &str = r#"
+        (assume a (not (= (not true) false)))
+        (step h (cl (= (not true) false))
+            :rule hole
+            :args ("TRUST_THEORY_REWRITE" solver-specific-metadata))
+        (step end (cl) :rule resolution :premises (h a))
+    "#;
+
+    const INVALID_HOLE_REWRITE_PROOF: &str = r#"
+        (assume a (not (= true false)))
+        (step h (cl (= true false))
+            :rule hole
+            :args ("TRUST_THEORY_REWRITE"))
+        (step end (cl) :rule resolution :premises (h a))
+    "#;
+
+    const CUSTOM_RARE_RULE: &str = r#"
+        (declare-rare-rule f-id ((x Bool))
+            :args (x)
+            :conclusion (= (f x) x))
+    "#;
+
+    const CUSTOM_RARE_HOLE_REWRITE_PROOF: &str = r#"
+        (assume a (not (= (f true) true)))
+        (step h (cl (= (f true) true))
+            :rule hole
+            :args ("TRUST_THEORY_REWRITE"))
+        (step end (cl) :rule resolution :premises (h a))
+    "#;
+
+    const TWO_CUSTOM_RARE_HOLES_PROOF: &str = r#"
+        (assume a (not (= (f false) false)))
+        (step h1 (cl (= (f true) true))
+            :rule hole
+            :args ("TRUST_THEORY_REWRITE"))
+        (step h2 (cl (= (f false) false))
+            :rule hole
+            :args ("TRUST_THEORY_REWRITE"))
+        (step end (cl) :rule resolution :premises (h2 a))
+    "#;
+
+    const DISTINCT_HOLE_REWRITE_PROOF: &str = r#"
+        (assume a (not (distinct true true)))
+        (step h (cl (distinct true true))
+            :rule hole
+            :args ("TRUST_THEORY_REWRITE"))
+        (step end (cl) :rule resolution :premises (h a))
+    "#;
+
+    fn check_proof(proof: &str, check_hole_rewrites: bool) -> Result<bool, Error> {
+        check(
+            PROBLEM,
+            proof,
+            None,
+            parser::Config::new(),
+            checker::Config::new().check_hole_rewrites(check_hole_rewrites),
+            false,
+        )
+    }
+
+    #[test]
+    fn checked_hole_rewrite_is_not_holey() {
+        assert!(!check_proof(VALID_HOLE_REWRITE_PROOF, true).unwrap());
+    }
+
+    #[test]
+    fn parallel_checker_checks_hole_rewrite_with_default_stack_size() {
+        assert!(!check_parallel(
+            PROBLEM,
+            VALID_HOLE_REWRITE_PROOF,
+            None,
+            parser::Config::new(),
+            checker::Config::new().check_hole_rewrites(true),
+            false,
+            2,
+            0,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn checker_uses_custom_rare_rules_for_hole_rewrites() {
+        assert!(!check(
+            PROBLEM,
+            CUSTOM_RARE_HOLE_REWRITE_PROOF,
+            Some(CUSTOM_RARE_RULE),
+            parser::Config::new(),
+            checker::Config::new().check_hole_rewrites(true),
+            false,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn checker_reuses_complete_rare_database_across_holes() {
+        assert!(!check(
+            PROBLEM,
+            TWO_CUSTOM_RARE_HOLES_PROOF,
+            Some(CUSTOM_RARE_RULE),
+            parser::Config::new(),
+            checker::Config::new().check_hole_rewrites(true),
+            false,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn distinct_goal_is_not_treated_as_equality() {
+        assert!(check_proof(DISTINCT_HOLE_REWRITE_PROOF, true).unwrap());
+    }
+
+    #[test]
+    fn parser_rejects_non_equality_rare_conclusions() {
+        for rules in [
+            r#"
+                (declare-rare-rule bad-distinct ()
+                    :args ()
+                    :conclusion (distinct true false))
+            "#,
+            r#"
+                (declare-rare-rule bad-term ((x Bool))
+                    :args (x)
+                    :conclusion x)
+            "#,
+        ] {
+            let error = check(
+                PROBLEM,
+                VALID_HOLE_REWRITE_PROOF,
+                Some(rules),
+                parser::Config::new(),
+                checker::Config::new().check_hole_rewrites(true),
+                false,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                Error::Parser(parser::ParserError::InvalidRareConclusion(_), _)
+            ));
+        }
+    }
+
+    #[test]
+    fn failed_checked_hole_rewrite_is_holey() {
+        assert!(check_proof(INVALID_HOLE_REWRITE_PROOF, true).unwrap());
+    }
+
+    #[test]
+    fn failed_parallel_hole_rewrite_is_holey() {
+        assert!(check_parallel(
+            PROBLEM,
+            INVALID_HOLE_REWRITE_PROOF,
+            None,
+            parser::Config::new(),
+            checker::Config::new().check_hole_rewrites(true),
+            false,
+            2,
+            0,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn timed_out_hole_rewrite_is_holey() {
+        let mut checker_config = checker::Config::new().check_hole_rewrites(true);
+        checker_config.hole_rewrite_options.timeout = Some(Duration::ZERO);
+        assert!(check(
+            PROBLEM,
+            VALID_HOLE_REWRITE_PROOF,
+            None,
+            parser::Config::new(),
+            checker_config,
+            false,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn unchecked_hole_rewrite_remains_holey() {
+        assert!(check_proof(INVALID_HOLE_REWRITE_PROOF, false).unwrap());
+    }
 }

@@ -1034,12 +1034,16 @@ impl<'p, 's> Parser<'p, 's> {
             self.next_token()?;
             self.expect_token(Token::OpenParen)?;
 
-            // If the rule is `hole` and `--parse-hole-args` is not enabled, we want to allow any
-            // invalid arguments, so we read the rest of the `:args` attribute without trying to
-            // parse anything
+            // Without full hole-argument parsing, preserve a leading string marker so downstream
+            // consumers can still recognize structured hole kinds. Ignore all remaining tokens so
+            // arbitrary solver-specific arguments stay accepted.
             if rule == "hole" && !self.config.parse_hole_args {
+                let marker = match &self.current_token {
+                    Token::String(marker) => Some(self.pool.add(Term::new_string(marker.clone()))),
+                    _ => None,
+                };
                 self.ignore_until_close_parens()?;
-                Vec::new()
+                marker.into_iter().collect()
             } else {
                 self.parse_sequence(Self::parse_term, true)?
             }

@@ -14,13 +14,19 @@ license = "Apache-2.0"
 
 [dependencies]
 carcara-macros = { path = "../carcara-macros" }
+egg = "0.10.0"
+egglog = "0.4.0"
 indexmap = "2.0.0"
 log = "0.4.20"
+num = "0.4.0"
 rug = { version = "1.21.0", default-features = false, features = [
     "integer",
     "rational",
 ] }
 thiserror = "1.0.47"
+
+[features]
+debug-egglog = []
 
 [dev-dependencies]
 test-generator = { path = "../test-generator" }

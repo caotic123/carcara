@@ -1,6 +1,12 @@
 use indexmap::{IndexMap, IndexSet};
 use rug::Integer;
 
+pub mod computational;
+pub mod engine;
+pub mod language;
+pub mod meta;
+pub mod util;
+
 use crate::{
     ast::{rare_rules::RewriteTerm, Operator, Rc, Sort, Term, TermPool},
     build_equation, pseudo_term,
@@ -361,7 +367,16 @@ fn rewrite_meta_terms_inner(
                 args: new_args,
             })
         }
-        Term::Match(_, _) => todo!(), // TODO
+        Term::Match(term, patterns) => {
+            let term = rewrite_meta_terms_inner(pool, term.clone(), rules, ctx);
+            let mut rewritten_patterns = Vec::with_capacity(patterns.len());
+            for (bindings, pattern, result) in patterns {
+                let pattern = rewrite_meta_terms_inner(pool, pattern.clone(), rules, ctx);
+                let result = rewrite_meta_terms_inner(pool, result.clone(), rules, ctx);
+                rewritten_patterns.push((bindings.clone(), pattern, result));
+            }
+            pool.add(Term::Match(term, rewritten_patterns))
+        }
     };
 
     ctx.in_progress.shift_remove(&term);

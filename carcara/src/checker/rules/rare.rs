@@ -45,6 +45,10 @@ pub fn check_rare(
             let var_sort =
                 if arg_sort.attribute == crate::ast::rare_rules::AttributeParameters::List {
                     match arg_sort.term.as_sort().unwrap() {
+                        // List parameters are represented by element-sorted variables in the
+                        // parsed rule body. Their supplied value may be a `rare-list`, but the
+                        // substitution key must retain the variable's element sort in order to
+                        // match those occurrences.
                         Sort::RareList(elem_sort) => elem_sort.clone(),
                         _ => arg_sort.term.clone(),
                     }

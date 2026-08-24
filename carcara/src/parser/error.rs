@@ -149,10 +149,6 @@ pub enum ParserError {
     #[error("not a valid qualified operator: '{0}'")]
     InvalidQualifiedOp(String),
 
-    /// The parser encountered an invalid argument.
-    #[error("not a valid format for the argument: '{0}'")]
-    InvalidRareArgFormat(String),
-
     /// The parser encountered an unknown qualified operator.
     #[error("not a valid qualified argument: '{0}'")]
     InvalidRareArgAttribute(String),
@@ -165,9 +161,17 @@ pub enum ParserError {
     #[error("the rule '{0}' has no conclusion")]
     UndefinedRareConclusion(String),
 
-    /// The parser encountered an unknown rare rule attribute.
-    #[error("the rule '{0}' has to start with the arguments first")]
-    ExpectArgsFirst(String),
+    /// A RARE rule conclusion must be a binary equality.
+    #[error("the conclusion of RARE rule '{0}' must be a binary equality")]
+    InvalidRareConclusion(String),
+
+    /// A RARE rule premise must be a binary equality or disequality.
+    #[error("a premise of RARE rule '{0}' must be a binary equality or disequality")]
+    InvalidRarePremise(String),
+
+    /// Every RARE rule argument must name a declared parameter.
+    #[error("RARE rule '{0}' uses undeclared argument '{1}'")]
+    UndeclaredRareArgument(String, String),
 }
 
 /// Returns an error if the length of `sequence` is not in the `expected` range.

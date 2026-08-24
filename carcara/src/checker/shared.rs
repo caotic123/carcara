@@ -7,6 +7,7 @@ use crate::{
         CheckerStatistics, Config,
     },
     external::ExternalTool,
+    rare::engine::{check_hole_rewrite_with_context, RareCheckContext},
 };
 use indexmap::IndexSet;
 use std::time::{Duration, Instant};
@@ -90,6 +91,7 @@ pub struct StepCheckContext<'a> {
     pub current_subproof: Option<&'a [ProofCommand]>,
     pub subproof_depth: usize,
     pub is_holey: &'a mut bool,
+    pub rare_check_context: Option<&'a RareCheckContext<'a>>,
 }
 
 /// Shared core logic for checking a proof step. This contains all the rule validation
@@ -130,7 +132,19 @@ pub fn check_step_core<CR: CollectResults + Send + Default>(
         }
     };
 
-    if step.rule == "hole" || step.rule == "lia_generic" {
+    let checked_hole_rewrite = context.config.check_hole_rewrites
+        && is_hole_rewrite(step)
+        && context.rare_check_context.is_some_and(|rare_context| {
+            check_hole_rewrite(
+                rule_args.pool,
+                step,
+                rule_args.premises,
+                rare_context,
+                context.config.hole_rewrite_options,
+            )
+        });
+
+    if (step.rule == "hole" && !checked_hole_rewrite) || step.rule == "lia_generic" {
         *context.is_holey = true;
     }
 
@@ -150,6 +164,58 @@ pub fn check_step_core<CR: CollectResults + Send + Default>(
         // Note: polyeq_time is updated via the rule_args.polyeq_time reference
     }
     Ok(())
+}
+
+fn is_hole_rewrite(step: &ProofStep) -> bool {
+    step.rule == "hole"
+        && matches!(
+            step.args.first().map(AsRef::as_ref),
+            Some(Term::Const(Constant::String(marker)))
+                if marker == "TRUST_THEORY_REWRITE"
+        )
+}
+
+fn check_hole_rewrite(
+    pool: &mut dyn TermPool,
+    step: &ProofStep,
+    premises: &[crate::checker::rules::Premise<'_>],
+    rare_context: &RareCheckContext<'_>,
+    options: crate::rare::engine::RunEgglogOptions,
+) -> bool {
+    let [conclusion] = step.clause.as_slice() else {
+        log::warn!(
+            "could not check trusted theory rewrite '{}': expected a singleton clause, got {} terms; treating it as a hole",
+            step.id,
+            step.clause.len(),
+        );
+        return false;
+    };
+    let premise_clauses = premises
+        .iter()
+        .map(|premise| premise.clause)
+        .collect::<Vec<_>>();
+    let (result, code) = check_hole_rewrite_with_context(
+        pool,
+        &step.id,
+        conclusion.clone(),
+        &premise_clauses,
+        rare_context,
+        options,
+    );
+    if options.print_egglog {
+        println!("{code}");
+    }
+    match result {
+        Ok(_) => true,
+        Err(error) => {
+            log::warn!(
+                "could not check trusted theory rewrite '{}': {}; treating it as a hole",
+                step.id,
+                error,
+            );
+            false
+        }
+    }
 }
 
 /// Shared discharge checking logic

@@ -2,11 +2,12 @@ use carcara::{
     checker, elaborator,
     external::{ExternalTool, SatTools},
     parser,
+    rare::engine::RunEgglogOptions,
 };
 use clap::{AppSettings, ArgEnum, Args, Parser, Subcommand};
 use const_format::{formatcp, str_index};
 use git_version::git_version;
-use std::error::Error;
+use std::{error::Error, time::Duration};
 
 // `git describe --all` will try to find any ref (including tags) that describes the current commit.
 // This will include tags like `carcara-0.1.0`, that we create for github releases. To account for
@@ -203,6 +204,23 @@ pub struct CheckingOptions {
 
     #[clap(long, help_heading = "EXTERNAL TOOL OPTIONS")]
     pub sat_ref_checker: Option<ExternalTool>,
+
+    /// Validate `hole` steps marked as `TRUST_THEORY_REWRITE` using RARE and egglog.
+    #[clap(long)]
+    pub check_hole_rewrites: bool,
+
+    /// Print the egglog program generated for each checked hole rewrite.
+    #[clap(long, requires = "check-hole-rewrites")]
+    pub print_egglog: bool,
+
+    /// Keep running RARE egglog schedules one step at a time until goals are saturated.
+    #[clap(long = "continous-saturation", requires = "check-hole-rewrites")]
+    pub continous_saturation: bool,
+
+    /// Cooperative time budget in milliseconds for each RARE hole rewrite. The budget is checked
+    /// between egglog rule iterations.
+    #[clap(long, requires = "check-hole-rewrites", value_name = "MILLISECONDS")]
+    pub rare_check_timeout: Option<u64>,
 }
 
 #[derive(ArgEnum, Clone)]
@@ -458,6 +476,13 @@ impl IntoConfig for (CheckingOptions, ToolOptions) {
             rup_resolution: c.rup_resolution,
             rule_checkers: c.rule_checkers.into_iter().collect(),
             sat_ref_config,
+            check_hole_rewrites: c.check_hole_rewrites,
+            hole_rewrite_options: RunEgglogOptions {
+                continuous_saturation: c.continous_saturation,
+                timeout: c.rare_check_timeout.map(Duration::from_millis),
+                print_egglog: c.print_egglog,
+                ..RunEgglogOptions::default()
+            },
         }
     }
 }

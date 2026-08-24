@@ -5,6 +5,7 @@ use std::{ffi::OsStr, fs, path::PathBuf};
 
 const SMT_FILE_EXTENSIONS: [&str; 3] = ["smt", "smt2", "smt_in"];
 const ALETHE_FILE_EXTENSIONS: [&str; 2] = ["alethe", "proof"];
+const RARE_FILE_EXTENSIONS: [&str; 1] = ["rare"];
 
 pub fn infer_problem_path(proof_path: impl Into<PathBuf>) -> Result<PathBuf, CliError> {
     fn inner(mut path: PathBuf) -> Option<PathBuf> {

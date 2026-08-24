@@ -1,0 +1,837 @@
+(constructor @< (Term) Term)
+(constructor @<= (Term) Term)
+(constructor @> (Term) Term)
+(constructor @>= (Term) Term)
+
+(constructor GeqKey (PolyN) Term)
+(constructor GtKey (PolyN) Term)
+
+(function atomHashIsInt (i64) bool :merge old)
+
+(function monIsIntN (MonN) bool :no-merge)
+(relation monIsIntN-demand (MonN))
+
+(function polyIsIntExprN (PolyN) bool :no-merge)
+(relation polyIsIntExprN-demand (PolyN))
+
+(function relConstN (PolyN) BigRat :no-merge)
+(relation relConstN-demand (PolyN))
+
+(function relRestN (PolyN) PolyN :no-merge)
+(relation relRestN-demand (PolyN))
+
+(function relScaleAbsN (PolyN) BigRat :no-merge)
+(relation relScaleAbsN-demand (PolyN))
+
+(function canonRelPolyN (PolyN) PolyN :no-merge)
+(relation canonRelPolyN-demand (PolyN))
+
+(function canonGeqPolyN (PolyN) PolyN :no-merge)
+(relation canonGeqPolyN-demand (PolyN))
+
+(function canonEqPolyN (PolyN) PolyN :no-merge)
+(relation canonEqPolyN-demand (PolyN))
+
+(function relPolyOf (Term) PolyN :merge old)
+(relation relPolyOf-demand (Term))
+
+(function eqRelPolyOf (Term) PolyN :merge old)
+(relation eqRelPolyOf-demand (Term))
+
+(function strictOrderBoolKeyN (PolyN) Term :merge old)
+(relation strictOrderBoolKeyN-demand (PolyN))
+
+(function arithRelBoolCanMatch (Term) bool :merge old)
+(function arithRelBoolKeyOf (Term) Term :merge old)
+(relation arithRelBoolKeyOf-demand (Term))
+
+(rule
+  ((atomMonN-demand (AAtom h is_int)))
+  ((set (atomHashIsInt h) is_int))
+  :ruleset arith_poly)
+
+(rule
+  ((atomMonN-demand (ADiv2 t d)))
+  ((set (atomHashIsInt (arith_poly_atom_hash (ADiv2 t d))) false))
+  :ruleset arith_poly)
+
+(rule
+  ((atomMonN-demand (ADivTotal2 t d)))
+  ((set (atomHashIsInt (arith_poly_atom_hash (ADivTotal2 t d))) false))
+  :ruleset arith_poly)
+
+(rule
+  ((monIsIntN-demand (MOne)))
+  ((set (monIsIntN (MOne)) true))
+  :ruleset arith_poly)
+
+(rule
+  ((monIsIntN-demand (MCons h t)))
+  ((monIsIntN-demand t))
+  :ruleset arith_poly)
+
+(rule
+  ((= (atomHashIsInt h) false)
+   (monIsIntN-demand (MCons h t)))
+  ((set (monIsIntN (MCons h t)) false))
+  :ruleset arith_poly)
+
+(rule
+  ((= (atomHashIsInt h) true)
+   (= (monIsIntN t) false)
+   (monIsIntN-demand (MCons h t)))
+  ((set (monIsIntN (MCons h t)) false))
+  :ruleset arith_poly)
+
+(rule
+  ((= (atomHashIsInt h) true)
+   (= (monIsIntN t) true)
+   (monIsIntN-demand (MCons h t)))
+  ((set (monIsIntN (MCons h t)) true))
+  :ruleset arith_poly)
+
+(rule
+  ((polyIsIntExprN-demand (PZero)))
+  ((set (polyIsIntExprN (PZero)) true))
+  :ruleset arith_poly)
+
+(rule
+  ((polyIsIntExprN-demand (PCons (MOne) c rest)))
+  ((polyIsIntExprN-demand rest))
+  :ruleset arith_poly)
+
+(rule
+  ((= (polyIsIntExprN rest) ok)
+   (polyIsIntExprN-demand (PCons (MOne) c rest)))
+  ((set (polyIsIntExprN (PCons (MOne) c rest)) ok))
+  :ruleset arith_poly)
+
+(rule
+  ((polyIsIntExprN-demand (PCons m c rest))
+   (!= m (MOne)))
+  ((monIsIntN-demand m)
+   (polyIsIntExprN-demand rest))
+  :ruleset arith_poly)
+
+(rule
+  ((= (denom c) (bigint 1))
+   (= (monIsIntN m) true)
+   (= (polyIsIntExprN rest) true)
+   (polyIsIntExprN-demand (PCons m c rest))
+   (!= m (MOne)))
+  ((set (polyIsIntExprN (PCons m c rest)) true))
+  :ruleset arith_poly)
+
+(rule
+  ((polyIsIntExprN-demand (PCons m c rest))
+   (!= m (MOne))
+   (!= (denom c) (bigint 1)))
+  ((set (polyIsIntExprN (PCons m c rest)) false))
+  :ruleset arith_poly)
+
+(rule
+  ((= (denom c) (bigint 1))
+   (= (monIsIntN m) false)
+   (polyIsIntExprN-demand (PCons m c rest))
+   (!= m (MOne)))
+  ((set (polyIsIntExprN (PCons m c rest)) false))
+  :ruleset arith_poly)
+
+(rule
+  ((= (denom c) (bigint 1))
+   (= (monIsIntN m) true)
+   (= (polyIsIntExprN rest) false)
+   (polyIsIntExprN-demand (PCons m c rest))
+   (!= m (MOne)))
+  ((set (polyIsIntExprN (PCons m c rest)) false))
+  :ruleset arith_poly)
+
+(rule
+  ((relConstN-demand (PZero)))
+  ((set (relConstN (PZero)) rat_zero))
+  :ruleset arith_poly)
+
+(rule
+  ((relConstN-demand (PCons (MOne) c rest)))
+  ((set (relConstN (PCons (MOne) c rest)) c))
+  :ruleset arith_poly)
+
+(rule
+  ((relConstN-demand (PCons m c rest))
+   (!= m (MOne)))
+  ((set (relConstN (PCons m c rest)) rat_zero))
+  :ruleset arith_poly)
+
+(rule
+  ((relRestN-demand (PZero)))
+  ((set (relRestN (PZero)) (PZero)))
+  :ruleset arith_poly)
+
+(rule
+  ((relRestN-demand (PCons (MOne) c rest)))
+  ((set (relRestN (PCons (MOne) c rest)) rest))
+  :ruleset arith_poly)
+
+(rule
+  ((relRestN-demand (PCons m c rest))
+   (!= m (MOne)))
+  ((set (relRestN (PCons m c rest)) (PCons m c rest)))
+  :ruleset arith_poly)
+
+(rule
+  ((relScaleAbsN-demand (PZero)))
+  ((set (relScaleAbsN (PZero)) rat_zero))
+  :ruleset arith_poly)
+
+(rule
+  ((relScaleAbsN-demand (PCons m c rest))
+   (!= m (MOne))
+   (< c rat_zero))
+  ((set (relScaleAbsN (PCons m c rest)) (* rat_neg_one c)))
+  :ruleset arith_poly)
+
+(rule
+  ((relScaleAbsN-demand (PCons m c rest))
+   (!= m (MOne))
+   (>= c rat_zero))
+  ((set (relScaleAbsN (PCons m c rest)) c))
+  :ruleset arith_poly)
+
+(rule
+  ((relScaleAbsN-demand (PCons (MOne) c rest))
+   (!= rest (PZero)))
+  ((relScaleAbsN-demand rest))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsN rest) s)
+   (relScaleAbsN-demand (PCons (MOne) c rest))
+   (!= rest (PZero)))
+  ((set (relScaleAbsN (PCons (MOne) c rest)) s))
+  :ruleset arith_poly)
+
+(rule
+  ((relScaleAbsN-demand (PCons (MOne) c (PZero)))
+   (< c rat_zero))
+  ((set (relScaleAbsN (PCons (MOne) c (PZero))) (* rat_neg_one c)))
+  :ruleset arith_poly)
+
+(rule
+  ((relScaleAbsN-demand (PCons (MOne) c (PZero)))
+   (>= c rat_zero))
+  ((set (relScaleAbsN (PCons (MOne) c (PZero))) c))
+  :ruleset arith_poly)
+
+(rule
+  ((canonRelPolyN-demand p))
+  ((relScaleAbsN-demand p))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsN p) rat_zero)
+   (canonRelPolyN-demand p))
+  ((set (canonRelPolyN p) p))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsN p) k)
+   (!= k rat_zero)
+   (canonRelPolyN-demand p))
+  ((scalePolyN-demand (/ rat_one k) p))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsN p) k)
+   (!= k rat_zero)
+   (= (scalePolyN (/ rat_one k) p) s)
+   (canonRelPolyN-demand p))
+  ((set (canonRelPolyN p) s))
+  :ruleset arith_poly)
+
+(rule
+  ((canonGeqPolyN-demand p))
+  ((canonRelPolyN-demand p))
+  :ruleset arith_poly)
+
+(rule
+  ((= (canonRelPolyN p) s)
+   (canonGeqPolyN-demand p))
+  ((relRestN-demand s)
+   (relConstN-demand s))
+  :ruleset arith_poly)
+
+(rule
+  ((= (canonRelPolyN p) s)
+   (= (relRestN s) rest)
+   (canonGeqPolyN-demand p))
+  ((polyIsIntExprN-demand rest))
+  :ruleset arith_poly)
+
+(rule
+  ((= (canonRelPolyN p) s)
+   (= (relRestN s) rest)
+   (= (polyIsIntExprN rest) false)
+   (canonGeqPolyN-demand p))
+  ((set (canonGeqPolyN p) s))
+  :ruleset arith_poly)
+
+(rule
+  ((= (canonRelPolyN p) s)
+   (= (relRestN s) rest)
+   (= (polyIsIntExprN rest) true)
+   (= (relConstN s) k)
+   (= (* rat_neg_one (ceil (* rat_neg_one k))) rat_zero)
+   (canonGeqPolyN-demand p))
+  ((set (canonGeqPolyN p) rest))
+  :ruleset arith_poly)
+
+(rule
+  ((= (canonRelPolyN p) s)
+   (= (relRestN s) rest)
+   (= (polyIsIntExprN rest) true)
+   (= (relConstN s) k)
+   (!= (* rat_neg_one (ceil (* rat_neg_one k))) rat_zero)
+   (canonGeqPolyN-demand p))
+  ((addPolyN-demand
+    (PCons (MOne) (* rat_neg_one (ceil (* rat_neg_one k))) (PZero))
+    rest))
+  :ruleset arith_poly)
+
+(rule
+  ((= (canonRelPolyN p) s)
+   (= (relRestN s) rest)
+   (= (polyIsIntExprN rest) true)
+   (= (relConstN s) k)
+   (!= (* rat_neg_one (ceil (* rat_neg_one k))) rat_zero)
+   (= (addPolyN
+       (PCons (MOne) (* rat_neg_one (ceil (* rat_neg_one k))) (PZero))
+       rest)
+      out)
+   (canonGeqPolyN-demand p))
+  ((set (canonGeqPolyN p) out))
+  :ruleset arith_poly)
+
+(rule
+  ((canonEqPolyN-demand (PZero)))
+  ((set (canonEqPolyN (PZero)) (PZero)))
+  :ruleset arith_poly)
+
+(rule
+  ((canonEqPolyN-demand (PCons m c rest)))
+  ((relScaleAbsN-demand (PCons m c rest)))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsN (PCons m c rest)) k)
+   (>= c rat_zero)
+   (canonEqPolyN-demand (PCons m c rest)))
+  ((scalePolyN-demand (/ rat_one k) (PCons m c rest)))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsN (PCons m c rest)) k)
+   (>= c rat_zero)
+   (= (scalePolyN (/ rat_one k) (PCons m c rest)) s)
+   (canonEqPolyN-demand (PCons m c rest)))
+  ((set (canonEqPolyN (PCons m c rest)) s))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsN (PCons m c rest)) k)
+   (< c rat_zero)
+   (canonEqPolyN-demand (PCons m c rest)))
+  ((scalePolyN-demand (/ rat_neg_one k) (PCons m c rest)))
+  :ruleset arith_poly)
+
+(rule
+  ((= (relScaleAbsN (PCons m c rest)) k)
+   (< c rat_zero)
+   (= (scalePolyN (/ rat_neg_one k) (PCons m c rest)) s)
+   (canonEqPolyN-demand (PCons m c rest)))
+  ((set (canonEqPolyN (PCons m c rest)) s))
+  :ruleset arith_poly)
+
+;; Equality atoms are canonicalized through the normalized difference `lhs - rhs`,
+;; up to any nonzero scalar multiple.
+(rule
+  ((= lhs (Mk (@= (Args x1 (Args x2 (Empty)))))))
+  ((eqRelPolyOf-demand lhs))
+  :ruleset arith_poly)
+
+(rule
+  ((eqRelPolyOf-demand (Mk (@= (Args x1 (Args x2 (Empty)))))))
+  ((arithCopyOf-demand x1)
+   (arithCopyOf-demand x2))
+  :ruleset arith_poly)
+
+(rule
+  ((eqRelPolyOf-demand (Mk (@= (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2))
+  ((arithPolyNfOf-demand (ASub2 ax1 ax2)))
+  :ruleset arith_poly)
+
+(rule
+  ((eqRelPolyOf-demand (Mk (@= (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax1 ax2)) diff))
+  ((canonEqPolyN-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((eqRelPolyOf-demand (Mk (@= (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax1 ax2)) diff)
+   (= (canonEqPolyN diff) canon))
+  ((set (eqRelPolyOf (Mk (@= (Args x1 (Args x2 (Empty)))))) canon))
+  :ruleset arith_poly)
+
+;; Order relations are canonicalized through their normalized difference,
+;; up to positive scaling only.
+(rule
+  ((= lhs (Mk (@>= (Args x1 (Args x2 (Empty)))))))
+  ((relPolyOf-demand lhs))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty)))))))
+  ((arithCopyOf-demand x1)
+   (arithCopyOf-demand x2))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2))
+  ((arithPolyNfOf-demand (ASub2 ax1 ax2)))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax1 ax2)) diff))
+  ((canonGeqPolyN-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax1 ax2)) diff)
+   (= (canonGeqPolyN diff) canon))
+  ((set (relPolyOf (Mk (@>= (Args x1 (Args x2 (Empty)))))) canon))
+  :ruleset arith_poly)
+
+(rule
+  ((= lhs (Mk (@> (Args x1 (Args x2 (Empty)))))))
+  ((relPolyOf-demand lhs))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@> (Args x1 (Args x2 (Empty)))))))
+  ((arithCopyOf-demand x1)
+   (arithCopyOf-demand x2))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@> (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2))
+  ((arithPolyNfOf-demand (ASub2 ax1 ax2)))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@> (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax1 ax2)) diff))
+  ((canonRelPolyN-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@> (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax1 ax2)) diff)
+   (= (canonRelPolyN diff) canon))
+  ((set (relPolyOf (Mk (@> (Args x1 (Args x2 (Empty)))))) canon))
+  :ruleset arith_poly)
+
+(rule
+  ((= lhs (Mk (@<= (Args x1 (Args x2 (Empty)))))))
+  ((relPolyOf-demand lhs))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty)))))))
+  ((arithCopyOf-demand x1)
+   (arithCopyOf-demand x2))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2))
+  ((arithPolyNfOf-demand (ASub2 ax2 ax1)))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax2 ax1)) diff))
+  ((canonGeqPolyN-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax2 ax1)) diff)
+   (= (canonGeqPolyN diff) canon))
+  ((set (relPolyOf (Mk (@<= (Args x1 (Args x2 (Empty)))))) canon))
+  :ruleset arith_poly)
+
+(rule
+  ((= lhs (Mk (@< (Args x1 (Args x2 (Empty)))))))
+  ((relPolyOf-demand lhs))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@< (Args x1 (Args x2 (Empty)))))))
+  ((arithCopyOf-demand x1)
+   (arithCopyOf-demand x2))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@< (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2))
+  ((arithPolyNfOf-demand (ASub2 ax2 ax1)))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@< (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax2 ax1)) diff))
+  ((canonRelPolyN-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((relPolyOf-demand (Mk (@< (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax2 ax1)) diff)
+   (= (canonRelPolyN diff) canon))
+  ((set (relPolyOf (Mk (@< (Args x1 (Args x2 (Empty)))))) canon))
+  :ruleset arith_poly)
+
+;; Strict order formulas use a strict key over reals and a tightened non-strict
+;; key over integer expressions so that `<`, `>`, and negated non-strict
+;; inequalities agree with their rewritten integer counterparts.
+(rule
+  ((strictOrderBoolKeyN-demand p))
+  ((polyIsIntExprN-demand p))
+  :ruleset arith_poly)
+
+(rule
+  ((strictOrderBoolKeyN-demand p)
+   (= (polyIsIntExprN p) false))
+  ((canonRelPolyN-demand p))
+  :ruleset arith_poly)
+
+(rule
+  ((strictOrderBoolKeyN-demand p)
+   (= (polyIsIntExprN p) false)
+   (= (canonRelPolyN p) canon))
+  ((set (strictOrderBoolKeyN p) (GtKey canon)))
+  :ruleset arith_poly)
+
+(rule
+  ((strictOrderBoolKeyN-demand p)
+   (= (polyIsIntExprN p) true))
+  ((addPolyN-demand p (PCons (MOne) rat_neg_one (PZero))))
+  :ruleset arith_poly)
+
+(rule
+  ((strictOrderBoolKeyN-demand p)
+   (= (polyIsIntExprN p) true)
+   (= (addPolyN p (PCons (MOne) rat_neg_one (PZero))) shifted))
+  ((canonGeqPolyN-demand shifted))
+  :ruleset arith_poly)
+
+(rule
+  ((strictOrderBoolKeyN-demand p)
+   (= (polyIsIntExprN p) true)
+   (= (addPolyN p (PCons (MOne) rat_neg_one (PZero))) shifted)
+   (= (canonGeqPolyN shifted) canon))
+  ((set (strictOrderBoolKeyN p) (GeqKey canon)))
+  :ruleset arith_poly)
+
+;; Boolean formulas over arithmetic order relations are canonicalized to a
+;; common boolean key. Unsupported boolean constructors simply never derive a
+;; key.
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@= (Args x1 (Args x2 (Empty)))))))
+  ((arithGoalPolyNfOf-demand x1)
+   (arithGoalPolyNfOf-demand x2))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@= (Args x1 (Args x2 (Empty))))))
+   (= (arithGoalPolyCanMatch x1) true)
+   (= (arithGoalPolyCanMatch x2) true))
+  ((set (arithRelBoolCanMatch (Mk (@= (Args x1 (Args x2 (Empty)))))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty)))))))
+  ((set (arithRelBoolCanMatch (Mk (@>= (Args x1 (Args x2 (Empty)))))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty)))))))
+  ((set (arithRelBoolCanMatch (Mk (@<= (Args x1 (Args x2 (Empty)))))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@> (Args x1 (Args x2 (Empty)))))))
+  ((set (arithRelBoolCanMatch (Mk (@> (Args x1 (Args x2 (Empty)))))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@< (Args x1 (Args x2 (Empty)))))))
+  ((set (arithRelBoolCanMatch (Mk (@< (Args x1 (Args x2 (Empty)))))) true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@>= (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((set (arithRelBoolCanMatch
+         (Mk (@not (Args (Mk (@>= (Args x1 (Args x2 (Empty))))) (Empty)))))
+        true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@> (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((set (arithRelBoolCanMatch
+         (Mk (@not (Args (Mk (@> (Args x1 (Args x2 (Empty))))) (Empty)))))
+        true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@<= (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((set (arithRelBoolCanMatch
+         (Mk (@not (Args (Mk (@<= (Args x1 (Args x2 (Empty))))) (Empty)))))
+        true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@< (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((set (arithRelBoolCanMatch
+         (Mk (@not (Args (Mk (@< (Args x1 (Args x2 (Empty))))) (Empty)))))
+        true))
+  :ruleset arith_poly_guard)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@= (Args x1 (Args x2 (Empty)))))))
+  ((eqRelPolyOf-demand (Mk (@= (Args x1 (Args x2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@= (Args x1 (Args x2 (Empty))))))
+   (= (eqRelPolyOf (Mk (@= (Args x1 (Args x2 (Empty)))))) canon))
+  ((set (arithRelBoolKeyOf (Mk (@= (Args x1 (Args x2 (Empty)))))) (ArithEqKey canon)))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty)))))))
+  ((relPolyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty))))))
+   (= (relPolyOf (Mk (@>= (Args x1 (Args x2 (Empty)))))) canon))
+  ((set (arithRelBoolKeyOf (Mk (@>= (Args x1 (Args x2 (Empty)))))) (GeqKey canon)))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty)))))))
+  ((relPolyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty))))))
+   (= (relPolyOf (Mk (@<= (Args x1 (Args x2 (Empty)))))) canon))
+  ((set (arithRelBoolKeyOf (Mk (@<= (Args x1 (Args x2 (Empty)))))) (GeqKey canon)))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@> (Args x1 (Args x2 (Empty)))))))
+  ((arithCopyOf-demand x1)
+   (arithCopyOf-demand x2))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@> (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2))
+  ((arithPolyNfOf-demand (ASub2 ax1 ax2)))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@> (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax1 ax2)) diff))
+  ((strictOrderBoolKeyN-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@> (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax1 ax2)) diff)
+   (= (strictOrderBoolKeyN diff) key))
+  ((set (arithRelBoolKeyOf (Mk (@> (Args x1 (Args x2 (Empty)))))) key))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@< (Args x1 (Args x2 (Empty)))))))
+  ((arithCopyOf-demand x1)
+   (arithCopyOf-demand x2))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@< (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2))
+  ((arithPolyNfOf-demand (ASub2 ax2 ax1)))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@< (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax2 ax1)) diff))
+  ((strictOrderBoolKeyN-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand (Mk (@< (Args x1 (Args x2 (Empty))))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax2 ax1)) diff)
+   (= (strictOrderBoolKeyN diff) key))
+  ((set (arithRelBoolKeyOf (Mk (@< (Args x1 (Args x2 (Empty)))))) key))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@>= (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((arithCopyOf-demand x1)
+   (arithCopyOf-demand x2))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@>= (Args x1 (Args x2 (Empty))))) (Empty)))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2))
+  ((arithPolyNfOf-demand (ASub2 ax2 ax1)))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@>= (Args x1 (Args x2 (Empty))))) (Empty)))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax2 ax1)) diff))
+  ((strictOrderBoolKeyN-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@>= (Args x1 (Args x2 (Empty))))) (Empty)))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax2 ax1)) diff)
+   (= (strictOrderBoolKeyN diff) key))
+  ((set (arithRelBoolKeyOf
+         (Mk (@not (Args (Mk (@>= (Args x1 (Args x2 (Empty))))) (Empty)))))
+        key))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@> (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((relPolyOf-demand (Mk (@<= (Args x1 (Args x2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@> (Args x1 (Args x2 (Empty))))) (Empty)))))
+   (= (relPolyOf (Mk (@<= (Args x1 (Args x2 (Empty)))))) canon))
+  ((set (arithRelBoolKeyOf
+         (Mk (@not (Args (Mk (@> (Args x1 (Args x2 (Empty))))) (Empty)))))
+        (GeqKey canon)))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@<= (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((arithCopyOf-demand x1)
+   (arithCopyOf-demand x2))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@<= (Args x1 (Args x2 (Empty))))) (Empty)))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2))
+  ((arithPolyNfOf-demand (ASub2 ax1 ax2)))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@<= (Args x1 (Args x2 (Empty))))) (Empty)))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax1 ax2)) diff))
+  ((strictOrderBoolKeyN-demand diff))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@<= (Args x1 (Args x2 (Empty))))) (Empty)))))
+   (= (arithCopyOf x1) ax1)
+   (= (arithCopyOf x2) ax2)
+   (= (arithPolyNfOf (ASub2 ax1 ax2)) diff)
+   (= (strictOrderBoolKeyN diff) key))
+  ((set (arithRelBoolKeyOf
+         (Mk (@not (Args (Mk (@<= (Args x1 (Args x2 (Empty))))) (Empty)))))
+        key))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@< (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((relPolyOf-demand (Mk (@>= (Args x1 (Args x2 (Empty)))))))
+  :ruleset arith_poly)
+
+(rule
+  ((arithRelBoolKeyOf-demand
+    (Mk (@not (Args (Mk (@< (Args x1 (Args x2 (Empty))))) (Empty)))))
+   (= (relPolyOf (Mk (@>= (Args x1 (Args x2 (Empty)))))) canon))
+  ((set (arithRelBoolKeyOf
+         (Mk (@not (Args (Mk (@< (Args x1 (Args x2 (Empty))))) (Empty)))))
+        (GeqKey canon)))
+  :ruleset arith_poly)
