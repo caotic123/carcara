@@ -307,6 +307,9 @@ pub fn search_programs(
                 }
                 visit_term(inner, programs, out);
             }
+            Sort::RareList(inner) => {
+                visit_term(inner, programs, out);
+            }
             // Primitive sorts / BitVec width: nothing to traverse
             Sort::BitVec(_)
             | Sort::Bool
@@ -314,7 +317,6 @@ pub fn search_programs(
             | Sort::Real
             | Sort::String
             | Sort::RegLan
-            | Sort::RareList
             | Sort::Type
             | Sort::Var(_) => {}
         }

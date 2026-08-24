@@ -126,13 +126,20 @@ pub fn map_by_matchers<'a>(
                     (false, s.clone())
                 }
             }
+            Sort::RareList(inner) => {
+                let ninner = map_rec(pool, inner, ms);
+                if *inner != ninner {
+                    (true, Sort::RareList(ninner))
+                } else {
+                    (false, s.clone())
+                }
+            }
             Sort::BitVec(_)
             | Sort::Bool
             | Sort::Int
             | Sort::Real
             | Sort::String
             | Sort::RegLan
-            | Sort::RareList
             | Sort::Type
             | Sort::Var(_) => (false, s.clone()),
         }

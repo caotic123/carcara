@@ -189,6 +189,9 @@ fn handle_eo_lists<'a>(
                 }
                 visit(pool, inner, parameters, mapping, shadowed);
             }
+            Sort::RareList(inner) => {
+                visit(pool, inner, parameters, mapping, shadowed);
+            }
             // Primitive / leaf sorts and sort variables: nothing to do
             Sort::BitVec(_)
             | Sort::Bool
@@ -196,7 +199,6 @@ fn handle_eo_lists<'a>(
             | Sort::Real
             | Sort::String
             | Sort::RegLan
-            | Sort::RareList
             | Sort::Type
             | Sort::Var(_) => {}
         }

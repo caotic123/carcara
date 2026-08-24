@@ -288,26 +288,23 @@ pub fn parse_declare_const<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<
 fn parse_parameters<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<(String, TypeParameter)> {
     parser.expect_token(Token::OpenParen)?;
     let name = parser.expect_symbol()?;
-    let term = parser.parse_sort(true)?;
-
-    // local binding of param name with its sort
-    parser.insert_sorted_var((name.clone(), term.clone()));
-    // and as sort alias for use in sorts
-    parser.state.sort_defs.insert(
-        name.clone(),
-        SortDef {
-            body: term.clone(),
-            params: Vec::default(),
-        },
-    );
+    let base_sort = parser.parse_sort(true)?;
 
     match &parser.current_token {
         Token::CloseParen => {
             parser.expect_token(Token::CloseParen)?;
+            parser.insert_sorted_var((name.clone(), base_sort.clone()));
+            parser.state.sort_defs.insert(
+                name.clone(),
+                SortDef {
+                    body: base_sort.clone(),
+                    params: Vec::default(),
+                },
+            );
             Ok((
                 name,
                 TypeParameter {
-                    term,
+                    term: base_sort,
                     attribute: AttributeParameters::None,
                 },
             ))
@@ -316,10 +313,23 @@ fn parse_parameters<R: BufRead>(parser: &mut Parser<R>) -> CarcaraResult<(String
             let kind_of_arg = parser.expect_keyword()?;
             parser.expect_token(Token::CloseParen)?;
             if kind_of_arg == "list" {
+                let list_sort = parser
+                    .pool
+                    .add(Term::Sort(Sort::RareList(base_sort.clone())));
+                // Keep the local variable bound to element sort so list args can
+                // still appear where a single element is expected.
+                parser.insert_sorted_var((name.clone(), base_sort.clone()));
+                parser.state.sort_defs.insert(
+                    name.clone(),
+                    SortDef {
+                        body: base_sort,
+                        params: Vec::default(),
+                    },
+                );
                 return Ok((
                     name,
                     TypeParameter {
-                        term,
+                        term: list_sort,
                         attribute: AttributeParameters::List,
                     },
                 ));

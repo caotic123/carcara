@@ -254,7 +254,13 @@ impl PrimitivePool {
                 | Operator::ReKleeneCross
                 | Operator::ReOption
                 | Operator::ReRange => Sort::RegLan,
-                Operator::RareList => Sort::RareList,
+                Operator::RareList => {
+                    let element_sort = args
+                        .first()
+                        .map(|arg| self.compute_sort(arg))
+                        .unwrap_or_else(|| self.add(Term::Sort(Sort::Var("T".to_owned()))));
+                    Sort::RareList(element_sort)
+                }
             },
             Term::App(f, args) => {
                 match self.compute_sort(f).as_sort().unwrap() {
@@ -262,7 +268,6 @@ impl PrimitivePool {
                     Sort::ParamSort(_, p_sort) => {
                         let p_function_sort = p_sort.as_sort().unwrap();
                         if let Sort::Function(sorts) = p_function_sort {
-                            // match with sorts of args, apply the resulting substitution on the return sort
                             let mut map = IndexMap::new();
                             for i in 0..args.len() {
                                 let sort_i = sorts[i].as_sort().unwrap();

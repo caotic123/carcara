@@ -152,13 +152,13 @@ pub fn unify_pattern_bidirectional(
                 Sort::Atom(_, ts) => ts.iter().any(|x| occurs(v, x)),
                 Sort::Array(i, e) => occurs(v, i) || occurs(v, e),
                 Sort::ParamSort(ps, inner) => ps.iter().any(|x| occurs(v, x)) || occurs(v, inner),
+                Sort::RareList(inner) => occurs(v, inner),
                 Sort::BitVec(_)
                 | Sort::Bool
                 | Sort::Int
                 | Sort::Real
                 | Sort::String
                 | Sort::RegLan
-                | Sort::RareList
                 | Sort::Type
                 | Sort::Var(_) => false,
             },
@@ -312,8 +312,10 @@ pub fn unify_pattern_bidirectional(
                     | (Sort::Real, Sort::Real)
                     | (Sort::String, Sort::String)
                     | (Sort::RegLan, Sort::RegLan)
-                    | (Sort::RareList, Sort::RareList)
                     | (Sort::Type, Sort::Type) => true,
+                    (Sort::RareList(a), Sort::RareList(b)) => {
+                        unify_term(a, b, lhs_env, rhs_env)
+                    }
 
                     _ => false,
                 }

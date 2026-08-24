@@ -679,7 +679,12 @@ pub fn to_egg_expr(
                         Sort::Real => Some(EggExpr::Const("Real".to_string())),
                         Sort::String => Some(EggExpr::Const("String".to_string())),
                         Sort::RegLan => Some(EggExpr::Const("RegLan".to_string())),
-                        Sort::RareList => Some(EggExpr::Const("RareList".to_string())),
+                        Sort::RareList(inner) => {
+                            let tag = EggExpr::Const("RareList".to_string());
+                            let inner =
+                                to_egg_expr(inner, subs, func_cache, var_map, collect_shapes)?;
+                            build_args_list(vec![Some(tag), Some(inner)])
+                        }
                         Sort::Type => Some(EggExpr::Const("Type".to_string())),
 
                         Sort::BitVec(w) => {
