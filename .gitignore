@@ -9,3 +9,5 @@
 /.codex
 /carcara.code-workspace
 /github
+/github.pub
+/benchmark.sh
