@@ -9,6 +9,7 @@ use crate::benchmarking::{CollectResults, OnlineBenchmarkResults};
 use crate::{ast::rare_rules::Rules, checker::CheckerStatistics};
 use crate::{
     ast::{pool::advanced::*, *},
+    rare::engine::RareCheckContext,
     CarcaraResult, Error,
 };
 use indexmap::IndexSet;
@@ -28,10 +29,19 @@ pub struct ParallelProofChecker<'c> {
     reached_empty_clause: bool,
     is_holey: bool,
     stack_size: usize,
-    rare_rules: Rules,
+    rare_rules: Arc<Rules>,
 }
 
 impl<'c> ParallelProofChecker<'c> {
+    fn worker_builder(&self, index: usize) -> thread::Builder {
+        let builder = thread::Builder::new().name(format!("worker-{index}"));
+        if self.stack_size == 0 {
+            builder
+        } else {
+            builder.stack_size(self.stack_size)
+        }
+    }
+
     pub fn new(
         pool: Arc<PrimitivePool>,
         config: Config,
@@ -40,6 +50,7 @@ impl<'c> ParallelProofChecker<'c> {
         stack_size: usize,
         rare_rules: Rules,
     ) -> Self {
+        let rare_rules = Arc::new(rare_rules);
         ParallelProofChecker {
             pool,
             config,
@@ -88,9 +99,7 @@ impl<'c> ParallelProofChecker<'c> {
                     let local_pool = LocalPool::from_previous(&context_pool);
                     let should_abort = premature_abort.clone();
 
-                    thread::Builder::new()
-                        .name(format!("worker-{i}"))
-                        .stack_size(self.stack_size)
+                    self.worker_builder(i)
                         .spawn_scoped(s, move || -> CarcaraResult<(bool, bool)> {
                             local_self.worker_thread_check(
                                 problem,
@@ -110,7 +119,7 @@ impl<'c> ParallelProofChecker<'c> {
             let mut err: Result<_, Error> = Ok(());
 
             // Wait until the threads finish and merge the results and statistics
-            threads
+            let _ = threads
                 .into_iter()
                 .map(|t| t.join().unwrap())
                 .try_for_each(|opt| {
@@ -168,9 +177,7 @@ impl<'c> ParallelProofChecker<'c> {
                     let local_pool = LocalPool::from_previous(&context_pool);
                     let should_abort = premature_abort.clone();
 
-                    thread::Builder::new()
-                        .name(format!("worker-{i}"))
-                        .stack_size(self.stack_size)
+                    self.worker_builder(i)
                         .spawn_scoped(
                             s,
                             move || -> CarcaraResult<(bool, bool, CheckerStatistics<CR>)> {
@@ -247,6 +254,13 @@ impl<'c> ParallelProofChecker<'c> {
     ) -> CarcaraResult<(bool, bool)> {
         use std::sync::atomic::Ordering;
 
+        // egglog's EGraph is not Send or Sync. Each worker therefore owns one
+        // lazily prepared database baseline and clones it for its local holes.
+        let rare_rules = self.rare_rules.clone();
+        let rare_check_context = self
+            .config
+            .check_hole_rewrites
+            .then(|| RareCheckContext::new(rare_rules.as_ref()));
         let mut iter = schedule.iter(&proof.commands[..]);
         let mut last_depth = 0;
 
@@ -278,16 +292,23 @@ impl<'c> ParallelProofChecker<'c> {
                         None
                     };
 
-                    self.check_step(step, previous_command, &iter, &mut pool, &mut stats)
-                        .map_err(|e| {
-                            // Signalize to other threads to stop the proof checking
-                            should_abort.store(true, Ordering::Release);
-                            Error::Checker {
-                                inner: e,
-                                rule: step.rule.clone(),
-                                step: step.id.clone(),
-                            }
-                        })?;
+                    self.check_step(
+                        step,
+                        previous_command,
+                        &iter,
+                        &mut pool,
+                        rare_check_context.as_ref(),
+                        &mut stats,
+                    )
+                    .map_err(|e| {
+                        // Signalize to other threads to stop the proof checking
+                        should_abort.store(true, Ordering::Release);
+                        Error::Checker {
+                            inner: Box::new(e),
+                            rule: step.rule.clone(),
+                            step: step.id.clone(),
+                        }
+                    })?;
 
                     if step.clause.is_empty() {
                         self.reached_empty_clause = true;
@@ -320,7 +341,7 @@ impl<'c> ParallelProofChecker<'c> {
                         // Signalize to other threads to stop the proof checking
                         should_abort.store(true, Ordering::Release);
                         return Err(Error::Checker {
-                            inner: CheckerError::Assume(term.clone()),
+                            inner: Box::new(CheckerError::Assume(term.clone())),
                             rule: "assume".into(),
                             step: id.clone(),
                         });
@@ -416,6 +437,7 @@ impl<'c> ParallelProofChecker<'c> {
         previous_command: Option<Premise>,
         iter: &ScheduleIter,
         pool: &mut LocalPool,
+        rare_check_context: Option<&RareCheckContext<'_>>,
         stats: &mut Option<&mut CheckerStatistics<CR>>,
     ) -> RuleResult {
         let time = Instant::now();
@@ -434,7 +456,9 @@ impl<'c> ParallelProofChecker<'c> {
             None => return Err(CheckerError::UnknownRule),
         };
 
-        if step.rule == "hole" || step.rule == "lia_generic" {
+        let check_hole_rewrite =
+            self.config.check_hole_rewrites && ProofChecker::is_hole_rewrite(step);
+        if (step.rule == "hole" && !check_hole_rewrite) || step.rule == "lia_generic" {
             self.is_holey = true;
         }
 
@@ -452,19 +476,30 @@ impl<'c> ParallelProofChecker<'c> {
             .map(|&i| iter.get_premise(i))
             .collect();
 
-        let rule_args = RuleArgs {
-            conclusion: &step.clause,
-            premises: &premises,
-            args: &step.args,
-            pool,
-            context: &mut self.context,
-            previous_command,
-            discharge: &discharge,
-            polyeq_time: &mut polyeq_time,
-            rare_rules: &self.rare_rules,
-        };
+        if check_hole_rewrite {
+            let checked = ProofChecker::check_hole_rewrite(
+                pool,
+                step,
+                &premises,
+                rare_check_context.expect("RARE context is initialized when checking is enabled"),
+                self.config.hole_rewrite_options,
+            );
+            self.is_holey |= !checked;
+        } else {
+            let rule_args = RuleArgs {
+                conclusion: &step.clause,
+                premises: &premises,
+                args: &step.args,
+                pool,
+                context: &mut self.context,
+                previous_command,
+                discharge: &discharge,
+                polyeq_time: &mut polyeq_time,
+                rare_rules: self.rare_rules.as_ref(),
+            };
 
-        rule(rule_args)?;
+            rule(rule_args)?;
+        }
 
         if iter.is_end_step() {
             let subproof = iter.current_subproof().unwrap();

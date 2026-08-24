@@ -145,6 +145,18 @@ pub enum ParserError {
     #[error("the rule '{0}' has no conclusion")]
     UndefinedRareConclusion(String),
 
+    /// A RARE rule conclusion must be a binary equality.
+    #[error("the conclusion of RARE rule '{0}' must be a binary equality")]
+    InvalidRareConclusion(String),
+
+    /// A RARE rule premise must be a binary equality or disequality.
+    #[error("a premise of RARE rule '{0}' must be a binary equality or disequality")]
+    InvalidRarePremise(String),
+
+    /// Every RARE rule argument must name a declared parameter.
+    #[error("RARE rule '{0}' uses undeclared argument '{1}'")]
+    UndeclaredRareArgument(String, String),
+
     /// The parser encountered an unknown rare rule attribute.
     #[error("the rule '{0}' has to start with the arguments first")]
     ExpectArgsFirst(String),

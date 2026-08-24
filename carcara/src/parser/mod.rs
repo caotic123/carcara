@@ -66,7 +66,7 @@ impl Config {
 ///
 /// This returns the parsed proof, as well as the `TermPool` used in parsing. Can take any type that
 /// implements `BufRead`.
-pub fn parse_instance<'a, T: BufRead>(
+pub fn parse_instance<T: BufRead>(
     problem: T,
     proof: T,
     rules: Option<T>,
@@ -77,7 +77,7 @@ pub fn parse_instance<'a, T: BufRead>(
         .map(|(prelude, proof, rules)| (prelude, proof, rules, pool))
 }
 
-pub fn parse_instance_with_pool<'a, T: BufRead>(
+pub fn parse_instance_with_pool<T: BufRead>(
     problem: T,
     proof: T,
     rules: Option<T>,
@@ -100,15 +100,7 @@ pub fn parse_instance_with_pool<'a, T: BufRead>(
         }?;
         return Ok((problem, proof, rules));
     }
-    Ok((
-        problem,
-        proof,
-        RareStatements {
-            rules: IndexMap::new(),
-            programs: IndexMap::new(),
-            consts: IndexMap::new(),
-        },
-    ))
+    Ok((problem, proof, RareStatements::default()))
 }
 
 /// A function definition, from a `define-fun` command.
@@ -997,12 +989,16 @@ impl<'a, R: BufRead> Parser<'a, R> {
             self.next_token()?;
             self.expect_token(Token::OpenParen)?;
 
-            // If the rule is `hole` and `--parse-hole-args` is not enabled, we want to allow any
-            // invalid arguments, so we read the rest of the `:args` attribute without trying to
-            // parse anything
+            // Without full hole-argument parsing, preserve a leading string marker so downstream
+            // consumers can still recognize structured hole kinds. Ignore all remaining tokens so
+            // arbitrary solver-specific arguments stay accepted.
             if rule == "hole" && !self.config.parse_hole_args {
+                let marker = match &self.current_token {
+                    Token::String(marker) => Some(self.pool.add(Term::new_string(marker.clone()))),
+                    _ => None,
+                };
                 self.ignore_until_close_parens()?;
-                Vec::new()
+                marker.into_iter().collect()
             } else {
                 self.parse_sequence(Self::parse_term, true)?
             }
@@ -1936,7 +1932,8 @@ impl<'a, R: BufRead> Parser<'a, R> {
         }
         let name = self.expect_symbol()?;
         if matches!(name.as_str(), "rare-list" | "RareList") {
-            let args = self.parse_sequence(|parser| Parser::parse_sort(parser, polymorphic), true)?;
+            let args =
+                self.parse_sequence(|parser| Parser::parse_sort(parser, polymorphic), true)?;
             return self
                 .make_sort(name, args, polymorphic)
                 .map_err(|e| Error::Parser(e, pos));
@@ -1947,7 +1944,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
                 .iter()
                 .map(|x| {
                     if let Some(v) = x.as_var() {
-                        self.pool.add(Term::Sort(Sort::Var(v.to_string())))
+                        self.pool.add(Term::Sort(Sort::Var(v.to_owned())))
                     } else {
                         x.clone()
                     }
@@ -1965,7 +1962,7 @@ impl<'a, R: BufRead> Parser<'a, R> {
 
         let args = self.parse_sequence(|parser| Self::parse_term(parser), true)?;
         let head_term = self.pool.add(Term::Sort(Sort::Var(name.clone())));
-        return Ok(self.pool.add(Term::Sort(Sort::ParamSort(args, head_term))));
+        Ok(self.pool.add(Term::Sort(Sort::ParamSort(args, head_term))))
     }
 
     /// Parses a sort.

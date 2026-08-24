@@ -400,7 +400,7 @@ where
     write!(f, ")")
 }
 
-fn quote_symbol(symbol: &str) -> Cow<str> {
+fn quote_symbol(symbol: &str) -> Cow<'_, str> {
     use crate::parser::Reserved;
     use std::str::FromStr;
 
@@ -423,7 +423,7 @@ fn quote_symbol(symbol: &str) -> Cow<str> {
     }
 }
 
-fn escape_string(string: &str) -> Cow<str> {
+fn escape_string(string: &str) -> Cow<'_, str> {
     if string.contains('"') {
         Cow::Owned(string.replace('"', "\"\""))
     } else {

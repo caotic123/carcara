@@ -14,16 +14,8 @@ pub enum Implied<T, X> {
     Bottom(X),
     NotUnsat(),
 }
-// A RUP Addition is a vector of the clause plus the unit clause and the hash of the clause
+// A RUP addition is a vector of the clause plus the unit clause and the hash of the clause.
 pub type RupAdition = Vec<(IndexSet<Literal>, Option<Literal>, u64)>;
-
-//This enum is used to bookkeeping the action perfomed by a reverse unit propagation
-pub enum DRupProofAction {
-    RupStory(IndexSet<Literal>, RupAdition),
-    Delete(Rc<Term>),
-}
-
-pub type DRupStory = Vec<DRupProofAction>;
 
 #[derive(Debug, Error)]
 pub enum DrupFormatError {
@@ -214,7 +206,7 @@ pub fn check_drup(
     premises: &[Rc<Term>],
     args: &[Rc<Term>],
     check_rat: bool,
-) -> Result<DRupStory, DrupFormatError> {
+) -> Result<(), DrupFormatError> {
     let mut premises: HashMap<u64, _> = premises
         .iter()
         .map(|p| {
@@ -232,7 +224,6 @@ pub fn check_drup(
         })
         .collect();
 
-    let mut drup_history: DRupStory = vec![];
     for t in args {
         if let Some(terms) = match_term!((delete (cl ...)) = &t) {
             let clause_term = if terms.is_empty() {
@@ -241,7 +232,6 @@ pub fn check_drup(
                 build_term!(pool, (cl[terms.to_vec()]))
             };
             premises.remove(&hash_term(pool, &clause_term));
-            drup_history.push(DRupProofAction::Delete(clause_term));
             continue;
         }
 
@@ -267,11 +257,6 @@ pub fn check_drup(
             })
             .collect::<IndexSet<_>>();
 
-        drup_history.push(DRupProofAction::RupStory(
-            terms_indexed_set.clone(),
-            unit_history.unwrap(),
-        ));
-
         premises.insert(hash_term(pool, t), terms_indexed_set);
     }
 
@@ -279,7 +264,7 @@ pub fn check_drup(
         return Err(DrupFormatError::NoConclusionInPremise);
     }
 
-    Ok(drup_history)
+    Ok(())
 }
 
 // Checks RAT, essentially rat is equivalent to RUP plus a blocked clause
@@ -297,7 +282,7 @@ pub fn check_drat(
 
         if clause.contains(&negated_pivot) {
             let mut resolvent = clause.clone();
-            resolvent.remove(&negated_pivot);
+            resolvent.shift_remove(&negated_pivot);
             let mut resolvent = resolvent
                 .iter()
                 .map(|(p, literal)| {

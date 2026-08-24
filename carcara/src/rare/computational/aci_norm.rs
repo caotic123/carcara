@@ -28,17 +28,7 @@ pub fn aci_rules(
     identity: EggExpr,
     assoc_calls: Option<&IndexSet<EggExpr>>,
 ) -> Vec<EggStatement> {
-    let mut decls = Vec::new();
-
-    // 1. Convert args-based calls to Assoc-based calls
-    if let Some(calls) = assoc_calls {
-        for args_expr in calls {
-            let call = EggExpr::Call(op_with_at.into(), vec![args_expr.clone()]);
-            let lhs = egg_expr!((mk { call }));
-            let rhs = to_assoc_call(op_with_at, args_expr_to_vec(op_with_at, args_expr));
-            decls.push(EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![]));
-        }
-    }
+    let mut decls = aci_call_rules(op_with_at, assoc_calls);
 
     // 2. Identity elimination: (op x identity) → x
     // The head must be a genuine element (Mk x): an unguarded variable can bind
@@ -71,12 +61,31 @@ pub fn aci_rules(
     let assoc_set = egg_expr!((Assoc (set_insert (set_empty) (mk "x"))));
     let op_call = EggExpr::Call(op_with_at.into(), vec![assoc_set]);
     decls.push(EggStatement::Rule {
-        ruleset: Some("list-ruleset".to_string()),
+        ruleset: Some("list-ruleset".to_owned()),
         body: vec![egg_expr!((= {op_call} "result"))],
         head: vec![egg_expr!((union "result" (mk "x")))],
     });
 
     decls
+}
+
+/// Generate only the conversions tied to concrete calls seen in a proof step.
+pub fn aci_call_rules(
+    op_with_at: &str,
+    assoc_calls: Option<&IndexSet<EggExpr>>,
+) -> Vec<EggStatement> {
+    let Some(calls) = assoc_calls else {
+        return Vec::new();
+    };
+    calls
+        .iter()
+        .map(|args_expr| {
+            let call = EggExpr::Call(op_with_at.into(), vec![args_expr.clone()]);
+            let lhs = egg_expr!((mk { call }));
+            let rhs = to_assoc_call(op_with_at, args_expr_to_vec(op_with_at, args_expr));
+            EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![])
+        })
+        .collect()
 }
 
 pub fn to_assoc_call(op_with_at: &str, args: Vec<EggExpr>) -> EggExpr {

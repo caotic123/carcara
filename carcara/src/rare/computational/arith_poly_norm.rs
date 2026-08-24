@@ -19,7 +19,7 @@ use egglog::{
 pub fn arith_poly_norm_rules() -> Vec<EggStatement> {
     // Include the egglog file content at compile time
     let egglog_content = include_str!("arith_poly_norm.egglog");
-    vec![EggStatement::Raw(egglog_content.to_string())]
+    vec![EggStatement::Raw(egglog_content.to_owned())]
 }
 
 fn is_numeric_sort(sort: &Sort) -> bool {
@@ -66,34 +66,34 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
         let is_int_result = matches!(result_sort, Sort::Int);
         let wrapped_app = EggExpr::Mk(Box::new(EggExpr::Call(
             format!("@{}", func),
-            vec![EggExpr::Literal("args".to_string())],
+            vec![EggExpr::Literal("args".to_owned())],
         )));
         let atom = EggExpr::Call(
-            "AAtom".to_string(),
+            "AAtom".to_owned(),
             vec![
                 EggExpr::Call(
-                    "arith_source_atom_hash".to_string(),
+                    "arith_source_atom_hash".to_owned(),
                     vec![wrapped_app.clone()],
                 ),
                 EggExpr::NativeBool(is_int_result),
             ],
         );
         decls.push(EggStatement::Rule {
-            ruleset: Some("arith_poly_guard".to_string()),
+            ruleset: Some("arith_poly_guard".to_owned()),
             body: vec![egg_expr!(("arithGoalPolyNfOf-demand" {wrapped_app.clone()}))],
             head: vec![EggExpr::Set(
                 Box::new(EggExpr::Call(
-                    "arithGoalPolyCanMatch".to_string(),
+                    "arithGoalPolyCanMatch".to_owned(),
                     vec![wrapped_app.clone()],
                 )),
                 Box::new(EggExpr::NativeBool(true)),
             )],
         });
         decls.push(EggStatement::Rule {
-            ruleset: Some("arith_poly".to_string()),
+            ruleset: Some("arith_poly".to_owned()),
             body: vec![egg_expr!(("arithCopyOf-demand" {wrapped_app.clone()}))],
             head: vec![EggExpr::Set(
-                Box::new(EggExpr::Call("arithCopyOf".to_string(), vec![wrapped_app])),
+                Box::new(EggExpr::Call("arithCopyOf".to_owned(), vec![wrapped_app])),
                 Box::new(atom),
             )],
         });
@@ -105,26 +105,26 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
 pub fn poly_goal_check_terms(lhs: EggExpr, rhs: EggExpr) -> (Vec<EggStatement>, EggExpr, EggExpr) {
     let setup = vec![
         EggStatement::Call(Box::new(EggExpr::Call(
-            "arithGoalPolyNfOf-demand".to_string(),
+            "arithGoalPolyNfOf-demand".to_owned(),
             vec![lhs.clone()],
         ))),
         EggStatement::Call(Box::new(EggExpr::Call(
-            "arithGoalPolyNfOf-demand".to_string(),
+            "arithGoalPolyNfOf-demand".to_owned(),
             vec![rhs.clone()],
         ))),
         EggStatement::Saturate {
-            ruleset: Some("arith_poly".to_string()),
+            ruleset: Some("arith_poly".to_owned()),
         },
     ];
 
-    let lhs_cmp = EggExpr::Call("arithGoalPolyNfOf".to_string(), vec![lhs]);
-    let rhs_cmp = EggExpr::Call("arithGoalPolyNfOf".to_string(), vec![rhs]);
+    let lhs_cmp = EggExpr::Call("arithGoalPolyNfOf".to_owned(), vec![lhs]);
+    let rhs_cmp = EggExpr::Call("arithGoalPolyNfOf".to_owned(), vec![rhs]);
 
     (setup, lhs_cmp, rhs_cmp)
 }
 
 pub fn poly_goal_guard_term(lhs: EggExpr) -> EggExpr {
-    EggExpr::Call("arithGoalPolyCanMatch".to_string(), vec![lhs])
+    EggExpr::Call("arithGoalPolyCanMatch".to_owned(), vec![lhs])
 }
 
 struct ArithSourceAtomHash;
@@ -194,7 +194,7 @@ pub fn register_arith_poly_primitives(egraph: &mut EGraph) {
     egraph.add_primitive(ArithPolyAtomHash);
 }
 
-/// Test module for arith_poly_norm debugging using the engine
+/// Test module for `arith_poly_norm` debugging using the engine
 #[cfg(test)]
 pub mod tests {
     use crate::ast::pool::PrimitivePool;
@@ -203,11 +203,10 @@ pub mod tests {
     use crate::parser::{parse_instance_with_pool, Config, Parser};
     use crate::rare::engine::{run_egglog, RunEgglogOptions};
     use egglog::EGraph;
-    use indexmap::IndexMap;
     use std::io::Cursor;
 
     /// Returns true if debug-egglog feature is enabled
-    /// Run with: cargo test --features debug-egglog <test_name> -- --nocapture
+    /// Run with: cargo test --features debug-egglog <`test_name`> -- --nocapture
     fn debug_egglog() -> bool {
         cfg!(feature = "debug-egglog")
     }
@@ -347,13 +346,9 @@ pub mod tests {
         parse_term_with_config(pool, term_str, base_parser_config())
     }
 
-    /// Create an empty Rules database (arith_poly_norm rules are hardcoded in egglog)
+    /// Create an empty Rules database (`arith_poly_norm` rules are hardcoded in egglog)
     fn empty_rules() -> RareStatements {
-        RareStatements {
-            rules: IndexMap::new(),
-            programs: IndexMap::new(),
-            consts: IndexMap::new(),
-        }
+        RareStatements::default()
     }
 
     fn parse_rare_rules(pool: &mut PrimitivePool, source: &str) -> RareStatements {
@@ -374,10 +369,10 @@ pub mod tests {
         conclusion: Rc<crate::ast::Term>,
     ) -> Rc<ProofNode> {
         let step = StepNode {
-            id: "test".to_string(),
+            id: "test".to_owned(),
             depth: 0,
             clause: vec![conclusion],
-            rule: "hole".to_string(),
+            rule: "hole".to_owned(),
             premises: vec![],
             args: vec![],
             discharge: vec![],
@@ -386,8 +381,8 @@ pub mod tests {
         Rc::new(ProofNode::Step(step))
     }
 
-    /// Try to elaborate a conclusion term using run_egglog
-    /// Set DEBUG_EGGLOG=1 env var to print generated egglog code
+    /// Try to elaborate a conclusion term using `run_egglog`
+    /// Set `DEBUG_EGGLOG=1` env var to print generated egglog code
     fn try_elaborate(conclusion_str: &str) -> Result<(), String> {
         try_elaborate_with_debug(conclusion_str, debug_egglog())
     }
@@ -454,10 +449,10 @@ pub mod tests {
     }
 
     fn nth_occurrence(code: &str, needle: &str, index: usize) -> usize {
-        code.match_indices(needle)
-            .nth(index)
-            .map(|(offset, _)| offset)
-            .unwrap_or_else(|| panic!("missing occurrence {} of `{}` in:\n{}", index, needle, code))
+        code.match_indices(needle).nth(index).map_or_else(
+            || panic!("missing occurrence {} of `{}` in:\n{}", index, needle, code),
+            |(offset, _)| offset,
+        )
     }
 
     fn assert_single_round_raw_then_poly_pipeline(code: &str) {
@@ -642,7 +637,7 @@ pub mod tests {
             script,
         );
         egraph
-            .parse_and_run_program(Some("arith_poly_norm_raw_tests.egg".to_string()), &program)
+            .parse_and_run_program(Some("arith_poly_norm_raw_tests.egg".to_owned()), &program)
             .map(|_| ())
             .map_err(|e| e.to_string())
     }

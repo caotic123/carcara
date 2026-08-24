@@ -81,12 +81,18 @@ fn to_expr(e: EggExpr) -> Expr {
             ],
         ),
 
-        BitVec(w, v) => Expr::Call(
+        BitVec(value, width) => Expr::Call(
             dummy_span(),
-            Symbol::from("Bitvec"),
+            Symbol::from("BitVec"),
             vec![
-                Expr::Lit(dummy_span(), egglog::ast::Literal::Int(w.to_i64_wrapping())),
-                Expr::Lit(dummy_span(), egglog::ast::Literal::Int(v.to_i64_wrapping())),
+                Expr::Lit(
+                    dummy_span(),
+                    egglog::ast::Literal::String(value.to_string().into()),
+                ),
+                Expr::Lit(
+                    dummy_span(),
+                    egglog::ast::Literal::String(width.to_string().into()),
+                ),
             ],
         ),
         Op(op) => Expr::Call(
@@ -115,7 +121,7 @@ fn to_expr(e: EggExpr) -> Expr {
         Call(name, args) => Expr::Call(
             dummy_span(),
             Symbol::from(name),
-            args.into_iter().map(|x| to_expr(x)).collect(),
+            args.into_iter().map(to_expr).collect(),
         ),
         Args(x, xs) => Expr::Call(
             dummy_span(),
@@ -202,7 +208,7 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                     span: dummy_span(),
                     name: Symbol::from(name.as_str()),
                     schema: Schema {
-                        input: inputs.iter().map(|x| ct_to_sort(x)).collect(),
+                        input: inputs.iter().map(ct_to_sort).collect(),
                         output: ct_to_sort(&out),
                     },
                     cost: None,

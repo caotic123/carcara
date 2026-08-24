@@ -5,6 +5,10 @@ mod rules;
 use crate::{
     ast::{rare_rules::Rules, *},
     benchmarking::{CollectResults, OnlineBenchmarkResults},
+    rare::engine::{
+        check_hole_rewrite_with_context as check_hole_rewrite_with_egglog, RareCheckContext,
+        RunEgglogOptions,
+    },
     CarcaraResult, Error,
 };
 use error::{CheckerError, SubproofError};
@@ -58,6 +62,13 @@ pub struct Config {
 
     /// A set of rule names that the checker will allow, considering them holes in the proof.
     pub allowed_rules: HashSet<String>,
+
+    /// If `true`, validate `hole` steps marked as `TRUST_THEORY_REWRITE` with egglog. A step that
+    /// cannot be validated remains a hole.
+    pub check_hole_rewrites: bool,
+
+    /// Options controlling egglog checks of trusted theory rewrites.
+    pub hole_rewrite_options: RunEgglogOptions,
 }
 
 impl Config {
@@ -74,6 +85,11 @@ impl Config {
         self.ignore_unknown_rules = value;
         self
     }
+
+    pub fn check_hole_rewrites(mut self, value: bool) -> Self {
+        self.check_hole_rewrites = value;
+        self
+    }
 }
 
 pub struct ProofChecker<'c> {
@@ -81,17 +97,22 @@ pub struct ProofChecker<'c> {
     config: Config,
     context: ContextStack,
     rare_rules: &'c Rules,
+    rare_check_context: Option<RareCheckContext<'c>>,
     reached_empty_clause: bool,
     is_holey: bool,
 }
 
 impl<'c> ProofChecker<'c> {
     pub fn new(pool: &'c mut PrimitivePool, rare_rules: &'c Rules, config: Config) -> Self {
+        let rare_check_context = config
+            .check_hole_rewrites
+            .then(|| RareCheckContext::new(rare_rules));
         ProofChecker {
             pool,
             config,
             context: ContextStack::new(),
             rare_rules,
+            rare_check_context,
             reached_empty_clause: false,
             is_holey: false,
         }
@@ -141,7 +162,7 @@ impl<'c> ProofChecker<'c> {
                     };
                     self.check_step(step, previous_command, &iter, &mut stats)
                         .map_err(|e| Error::Checker {
-                            inner: e,
+                            inner: Box::new(e),
                             rule: step.rule.clone(),
                             step: step.id.clone(),
                         })?;
@@ -179,7 +200,7 @@ impl<'c> ProofChecker<'c> {
                 ProofCommand::Assume { id, term } => {
                     if !self.check_assume(id, term, &problem.premises, &iter, &mut stats) {
                         return Err(Error::Checker {
-                            inner: CheckerError::Assume(term.clone()),
+                            inner: Box::new(CheckerError::Assume(term.clone())),
                             rule: "assume".into(),
                             step: id.clone(),
                         });
@@ -290,7 +311,8 @@ impl<'c> ProofChecker<'c> {
             None => return Err(CheckerError::UnknownRule),
         };
 
-        if step.rule == "hole" || step.rule == "lia_generic" {
+        let check_hole_rewrite = self.config.check_hole_rewrites && Self::is_hole_rewrite(step);
+        if (step.rule == "hole" && !check_hole_rewrite) || step.rule == "lia_generic" {
             self.is_holey = true;
         }
 
@@ -308,19 +330,32 @@ impl<'c> ProofChecker<'c> {
             .map(|&i| iter.get_premise(i))
             .collect();
 
-        let rule_args = RuleArgs {
-            conclusion: &step.clause,
-            premises: &premises,
-            args: &step.args,
-            pool: self.pool,
-            context: &mut self.context,
-            rare_rules: self.rare_rules,
-            previous_command,
-            discharge: &discharge,
-            polyeq_time: &mut polyeq_time,
-        };
+        if check_hole_rewrite {
+            let checked = Self::check_hole_rewrite(
+                self.pool,
+                step,
+                &premises,
+                self.rare_check_context
+                    .as_ref()
+                    .expect("RARE context is initialized when checking is enabled"),
+                self.config.hole_rewrite_options,
+            );
+            self.is_holey |= !checked;
+        } else {
+            let rule_args = RuleArgs {
+                conclusion: &step.clause,
+                premises: &premises,
+                args: &step.args,
+                pool: self.pool,
+                context: &mut self.context,
+                rare_rules: self.rare_rules,
+                previous_command,
+                discharge: &discharge,
+                polyeq_time: &mut polyeq_time,
+            };
 
-        rule(rule_args)?;
+            rule(rule_args)?;
+        }
 
         if iter.is_end_step() {
             let subproof = iter.current_subproof().unwrap();
@@ -335,6 +370,58 @@ impl<'c> ProofChecker<'c> {
             s.polyeq_time += polyeq_time;
         }
         Ok(())
+    }
+
+    fn is_hole_rewrite(step: &ProofStep) -> bool {
+        step.rule == "hole"
+            && matches!(
+                step.args.first().map(AsRef::as_ref),
+                Some(Term::Const(Constant::String(marker)))
+                    if marker == "TRUST_THEORY_REWRITE"
+            )
+    }
+
+    fn check_hole_rewrite(
+        pool: &mut dyn TermPool,
+        step: &ProofStep,
+        premises: &[Premise],
+        rare_context: &RareCheckContext<'_>,
+        options: RunEgglogOptions,
+    ) -> bool {
+        let [conclusion] = step.clause.as_slice() else {
+            log::warn!(
+                "could not check trusted theory rewrite '{}': expected a singleton clause, got {} terms; treating it as a hole",
+                step.id,
+                step.clause.len(),
+            );
+            return false;
+        };
+        let premise_clauses = premises
+            .iter()
+            .map(|premise| premise.clause)
+            .collect::<Vec<_>>();
+        let (result, code) = check_hole_rewrite_with_egglog(
+            pool,
+            &step.id,
+            conclusion.clone(),
+            &premise_clauses,
+            rare_context,
+            options,
+        );
+        if options.print_egglog {
+            println!("{code}");
+        }
+        match result {
+            Ok(_) => true,
+            Err(error) => {
+                log::warn!(
+                    "could not check trusted theory rewrite '{}': {}; treating it as a hole",
+                    step.id,
+                    error,
+                );
+                false
+            }
+        }
     }
 
     fn check_discharge(

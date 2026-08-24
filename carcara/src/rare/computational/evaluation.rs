@@ -43,7 +43,7 @@ impl PrimitiveLike for BigRatFloorI64 {
 pub fn evaluation_rules() -> Vec<EggStatement> {
     // Include the egglog file content at compile time
     let egglog_content = include_str!("evaluation.egglog");
-    vec![EggStatement::Raw(egglog_content.to_string())]
+    vec![EggStatement::Raw(egglog_content.to_owned())]
 }
 
 pub fn register_evaluation_primitives(egraph: &mut EGraph) {
@@ -58,11 +58,10 @@ pub mod tests {
     use crate::ast::{ProofNode, Rc, StepNode};
     use crate::parser::{parse_instance_with_pool, Config, Parser};
     use crate::rare::engine::{run_egglog, RunEgglogOptions};
-    use indexmap::IndexMap;
     use std::io::Cursor;
 
     /// Returns true if debug-egglog feature is enabled
-    /// Run with: cargo test --features debug-egglog <test_name> -- --nocapture
+    /// Run with: cargo test --features debug-egglog <`test_name`> -- --nocapture
     fn debug_egglog() -> bool {
         cfg!(feature = "debug-egglog")
     }
@@ -122,11 +121,7 @@ pub mod tests {
 
     /// Create an empty Rules database (evaluation rules are hardcoded in egglog)
     fn empty_rules() -> RareStatements {
-        RareStatements {
-            rules: IndexMap::new(),
-            programs: IndexMap::new(),
-            consts: IndexMap::new(),
-        }
+        RareStatements::default()
     }
 
     fn parse_rare_rules(
@@ -166,10 +161,10 @@ pub mod tests {
         conclusion: Rc<crate::ast::Term>,
     ) -> Rc<ProofNode> {
         let step = StepNode {
-            id: id.to_string(),
+            id: id.to_owned(),
             depth: 0,
             clause: vec![conclusion],
-            rule: "hole".to_string(),
+            rule: "hole".to_owned(),
             premises: vec![],
             args: vec![],
             discharge: vec![],
@@ -178,8 +173,8 @@ pub mod tests {
         Rc::new(ProofNode::Step(step))
     }
 
-    /// Try to elaborate a conclusion term using run_egglog
-    /// Set DEBUG_EGGLOG=1 env var to print generated egglog code
+    /// Try to elaborate a conclusion term using `run_egglog`
+    /// Set `DEBUG_EGGLOG=1` env var to print generated egglog code
     fn try_elaborate(conclusion_str: &str) -> Result<(), String> {
         try_elaborate_with_debug(conclusion_str, debug_egglog())
     }
@@ -466,6 +461,25 @@ pub mod tests {
         );
     }
 
+    #[test]
+    fn test_bitvector_literal_reflexivity() {
+        let result = try_elaborate("(= (_ bv1 8) (_ bv1 8))");
+        assert!(
+            result.is_ok(),
+            "bit-vector literal reflexivity failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_bitvector_literals_are_lowered_losslessly() {
+        let result = try_elaborate("(= (_ bv0 65) (_ bv18446744073709551616 65))");
+        assert!(
+            result.is_err(),
+            "distinct large bit-vector literals were incorrectly equated"
+        );
+    }
+
     // ============ Additional Tests ============
 
     /// Test double negation: not (not true) = true
@@ -704,7 +718,7 @@ pub mod tests {
         assert!(result.is_ok(), "mult integers failed: {:?}", result.err());
     }
 
-    /// Real multiplication that exceeds egglog i64 capacity should evaluate through BigRat.
+    /// Real multiplication that exceeds egglog i64 capacity should evaluate through `BigRat`.
     #[test]
     fn test_real_multiplication_overflow_uses_bigrat() {
         let result = try_elaborate("(= (* 3037000500.0 3037000500.0) 9223372037000250000.0)");
@@ -715,7 +729,7 @@ pub mod tests {
         );
     }
 
-    /// Real addition whose result exceeds i64 should evaluate through BigRat.
+    /// Real addition whose result exceeds i64 should evaluate through `BigRat`.
     #[test]
     fn test_real_addition_overflow_uses_bigrat() {
         let result = try_elaborate("(= (+ 9223372036854775800.0 10.0) 9223372036854775810.0)");
@@ -726,7 +740,7 @@ pub mod tests {
         );
     }
 
-    /// Real subtraction whose result exceeds i64 should evaluate through BigRat.
+    /// Real subtraction whose result exceeds i64 should evaluate through `BigRat`.
     #[test]
     fn test_real_subtraction_overflow_uses_bigrat() {
         let result =
@@ -738,7 +752,7 @@ pub mod tests {
         );
     }
 
-    /// Real division whose cross-product exceeds i64 should evaluate through BigRat.
+    /// Real division whose cross-product exceeds i64 should evaluate through `BigRat`.
     #[test]
     fn test_real_division_overflow_uses_bigrat() {
         let result =
@@ -750,7 +764,7 @@ pub mod tests {
         );
     }
 
-    /// Real comparison whose cross-product exceeds i64 should evaluate through BigRat.
+    /// Real comparison whose cross-product exceeds i64 should evaluate through `BigRat`.
     #[test]
     fn test_real_comparison_overflow_uses_bigrat() {
         let result = try_elaborate("(= (not (< 3037000500.0 (/ 1.0 3037000500.0))) true)");
@@ -819,14 +833,14 @@ pub mod tests {
         assert!(result.is_ok(), "abs zero failed: {:?}", result.err());
     }
 
-    /// Test to_int on real: floor(5.0) = 5
+    /// Test `to_int` on real: floor(5.0) = 5
     #[test]
     fn test_to_int_real() {
         let result = try_elaborate("(= (to_int 5.0) 5)");
         assert!(result.is_ok(), "to_int real failed: {:?}", result.err());
     }
 
-    /// Test to_int on a negative non-integral real: floor(-1/4) = -1
+    /// Test `to_int` on a negative non-integral real: floor(-1/4) = -1
     #[test]
     fn test_to_int_negative_fraction() {
         let result = try_elaborate("(= (to_int (- 1/4)) (- 0 1))");
@@ -837,7 +851,7 @@ pub mod tests {
         );
     }
 
-    /// Test is_int on real 5.0: true (5.0 is an integer)
+    /// Test `is_int` on real 5.0: true (5.0 is an integer)
     #[test]
     fn test_is_int_real_true() {
         let result = try_elaborate("(= (is_int 5.0) true)");
@@ -848,7 +862,7 @@ pub mod tests {
         );
     }
 
-    /// Test is_int on real 5.5: false (5.5 is not an integer)
+    /// Test `is_int` on real 5.5: false (5.5 is not an integer)
     #[test]
     fn test_is_int_real_false() {
         let result = try_elaborate("(= (is_int 5.5) false)");

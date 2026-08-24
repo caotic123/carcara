@@ -1,18 +1,13 @@
 mod hole;
 mod lia_generic;
 mod polyeq;
-mod rare;
 mod reflexivity;
 mod reordering;
 mod resolution;
 mod transitivity;
 mod uncrowding;
 
-use crate::{
-    ast::{rare_rules::Rules, *},
-    rare::engine::RunEgglogOptions,
-    CheckerError,
-};
+use crate::{ast::*, CheckerError};
 use indexmap::IndexSet;
 use polyeq::PolyeqElaborator;
 use std::{
@@ -31,9 +26,6 @@ pub struct Config {
     /// Enables an optimization that reorders premises when uncrowding resolution steps, in order to
     /// further minimize the number of `contraction` steps added.
     pub uncrowd_rotation: bool,
-
-    /// Options for RARE elaboration through egglog.
-    pub rare_egglog_options: RunEgglogOptions,
 
     pub hole_options: Option<HoleOptions>,
 }
@@ -73,18 +65,12 @@ pub struct HoleOptions {
 pub struct Elaborator<'e> {
     pool: &'e mut PrimitivePool,
     problem: &'e Problem,
-    rules: &'e Rules,
     config: Config,
 }
 
 impl<'e> Elaborator<'e> {
-    pub fn new(
-        pool: &'e mut PrimitivePool,
-        problem: &'e Problem,
-        rules: &'e Rules,
-        config: Config,
-    ) -> Self {
-        Self { pool, problem, rules, config }
+    pub fn new(pool: &'e mut PrimitivePool, problem: &'e Problem, config: Config) -> Self {
+        Self { pool, problem, config }
     }
 
     pub fn elaborate_with_default_pipeline(&mut self, root: &Rc<ProofNode>) -> Rc<ProofNode> {
@@ -141,13 +127,6 @@ impl<'e> Elaborator<'e> {
                                 if (s.rule == "all_simplify" || s.rule == "rare_rewrite") =>
                             {
                                 hole::hole(self, s).unwrap_or_else(|| node.clone())
-                            }
-                            ProofNode::Step(s)
-                                if s.rule == "hole"
-                                    && s.args.len() > 0
-                                    && *s.args[0] == Term::new_string("TRUST_THEORY_REWRITE") =>
-                            {
-                                rare::elaborate_rule(self, node).unwrap_or_else(|| node.clone())
                             }
                             _ => node.clone(),
                         })

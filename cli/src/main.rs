@@ -20,6 +20,7 @@ use std::{
     io::{self, BufRead, IsTerminal},
     path::Path,
     sync::atomic,
+    time::Duration,
 };
 
 // `git describe --all` will try to find any ref (including tags) that describes the current commit.
@@ -183,6 +184,23 @@ struct CheckingOptions {
     /// - the pivots for `resolution` steps must be given as arguments
     #[clap(arg_enum, long, default_value = "normal", verbatim_doc_comment)]
     check_granularity: CheckGranularity,
+
+    /// Validate `hole` steps marked as `TRUST_THEORY_REWRITE` using RARE and egglog.
+    #[clap(long)]
+    check_hole_rewrites: bool,
+
+    /// Print the egglog program generated for each checked hole rewrite.
+    #[clap(long, requires = "check-hole-rewrites")]
+    print_egglog: bool,
+
+    /// Keep running RARE egglog schedules one step at a time until goals are saturated.
+    #[clap(long = "continous-saturation", requires = "check-hole-rewrites")]
+    continous_saturation: bool,
+
+    /// Cooperative time budget in milliseconds for each RARE hole rewrite. The budget is checked
+    /// between egglog rule iterations.
+    #[clap(long, requires = "check-hole-rewrites", value_name = "MILLISECONDS")]
+    rare_check_timeout: Option<u64>,
 }
 
 impl From<CheckingOptions> for checker::Config {
@@ -191,6 +209,13 @@ impl From<CheckingOptions> for checker::Config {
             elaborated: val.check_granularity == CheckGranularity::Elaborated,
             ignore_unknown_rules: val.ignore_unknown_rules || val.skip_unknown_rules,
             allowed_rules: val.allowed_rules.unwrap_or_default().into_iter().collect(),
+            check_hole_rewrites: val.check_hole_rewrites,
+            hole_rewrite_options: RunEgglogOptions {
+                continuous_saturation: val.continous_saturation,
+                timeout: val.rare_check_timeout.map(Duration::from_millis),
+                print_egglog: val.print_egglog,
+                ..RunEgglogOptions::default()
+            },
         }
     }
 }
@@ -248,14 +273,6 @@ struct ElaborationOptions {
         default_values = &["polyeq", "lia-generic", "local", "uncrowd", "reordering", "hole"]
     )]
     pipeline: Vec<ElaborationStep>,
-
-    /// Print the egglog program generated for each proof step.
-    #[clap(long)]
-    print_egglog: bool,
-
-    /// Keep running RARE egglog schedules one step at a time until goals are saturated.
-    #[clap(long = "continous-saturation")]
-    continous_saturation: bool,
 }
 
 impl From<ElaborationOptions> for (elaborator::Config, Vec<elaborator::ElaborationStep>) {
@@ -293,11 +310,6 @@ impl From<ElaborationOptions> for (elaborator::Config, Vec<elaborator::Elaborati
         let config = elaborator::Config {
             lia_options,
             uncrowd_rotation: val.uncrowd_rotate,
-            rare_egglog_options: RunEgglogOptions {
-                continuous_saturation: val.continous_saturation,
-                print_egglog: val.print_egglog,
-                ..RunEgglogOptions::default()
-            },
             hole_options,
         };
         (config, pipeline)

@@ -2,35 +2,35 @@ use crate::{
     egg_expr,
     rare::{
         engine::EggFunctions,
-        language::{ConstType, EggExpr, EggStatement},
+        language::{ConstType, EggStatement},
     },
 };
 
 pub fn distinct_solver_statements() -> Vec<EggStatement> {
-    let term = ConstType::ConstrType("Term".to_string());
+    let term = ConstType::ConstrType("Term".to_owned());
     let mut stmts = vec![
         EggStatement::Function {
-            name: "to_formula".to_string(),
+            name: "to_formula".to_owned(),
             inputs: vec![term.clone(), term.clone(), term.clone()],
             output: term.clone(),
             merge: None,
         },
         EggStatement::Relation(
-            "to_formula_rel".to_string(),
+            "to_formula_rel".to_owned(),
             vec![term.clone(), term.clone(), term],
         ),
     ];
 
     // Rule 1: base case for to_formula
     stmts.push(EggStatement::Rule {
-        ruleset: Some("list-ruleset".to_string()),
+        ruleset: Some("list-ruleset".to_owned()),
         body: vec![egg_expr!(("to_formula_rel" () "k" ()))],
         head: vec![egg_expr!((set ("to_formula" () "k" ()) ()))],
     });
 
     // Rule 2: decompose result into (r . rs)
     stmts.push(EggStatement::Rule {
-        ruleset: Some("list-ruleset".to_string()),
+        ruleset: Some("list-ruleset".to_owned()),
         body: vec![
             egg_expr!((= "res" (args "r" "rs"))),
             egg_expr!(("to_formula_rel" "res" "y" ())),
@@ -40,7 +40,7 @@ pub fn distinct_solver_statements() -> Vec<EggStatement> {
 
     // Rule 3: decompose xs into (x . rxs)
     stmts.push(EggStatement::Rule {
-        ruleset: Some("list-ruleset".to_string()),
+        ruleset: Some("list-ruleset".to_owned()),
         body: vec![
             egg_expr!((= "xs" (args "x" "rxs"))),
             egg_expr!(("to_formula_rel" "res" "y" "xs")),
@@ -54,7 +54,7 @@ pub fn distinct_solver_statements() -> Vec<EggStatement> {
     let not_term = egg_expr!((mk (_not (args {eq_inner.clone()} ()))));
     let set_rhs = egg_expr!((args {not_term.clone()} "f"));
     stmts.push(EggStatement::Rule {
-        ruleset: Some("list-ruleset".to_string()),
+        ruleset: Some("list-ruleset".to_owned()),
         body: vec![
             egg_expr!(("to_formula_rel" "res" "y" {args_x_rxs.clone()})),
             egg_expr!((= ("to_formula" "res" "y" "rxs") "f")),
@@ -65,7 +65,7 @@ pub fn distinct_solver_statements() -> Vec<EggStatement> {
     // Rule 5: handle (r . res) case
     let args_r_res = egg_expr!((args "r" "res"));
     stmts.push(EggStatement::Rule {
-        ruleset: Some("list-ruleset".to_string()),
+        ruleset: Some("list-ruleset".to_owned()),
         body: vec![
             egg_expr!(("to_formula_rel" {args_r_res.clone()} "y" ())),
             egg_expr!((= ("to_formula" "res" "r" "res") "f")),
@@ -76,7 +76,7 @@ pub fn distinct_solver_statements() -> Vec<EggStatement> {
     // Rule 6: distinct elimination - union with and
     let distinct_term = egg_expr!((mk (_distinct (args "x" "xs"))));
     stmts.push(EggStatement::Rule {
-        ruleset: Some("list-ruleset".to_string()),
+        ruleset: Some("list-ruleset".to_owned()),
         body: vec![
             egg_expr!(("Avaliable" {distinct_term.clone()})),
             egg_expr!((= ("to_formula" "xs" "x" "xs") "f")),
@@ -87,7 +87,7 @@ pub fn distinct_solver_statements() -> Vec<EggStatement> {
     // Rule 7: trigger to_formula_rel from distinct availability
     let distinct_term = egg_expr!((mk (_distinct (args "x" "xs"))));
     stmts.push(EggStatement::Rule {
-        ruleset: Some("list-ruleset".to_string()),
+        ruleset: Some("list-ruleset".to_owned()),
         body: vec![egg_expr!(("Avaliable" {distinct_term.clone()}))],
         head: vec![egg_expr!(("to_formula_rel" "xs" "x" "xs"))],
     });
@@ -100,7 +100,7 @@ pub fn declare_logic_operators(functions: &mut EggFunctions) {
     for func in functions_needed {
         functions
             .names
-            .entry(func.to_string())
+            .entry(func.to_owned())
             .or_insert((true, 1, None));
     }
 }

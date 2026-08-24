@@ -18,12 +18,11 @@ pub fn check_rare(
         ..
     }: RuleArgs,
 ) -> RuleResult {
-    let rule_literal = args.get(0);
-    if rule_literal == None {
+    let Some(rule_literal) = args.first() else {
         return Err(CheckerError::RareNotSpecifiedRule);
-    }
+    };
 
-    if let Term::Const(Constant::String(v)) = &**rule_literal.unwrap() {
+    if let Term::Const(Constant::String(v)) = &**rule_literal {
         let rule = rare_rules.rules.get(v);
         if rule.is_none() {
             return Err(CheckerError::RareRuleNotFound(v.clone()));
@@ -46,26 +45,23 @@ pub fn check_rare(
         for arg in rare_term.arguments.iter().rev() {
             let arg_sort = rare_term.parameters.get(arg).unwrap();
             let value = arguments.next().unwrap().clone();
-            let var_sort = if arg_sort.attribute == crate::ast::rare_rules::AttributeParameters::List
-            {
-                match arg_sort.term.as_sort().unwrap() {
-                    Sort::RareList(elem_sort) => {
-                        let value_sort = pool.sort(&value);
-                        if value_sort.as_sort() == Some(arg_sort.term.as_sort().unwrap()) {
-                            arg_sort.term.clone()
-                        } else {
-                            elem_sort.clone()
+            let var_sort =
+                if arg_sort.attribute == crate::ast::rare_rules::AttributeParameters::List {
+                    match arg_sort.term.as_sort().unwrap() {
+                        Sort::RareList(elem_sort) => {
+                            let value_sort = pool.sort(&value);
+                            if value_sort.as_sort() == Some(arg_sort.term.as_sort().unwrap()) {
+                                arg_sort.term.clone()
+                            } else {
+                                elem_sort.clone()
+                            }
                         }
+                        _ => arg_sort.term.clone(),
                     }
-                    _ => arg_sort.term.clone(),
-                }
-            } else {
-                arg_sort.term.clone()
-            };
-            map.insert(
-                pool.add(Term::Var(arg.clone(), var_sort)),
-                value,
-            );
+                } else {
+                    arg_sort.term.clone()
+                };
+            map.insert(pool.add(Term::Var(arg.clone(), var_sort)), value);
         }
 
         if rare_term.premises.len() != premises.len() {
@@ -115,10 +111,8 @@ pub fn check_rare(
             ));
         }
 
-        return Ok(());
+        Ok(())
+    } else {
+        Err(CheckerError::RareRuleExpectedLiteral(rule_literal.clone()))
     }
-
-    return Err(CheckerError::RareRuleExpectedLiteral(
-        rule_literal.unwrap().clone(),
-    ));
 }

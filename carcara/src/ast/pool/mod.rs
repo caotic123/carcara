@@ -171,7 +171,7 @@ impl PrimitivePool {
                                 total_width.push(TotalWidth::Width(arg_width));
                             }
                             Sort::ParamSort(v, _) => {
-                                total_width.push(TotalWidth::ParamSort(v[0].clone()))
+                                total_width.push(TotalWidth::ParamSort(v[0].clone()));
                             }
                             _ => unreachable!(),
                         }
@@ -255,10 +255,10 @@ impl PrimitivePool {
                 | Operator::ReOption
                 | Operator::ReRange => Sort::RegLan,
                 Operator::RareList => {
-                    let element_sort = args
-                        .first()
-                        .map(|arg| self.compute_sort(arg))
-                        .unwrap_or_else(|| self.add(Term::Sort(Sort::Var("T".to_owned()))));
+                    let element_sort = match args.first() {
+                        Some(arg) => self.compute_sort(arg),
+                        None => self.add(Term::Sort(Sort::Var("T".to_owned()))),
+                    };
                     Sort::RareList(element_sort)
                 }
             },
@@ -419,7 +419,7 @@ impl PrimitivePool {
                 let mut vars = self.free_vars_with_priorities(inner, prior_pools);
                 for bound_var in bindings {
                     let term = self.add_with_priorities(bound_var.clone().into(), prior_pools);
-                    vars.remove(&term);
+                    vars.shift_remove(&term);
                 }
                 vars
             }
@@ -428,7 +428,7 @@ impl PrimitivePool {
                 for (var, value) in bindings {
                     let sort = self.sort_with_priorities(value, prior_pools);
                     let term = self.add_with_priorities((var.clone(), sort).into(), prior_pools);
-                    vars.remove(&term);
+                    vars.shift_remove(&term);
                 }
                 vars
             }

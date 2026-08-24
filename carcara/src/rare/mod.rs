@@ -12,13 +12,13 @@ use crate::{
 };
 
 pub fn get_rules() -> Vec<(RewriteTerm, RewriteTerm)> {
-    return vec![
+    vec![
         build_equation!((RareList ..x..) ~> x),
         build_equation!((And x) ~> x),
         build_equation!((Or x) ~> x),
         build_equation!((Or true) ~> true),
         build_equation!((And false) ~> false),
-    ];
+    ]
 }
 
 #[derive(Debug, Clone)]
@@ -42,8 +42,8 @@ where
     match rule {
         RewriteTerm::ManyEq(op, var) => match term.as_ref() {
             Term::Op(op_, rest_) if op == op_ => {
-                traces.insert(var.to_string(), Trace::ManyTerm(rest_));
-                return Some(traces);
+                traces.insert((*var).to_owned(), Trace::ManyTerm(rest_));
+                Some(traces)
             }
             _ => None,
         },
@@ -58,17 +58,15 @@ where
                 for param in rest_ {
                     let rule = rest.next().unwrap();
                     traces = match_meta_terms(param, rule, traces.unwrap());
-                    if traces.is_none() {
-                        return None;
-                    }
+                    traces.as_ref()?;
                 }
-                return traces;
+                traces
             }
             _ => None,
         },
         RewriteTerm::VarEqual(var) => {
-            traces.insert(var.to_string(), Trace::Term(term));
-            return Some(traces);
+            traces.insert((*var).to_owned(), Trace::Term(term));
+            Some(traces)
         }
     }
 }
@@ -89,7 +87,7 @@ fn reconstruct_meta_terms<'a>(
                     args.push(term.clone());
                 }
             }
-            return Trace::Term(pool.add(Term::Op(op.clone(), args)));
+            Trace::Term(pool.add(Term::Op(*op, args)))
         }
         RewriteTerm::VarEqual(var) => {
             let trace = traces.get(*var).unwrap();
@@ -109,11 +107,11 @@ fn check_rewrites(
     for rule in rules {
         let mut traces = IndexMap::new();
         let lhs = &rule.0;
-        if let Some(traces) = match_meta_terms(term, &lhs, &mut traces) {
+        if let Some(traces) = match_meta_terms(term, lhs, &mut traces) {
             return Some(reconstruct_meta_terms(pool, &rule.1, traces));
         }
     }
-    return None;
+    None
 }
 
 pub fn rewrite_meta_terms(
@@ -146,7 +144,7 @@ pub fn rewrite_meta_terms(
                 return rewrite_meta_terms(pool, new_term, rules);
             }
 
-            return new_term;
+            new_term
         }
 
         Term::Op(op, args) => {
@@ -172,7 +170,7 @@ pub fn rewrite_meta_terms(
                             return rewrite_meta_terms(pool, new_term, rules);
                         }
 
-                        return new_term;
+                        new_term
                     }
                 }
             } else {
@@ -190,11 +188,11 @@ pub fn rewrite_meta_terms(
                     })
                     .collect::<Vec<_>>();
                 let new_term = pool.add(Term::Op(*op, new_args));
-                if let Some(_) = check_rewrites(pool, &new_term, rules) {
+                if check_rewrites(pool, &new_term, rules).is_some() {
                     return rewrite_meta_terms(pool, new_term, rules);
                 }
 
-                return new_term;
+                new_term
             }
         }
 
@@ -241,7 +239,7 @@ mod tests {
             parser.parse_term().unwrap()
         });
 
-        let got = rewrite_meta_terms(&mut pool, original, &vec![rule]);
+        let got = rewrite_meta_terms(&mut pool, original, &[rule]);
 
         assert_eq!(&result, &got);
     }

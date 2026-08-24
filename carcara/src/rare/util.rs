@@ -3,10 +3,10 @@ use std::hash::{Hash, Hasher};
 
 use indexmap::{IndexMap, IndexSet};
 
-use crate::ast::{Operator, PrimitivePool, Rc, Sort, Term, TermPool};
+use crate::ast::{Operator, Rc, Sort, Term, TermPool};
 
-pub fn clauses_to_or(pool: &mut PrimitivePool, clauses: &[Rc<Term>]) -> Option<Rc<Term>> {
-    if clauses.len() == 0 {
+pub fn clauses_to_or(pool: &mut dyn TermPool, clauses: &[Rc<Term>]) -> Option<Rc<Term>> {
+    if clauses.is_empty() {
         return None;
     }
 
@@ -14,7 +14,7 @@ pub fn clauses_to_or(pool: &mut PrimitivePool, clauses: &[Rc<Term>]) -> Option<R
         return Some(clauses[0].clone());
     }
 
-    return Some(pool.add(Term::Op(Operator::Or, clauses.to_vec())));
+    Some(pool.add(Term::Op(Operator::Or, clauses.to_vec())))
 }
 
 pub fn get_equational_terms(term: &Rc<Term>) -> Option<(Operator, &Rc<Term>, &Rc<Term>)> {
@@ -90,7 +90,7 @@ pub fn collect_vars(root: &Rc<Term>, collect_functions: bool) -> IndexMap<String
     }
 
     let mut map = IndexMap::<String, Rc<Term>>::new();
-    visit(&root, &mut map, collect_functions);
+    visit(root, &mut map, collect_functions);
     map.into_iter().collect()
 }
 
@@ -137,9 +137,6 @@ pub fn unify_pattern_bidirectional(
     pat: &Rc<Term>,
     val: &Rc<Term>,
 ) -> Option<(HashMap<Rc<Term>, Rc<Term>>, HashMap<Rc<Term>, Rc<Term>>)> {
-    let mut lhs_env = HashMap::<Rc<Term>, Rc<Term>>::new(); // LHS vars (incl. sort vars-as-terms)
-    let mut rhs_env = HashMap::<Rc<Term>, Rc<Term>>::new(); // RHS vars (incl. sort vars-as-terms)
-
     fn occurs(v: &Rc<Term>, t: &Rc<Term>) -> bool {
         if v == t {
             return true;
@@ -313,9 +310,7 @@ pub fn unify_pattern_bidirectional(
                     | (Sort::String, Sort::String)
                     | (Sort::RegLan, Sort::RegLan)
                     | (Sort::Type, Sort::Type) => true,
-                    (Sort::RareList(a), Sort::RareList(b)) => {
-                        unify_term(a, b, lhs_env, rhs_env)
-                    }
+                    (Sort::RareList(a), Sort::RareList(b)) => unify_term(a, b, lhs_env, rhs_env),
 
                     _ => false,
                 }
@@ -360,6 +355,9 @@ pub fn unify_pattern_bidirectional(
         }
     }
 
+    let mut lhs_env = HashMap::<Rc<Term>, Rc<Term>>::new(); // LHS vars (incl. sort vars-as-terms)
+    let mut rhs_env = HashMap::<Rc<Term>, Rc<Term>>::new(); // RHS vars (incl. sort vars-as-terms)
+
     if unify_term(pat, val, &mut lhs_env, &mut rhs_env) {
         Some((lhs_env, rhs_env))
     } else {
@@ -368,7 +366,7 @@ pub fn unify_pattern_bidirectional(
 }
 
 pub fn unify_pattern(pat: &Rc<Term>, val: &Rc<Term>) -> bool {
-    return unify_pattern_bidirectional(pat, val).is_some();
+    unify_pattern_bidirectional(pat, val).is_some()
 }
 
 pub fn hash_var_name(map: &mut HashMap<String, u64>, name: &str) -> u64 {
