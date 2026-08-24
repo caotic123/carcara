@@ -1,3 +1,9 @@
+pub mod clausification;
+pub mod quantifiers;
+pub mod reflexivity;
+pub mod subproof;
+pub mod tautology;
+
 use super::*;
 use crate::{
     ast::*,
@@ -29,7 +35,7 @@ impl<'a> PolyeqElaborator<'a> {
     /// proves their equality.
     pub fn elaborate(
         &mut self,
-        pool: &mut dyn TermPool,
+        pool: &mut PrimitivePool,
         a: Rc<Term>,
         b: Rc<Term>,
     ) -> Rc<ProofNode> {
@@ -46,7 +52,7 @@ impl<'a> PolyeqElaborator<'a> {
 
     fn elaborate_impl(
         &mut self,
-        pool: &mut dyn TermPool,
+        pool: &mut PrimitivePool,
         a: Rc<Term>,
         b: Rc<Term>,
     ) -> Rc<ProofNode> {
@@ -72,9 +78,22 @@ impl<'a> PolyeqElaborator<'a> {
                 self.build_cong(pool, (&a, &b), (a_args, b_args))
             }
             (Term::Op(a_op, a_args), Term::Op(b_op, b_args)) => {
-                assert_eq!(a_op, b_op);
-                assert_eq!(a_args.len(), b_args.len());
-                self.build_cong(pool, (&a, &b), (a_args, b_args))
+                if a_op != b_op {
+                    todo!("elaborate chainable nary")
+                } else if a_args.len() != b_args.len() {
+                    let (nary, binary) = if a_args.len() == 2 {
+                        assert!(b_args.len() > 2);
+                        (b_args, &a)
+                    } else if b_args.len() == 2 {
+                        assert!(a_args.len() > 2);
+                        (a_args, &b)
+                    } else {
+                        panic!("invalid associative nary case")
+                    };
+                    self.elaborate_assoc(pool, *a_op, nary, binary)
+                } else {
+                    self.build_cong(pool, (&a, &b), (a_args, b_args))
+                }
             }
 
             // Since `choice` and `lambda` terms are not in the SMT-LIB standard, they cannot appear
@@ -140,7 +159,7 @@ impl<'a> PolyeqElaborator<'a> {
                     previous_step: Some(previous),
                     ..Default::default()
                 };
-                self.close_subproof(args, last_step)
+                self.close_subproof(args, last_step, Vec::new())
             }
 
             (Term::Let(a_bindings, a_inner), Term::Let(b_bindings, b_inner)) => {
@@ -154,7 +173,7 @@ impl<'a> PolyeqElaborator<'a> {
                 // The values of the binding lists in the `let` terms may not be syntactically
                 // identical, in which case we need to prove their equality so the `bind_let` step
                 // is valid.
-                let premises = a_bindings
+                let premises: Vec<_> = a_bindings
                     .iter()
                     .zip(b_bindings)
                     .filter_map(|(a, b)| {
@@ -174,12 +193,14 @@ impl<'a> PolyeqElaborator<'a> {
                     depth: self.depth(),
                     clause: vec![build_term!(pool, (= {a.clone()} {b.clone()}))],
                     rule: "bind_let".to_owned(),
-                    premises,
+                    premises: premises.clone(),
                     args: Vec::new(),
                     discharge: Vec::new(),
                     previous_step: Some(previous),
                 };
-                self.close_subproof(args, last_step)
+                // The premises to the `bind_let` step are outbound, so we need to pass them to
+                // `close_subproof`
+                self.close_subproof(args, last_step, premises)
             }
             // If one of the terms is a constant, but they are still polyequal, we can't break it up
             // into smaller parts, so we just use a direct refl step. This is hack to deal with the
@@ -197,7 +218,7 @@ impl<'a> PolyeqElaborator<'a> {
     }
 
     /// Returns `true` if the terms are directly equal, modulo application of the current context.
-    fn directly_eq(&mut self, pool: &mut dyn TermPool, a: &Rc<Term>, b: &Rc<Term>) -> bool {
+    fn directly_eq(&mut self, pool: &mut PrimitivePool, a: &Rc<Term>, b: &Rc<Term>) -> bool {
         match &mut self.context {
             Some(c) => c.apply(pool, a) == *b,
             None => a == b,
@@ -206,7 +227,7 @@ impl<'a> PolyeqElaborator<'a> {
 
     /// Returns `true` if the terms are equal modulo reordering of inequalities, and modulo
     /// application of the current context.
-    fn polyeq(&mut self, pool: &mut dyn TermPool, a: &Rc<Term>, b: &Rc<Term>) -> bool {
+    fn polyeq(&mut self, pool: &mut PrimitivePool, a: &Rc<Term>, b: &Rc<Term>) -> bool {
         match &mut self.context {
             Some(c) => self.checker.eq(&c.apply(pool, a), b),
             None => self.checker.eq(a, b),
@@ -215,7 +236,7 @@ impl<'a> PolyeqElaborator<'a> {
 
     fn build_cong(
         &mut self,
-        pool: &mut dyn TermPool,
+        pool: &mut PrimitivePool,
         (a, b): (&Rc<Term>, &Rc<Term>),
         (a_args, b_args): (&[Rc<Term>], &[Rc<Term>]),
     ) -> Rc<ProofNode> {
@@ -244,7 +265,7 @@ impl<'a> PolyeqElaborator<'a> {
 
     fn flip_equality(
         &mut self,
-        pool: &mut dyn TermPool,
+        pool: &mut PrimitivePool,
         (a, a_left, a_right): (Rc<Term>, Rc<Term>, Rc<Term>),
         (b, b_left, b_right): (Rc<Term>, Rc<Term>, Rc<Term>),
     ) -> Rc<ProofNode> {
@@ -311,14 +332,7 @@ impl<'a> PolyeqElaborator<'a> {
             ..Default::default()
         }));
 
-        Rc::new(ProofNode::Step(StepNode {
-            id: self.ids.next_id(),
-            depth: self.depth(),
-            clause: vec![build_term!(pool, (= {a} {b}))],
-            rule: "trans".to_owned(),
-            premises: vec![cong_step, equiv_step],
-            ..Default::default()
-        }))
+        add_trans_step(pool, [cong_step, equiv_step], self.ids.next_id())
     }
 
     fn open_subproof(&mut self) {
@@ -326,7 +340,12 @@ impl<'a> PolyeqElaborator<'a> {
         self.ids.push();
     }
 
-    fn close_subproof(&mut self, args: Vec<AnchorArg>, mut last_step: StepNode) -> Rc<ProofNode> {
+    fn close_subproof(
+        &mut self,
+        args: Vec<AnchorArg>,
+        mut last_step: StepNode,
+        outbound_premises: Vec<Rc<ProofNode>>,
+    ) -> Rc<ProofNode> {
         self.cache.pop_scope();
         self.ids.pop();
 
@@ -336,7 +355,8 @@ impl<'a> PolyeqElaborator<'a> {
         Rc::new(ProofNode::Subproof(SubproofNode {
             last_step: Rc::new(ProofNode::Step(last_step)),
             args,
-            outbound_premises: Vec::new(), // TODO: recompute outbound premises
+            outbound_premises,
+            extra_steps: Vec::new(),
         }))
     }
 
@@ -344,7 +364,7 @@ impl<'a> PolyeqElaborator<'a> {
     /// quantifier or `let` terms. This assumes the subproof has already been opened.
     fn create_bind_subproof(
         &mut self,
-        pool: &mut dyn TermPool,
+        pool: &mut PrimitivePool,
         inner_equality: (Rc<Term>, Rc<Term>),
     ) -> Rc<ProofNode> {
         let (a, b) = inner_equality;
@@ -367,5 +387,96 @@ impl<'a> PolyeqElaborator<'a> {
                 ..Default::default()
             }))
         }
+    }
+
+    fn elaborate_assoc(
+        &mut self,
+        pool: &mut PrimitivePool,
+        op: Operator,
+        nary: &[Rc<Term>],
+        binary: &Rc<Term>,
+    ) -> Rc<ProofNode> {
+        assert!(matches!(
+            op.nary_case(),
+            Some(NaryCase::RightAssoc | NaryCase::LeftAssoc)
+        ));
+        let mut premises = Vec::new();
+        let mut normalized_args = self.get_assoc_premises(pool, &mut premises, op, nary, binary);
+
+        if premises.is_empty() {
+            let nary = pool.add(Term::Op(op, nary.to_vec()));
+            return Rc::new(ProofNode::Step(StepNode {
+                id: self.ids.next_id(),
+                depth: self.depth(),
+                clause: vec![build_term!(pool, (= {nary} {binary.clone()}))],
+                rule: "nary_elim".to_owned(),
+                ..Default::default()
+            }));
+        }
+
+        if op.nary_case() == Some(NaryCase::RightAssoc) {
+            normalized_args.reverse();
+        }
+
+        let nary = pool.add(Term::Op(op, nary.to_vec()));
+        let normalized = pool.add(Term::Op(op, normalized_args));
+        let cong_step = Rc::new(ProofNode::Step(StepNode {
+            id: self.ids.next_id(),
+            depth: self.depth(),
+            clause: vec![build_term!(pool, (= {nary.clone()} {normalized.clone()}))],
+            rule: "cong".to_owned(),
+            premises,
+            ..Default::default()
+        }));
+        let nary_elim_step = Rc::new(ProofNode::Step(StepNode {
+            id: self.ids.next_id(),
+            depth: self.depth(),
+            clause: vec![build_term!(pool, (= {normalized.clone()} {binary.clone()}))],
+            rule: "nary_elim".to_owned(),
+            ..Default::default()
+        }));
+
+        add_trans_step(pool, [cong_step, nary_elim_step], self.ids.next_id())
+    }
+
+    fn get_assoc_premises(
+        &mut self,
+        pool: &mut PrimitivePool,
+        premises: &mut Vec<Rc<ProofNode>>,
+        op: Operator,
+        nary: &[Rc<Term>],
+        binary: &Rc<Term>,
+    ) -> Vec<Rc<Term>> {
+        let is_right = op.nary_case() == Some(NaryCase::RightAssoc);
+        let (nary_head, nary_tail) = match nary {
+            [] => panic!("invalid associative nary case"),
+            [single] => {
+                if single != binary {
+                    premises.push(self.elaborate(pool, single.clone(), binary.clone()));
+                }
+                return vec![binary.clone()];
+            }
+            [first, rest @ ..] if is_right => (first, rest),
+            [rest @ .., last] => (last, rest),
+        };
+
+        let (binary_head, binary_tail) = match binary.as_op() {
+            Some((inner_op, [l, r])) if inner_op == op => {
+                if is_right {
+                    (l, r)
+                } else {
+                    (r, l)
+                }
+            }
+            _ => panic!("invalid associative nary case"),
+        };
+
+        if nary_head != binary_head {
+            premises.push(self.elaborate(pool, nary_head.clone(), binary_head.clone()));
+        }
+
+        let mut args = self.get_assoc_premises(pool, premises, op, nary_tail, binary_tail);
+        args.push(binary_head.clone());
+        args
     }
 }

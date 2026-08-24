@@ -1,5 +1,6 @@
-use super::{PrimitivePool, Rc, TermPool};
+use super::{match_term, PrimitivePool, Rc, TermPool};
 use crate::CheckerError;
+use indexmap::{map::Entry, IndexMap};
 use rug::{Integer, Rational};
 use std::{collections::HashSet, hash::Hash, ops::Deref};
 
@@ -17,7 +18,7 @@ pub enum Term {
     /// An application of a function to one or more terms.
     App(Rc<Term>, Vec<Rc<Term>>),
 
-    /// An application of a bulit-in operator to one or more terms.
+    /// An application of a built-in operator to one or more terms.
     Op(Operator, Vec<Rc<Term>>),
 
     /// A sort.
@@ -30,6 +31,11 @@ pub enum Term {
     /// A `let` binder term.
     Let(BindingList, Rc<Term>),
 
+    /// A `match` term, consisting of a term to be matched and a
+    /// sequence of (pattern,result) pairs, where each each pattern
+    /// binds a number of variables
+    Match(Rc<Term>, Vec<(BindingList, Rc<Term>, Rc<Term>)>),
+
     /// A parameterized operation term, that is, an operation term whose operator receives extra
     /// parameters.
     ///
@@ -38,6 +44,7 @@ pub enum Term {
     ///   syntax. In this case, the operator parameters must be constants.
     /// - A `qualified` operation term, that uses a qualified operator denoted by the `(as ...)`
     ///   syntax. In this case, the single operator parameter must be a sort.
+    /// - A `tester` of a datatype constructor `C`, denoted by `(_ is C)`.
     ParamOp {
         op: ParamOperator,
         op_args: Vec<Rc<Term>>,
@@ -58,7 +65,10 @@ pub enum Sort {
     ///
     /// The associated string is the sort name, and the associated terms are the sort arguments for
     /// this sort.
-    Atom(String, Vec<Rc<Term>>),
+    Atom(Box<str>, Box<[Rc<Term>]>),
+
+    // A sort variable
+    Var(String),
 
     /// The `Bool` primitive sort.
     Bool,
@@ -79,13 +89,21 @@ pub enum Sort {
     ///
     /// The two associated terms are the sort arguments for this sort.
     Array(Rc<Term>, Rc<Term>),
+
     ///  `BitVec` sort.
     ///
-    /// The associated term is the BV width of this sort.
-    BitVec(Integer),
+    /// The associated `usize` is the BV width of this sort.
+    BitVec(usize),
 
-    /// The sort of RARE lists.
-    RareList,
+    /// A datatype sort only has its name and its type parameters
+    Datatype(String, Vec<Rc<Term>>),
+
+    // TODO delete this and incorporate it to function sort?
+    /// A parametric sort, with a set of sort variables that can appear in the second argument.
+    ParamSort(Vec<Rc<Term>>, Rc<Term>),
+
+    /// The sort of RARE lists, parameterized by their element sort.
+    RareList(Rc<Term>),
 
     /// The sort of sorts.
     Type,
@@ -106,7 +124,10 @@ pub enum Constant {
     /// A string literal term.
     String(String),
 
-    BitVec(Integer, Integer),
+    /// A bitvector literal term.
+    ///
+    /// The associated values are the bitvector's value and width respectively.
+    BitVec(Integer, usize),
 }
 
 /// A binder, either a quantifier (`forall` or `exists`), `choice`, or `lambda`.
@@ -352,14 +373,147 @@ pub enum Operator {
     BvSLe,
     BvSGt,
     BvSGe,
+
+    UBvToInt,
+    SBvToInt,
+
+    BvPBbTerm,
     BvBbTerm,
+    BvConst,
+    BvSize,
+
+    // power of 2 to x, and whether x is a power of 2
+    Pow2,
+    IsPow2,
+    // logarithm in base 2 of x
+    Log2,
 
     // Misc.
     /// The `rare-list` operator, used to represent RARE lists.
     RareList,
 
+    // The clausal operators
     Cl,
-    Delete
+    Delete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NaryCase {
+    Chainable,
+    RightAssoc,
+    LeftAssoc,
+    Pairwise,
+}
+
+impl Operator {
+    pub fn nary_case(&self) -> Option<NaryCase> {
+        // We avoid using the wildcard pattern (i.e. `_`) in this match expression so that when
+        // someone adds a new operator, they are reminded to add it to this match
+        match self {
+            // Logical
+            Operator::Implies => Some(NaryCase::RightAssoc),
+            Operator::And | Operator::Or | Operator::Xor => Some(NaryCase::LeftAssoc),
+            Operator::Equals => Some(NaryCase::Chainable),
+            Operator::Distinct => Some(NaryCase::Pairwise),
+            Operator::True | Operator::False | Operator::Not | Operator::Ite => None,
+
+            // Integers/Reals
+            Operator::Add
+            | Operator::Sub
+            | Operator::Mult
+            | Operator::IntDiv
+            | Operator::RealDiv => Some(NaryCase::LeftAssoc),
+            Operator::LessThan | Operator::GreaterThan | Operator::LessEq | Operator::GreaterEq => {
+                Some(NaryCase::Chainable)
+            }
+            Operator::Mod
+            | Operator::Abs
+            | Operator::ToReal
+            | Operator::ToInt
+            | Operator::IsInt => None,
+
+            // Arrays
+            Operator::Select | Operator::Store => None,
+
+            // Strings
+            Operator::StrConcat
+            | Operator::StrLessThan
+            | Operator::StrLessEq
+            | Operator::ReConcat
+            | Operator::ReUnion
+            | Operator::ReIntersection
+            | Operator::ReDiff => Some(NaryCase::LeftAssoc),
+            Operator::StrLen
+            | Operator::CharAt
+            | Operator::Substring
+            | Operator::PrefixOf
+            | Operator::SuffixOf
+            | Operator::Contains
+            | Operator::IndexOf
+            | Operator::Replace
+            | Operator::ReplaceAll
+            | Operator::ReplaceRe
+            | Operator::ReplaceReAll
+            | Operator::StrIsDigit
+            | Operator::StrToCode
+            | Operator::StrFromCode
+            | Operator::StrToInt
+            | Operator::StrFromInt
+            | Operator::StrToRe
+            | Operator::StrInRe
+            | Operator::ReNone
+            | Operator::ReAll
+            | Operator::ReAllChar
+            | Operator::ReKleeneClosure
+            | Operator::ReComplement
+            | Operator::ReKleeneCross
+            | Operator::ReOption
+            | Operator::ReRange => None,
+
+            // Bitvectors
+            Operator::BvAnd | Operator::BvOr | Operator::BvAdd | Operator::BvMul => {
+                Some(NaryCase::LeftAssoc)
+            }
+            Operator::BvNot
+            | Operator::BvNeg
+            | Operator::BvUDiv
+            | Operator::BvURem
+            | Operator::BvShl
+            | Operator::BvLShr
+            | Operator::BvULt
+            | Operator::BvConcat
+            | Operator::BvNAnd
+            | Operator::BvNOr
+            | Operator::BvXor
+            | Operator::BvXNor
+            | Operator::BvComp
+            | Operator::BvSub
+            | Operator::BvSDiv
+            | Operator::BvSRem
+            | Operator::BvSMod
+            | Operator::BvAShr
+            | Operator::BvULe
+            | Operator::BvUGt
+            | Operator::BvUGe
+            | Operator::BvSLt
+            | Operator::BvSLe
+            | Operator::BvSGt
+            | Operator::BvSGe
+            | Operator::UBvToInt
+            | Operator::SBvToInt
+            | Operator::BvPBbTerm
+            | Operator::BvBbTerm
+            | Operator::BvConst
+            | Operator::BvSize
+            | Operator::Pow2
+            | Operator::IsPow2
+            | Operator::Log2
+            | Operator::RareList => None,
+
+            // Clausal
+            Operator::Cl | Operator::Delete => Some(NaryCase::LeftAssoc),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -367,12 +521,21 @@ pub enum ParamOperator {
     // Indexed operators
     BvExtract,
     BvBitOf,
+    BvIntOf,
     ZeroExtend,
     SignExtend,
+    RotateLeft,
+    RotateRight,
+    Repeat,
     BvConst,
+
+    IntToBv,
 
     RePower,
     ReLoop,
+
+    // Datatypes,
+    Tester,
 
     // Qualified operators
     ArrayConst,
@@ -474,7 +637,18 @@ impl_str_conversion_traits!(Operator {
     BvSLe: "bvsle",
     BvSGt: "bvsgt",
     BvSGe: "bvsge",
-    BvBbTerm: "bbterm",
+
+    UBvToInt: "ubv_to_int",
+    SBvToInt: "sbv_to_int",
+
+    BvPBbTerm: "@pbbterm",
+    BvBbTerm: "@bbterm",
+    BvConst: "@bv",
+    BvSize: "@bvsize",
+
+    Pow2: "int.pow2",
+    IsPow2: "int.ispow2",
+    Log2: "int.log2",
 
     RareList: "rare-list",
 
@@ -484,13 +658,21 @@ impl_str_conversion_traits!(Operator {
 
 impl_str_conversion_traits!(ParamOperator {
     BvExtract: "extract",
-    BvBitOf: "bit_of",
+    BvBitOf: "@bit_of",
+    BvIntOf: "@int_of",
     ZeroExtend: "zero_extend",
     SignExtend: "sign_extend",
+    RotateLeft: "rotate_left",
+    RotateRight: "rotate_right",
+    Repeat: "repeat",
     BvConst: "bv",
+
+    IntToBv: "int_to_bv",
 
     RePower: "re.^",
     ReLoop: "re.loop",
+
+    Tester: "is",
 
     ArrayConst: "const",
 });
@@ -541,6 +723,75 @@ impl From<SortedVar> for Term {
     }
 }
 
+impl Sort {
+    // Whether this sort can be matched with another, i.e., whether we
+    // can find a substitution to the sort variables of `self` that
+    // will make it equal to `target`. The map argument will store the
+    // substitution
+    pub fn match_with(&self, target: &Sort, map: &mut IndexMap<String, Sort>) -> bool {
+        match (self, target) {
+            (Sort::Var(a), _) => {
+                match map.entry(a.clone()) {
+                    Entry::Vacant(e) => {
+                        e.insert(target.clone());
+                    }
+                    Entry::Occupied(e) => {
+                        return e.get() == target;
+                    }
+                }
+                true
+            }
+            (Sort::Atom(a, sorts_a), Sort::Atom(b, sorts_b)) => {
+                if a != b {
+                    false
+                } else {
+                    sorts_a.iter().zip(sorts_b.iter()).all(|(t_a, t_b)| {
+                        let s_a = t_a.as_sort().unwrap();
+                        let s_b = t_b.as_sort().unwrap();
+                        s_a.match_with(s_b, map)
+                    })
+                }
+            }
+            (Sort::Function(sorts_a), Sort::Function(sorts_b)) => {
+                sorts_a.iter().zip(sorts_b.iter()).all(|(a_t, b_t)| {
+                    let a_s = a_t.as_sort().unwrap();
+                    let b_s = b_t.as_sort().unwrap();
+                    a_s.match_with(b_s, map)
+                })
+            }
+            (Sort::Datatype(a, sorts_a), Sort::Datatype(b, sorts_b)) => {
+                if a != b {
+                    false
+                } else {
+                    sorts_a.iter().zip(sorts_b.iter()).all(|(t_a, t_b)| {
+                        let s_a = t_a.as_sort().unwrap();
+                        let s_b = t_b.as_sort().unwrap();
+                        s_a.match_with(s_b, map)
+                    })
+                }
+            }
+            (Sort::Bool, Sort::Bool)
+            | (Sort::Int, Sort::Int)
+            | (Sort::Real, Sort::Real)
+            | (Sort::String, Sort::String)
+            | (Sort::RegLan, Sort::RegLan)
+            | (Sort::Type, Sort::Type) => true,
+            (Sort::RareList(a), Sort::RareList(b)) => {
+                a.as_sort().unwrap().match_with(b.as_sort().unwrap(), map)
+            }
+            (Sort::Array(x_a, y_a), Sort::Array(x_b, y_b)) => {
+                let s_x_a = x_a.as_sort().unwrap();
+                let s_y_a = y_a.as_sort().unwrap();
+                let s_x_b = x_b.as_sort().unwrap();
+                let s_y_b = y_b.as_sort().unwrap();
+                s_x_a.match_with(s_x_b, map) && s_y_a.match_with(s_y_b, map)
+            }
+            (Sort::BitVec(a), Sort::BitVec(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 impl Term {
     pub fn new_bool(value: impl Into<bool>) -> Self {
         let op = match value.into() {
@@ -566,8 +817,8 @@ impl Term {
     }
 
     /// Constructs a new bv term.
-    pub fn new_bv(value: impl Into<Integer>, widht: impl Into<Integer>) -> Self {
-        Term::Const(Constant::BitVec(value.into(), widht.into()))
+    pub fn new_bv(value: impl Into<Integer>, width: usize) -> Self {
+        Term::Const(Constant::BitVec(value.into(), width))
     }
 
     /// Constructs a new variable term.
@@ -652,6 +903,23 @@ impl Term {
         }
     }
 
+    /// Tries to extract a `BitVec` from a term. Returns `Some` if the
+    /// term is a bitvector constant.
+    pub fn as_bitvector(&self) -> Option<(Integer, usize)> {
+        match self {
+            Term::Const(Constant::BitVec(v, w)) => Some((v.clone(), *w)),
+            _ => None,
+        }
+    }
+
+    /// Tries to extract a `String` from a term. Returns `Some` if the term is a boolean constant.
+    pub fn as_string(&self) -> Option<String> {
+        match self {
+            Term::Const(Constant::String(s)) => Some(s.to_owned()),
+            _ => None,
+        }
+    }
+
     /// Tries to extract a `Rational` from a term, allowing fractions. This method will return
     /// `Some` if the term is:
     ///
@@ -708,6 +976,20 @@ impl Term {
     /// Returns `true` if the term is a user defined sort with arity zero, or a sort variable.
     pub fn is_sort_var(&self) -> bool {
         matches!(self, Term::Sort(Sort::Atom(_, args)) if args.is_empty())
+    }
+
+    /// Returns `true` if the term is a user defined parametric sort
+    pub fn is_sort_parametric(&self) -> bool {
+        match self {
+            Term::Sort(Sort::ParamSort(_, _)) => true,
+            Term::Sort(Sort::Datatype(_, args)) if !args.is_empty() => true,
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if the term is a user defined sort with arity zero, or a sort variable.
+    pub fn is_sort_dt(&self) -> bool {
+        matches!(self, Term::Sort(Sort::Datatype(_, _)))
     }
 
     /// Tries to unwrap an operation term, returning the `Operator` and the arguments. Returns
@@ -814,10 +1096,26 @@ impl Rc<Term> {
             .ok_or_else(|| CheckerError::ExpectedAnyInteger(self.clone()))
     }
 
+    /// Similar to `Term::as_integer_err`, but also checks if non-negative.
+    pub fn as_usize_err(&self) -> Result<usize, CheckerError> {
+        if let Some(i) = self.as_integer() {
+            if i >= 0 {
+                return Ok(i.to_usize().unwrap());
+            }
+        }
+        Err(CheckerError::ExpectedNonnegInteger(self.clone()))
+    }
+
     /// Similar to `Term::as_signed_number`, but returns a `CheckerError` on failure.
     pub fn as_signed_number_err(&self) -> Result<Rational, CheckerError> {
         self.as_signed_number()
             .ok_or_else(|| CheckerError::ExpectedAnyNumber(self.clone()))
+    }
+
+    /// Similar to `Term::as_bitvector`, but returns a `CheckerError` on failure.
+    pub fn as_bitvector_err(&self) -> Result<(Integer, usize), CheckerError> {
+        self.as_bitvector()
+            .ok_or_else(|| CheckerError::ExpectedBitvector(self.clone()))
     }
 
     /// Similar to `Term::as_fraction`, but returns a `CheckerError` on failure.
@@ -868,7 +1166,7 @@ impl Constant {
             Constant::Integer(_) => Sort::Int,
             Constant::Real(_) => Sort::Real,
             Constant::String(_) => Sort::String,
-            Constant::BitVec(_, width) => Sort::BitVec(width.clone()),
+            Constant::BitVec(_, width) => Sort::BitVec(*width),
         }
     }
 
@@ -876,6 +1174,17 @@ impl Constant {
         match self {
             Constant::Integer(i) => Some(i.clone()),
             _ => None,
+        }
+    }
+}
+
+impl Sort {
+    pub fn is_polymorphic(&self) -> bool {
+        match self {
+            Sort::Var(_) => true,
+            Sort::ParamSort(_, sort) if matches!(&**sort, Term::Sort(Sort::Var(_))) => true,
+            Sort::RareList(inner) => inner.as_sort().is_some_and(Sort::is_polymorphic),
+            _ => false,
         }
     }
 }

@@ -4,8 +4,11 @@ use super::{
     assert_clause_len, assert_eq, assert_num_premises, get_premise_term, CheckerError,
     EqualityError, RuleArgs, RuleResult,
 };
-use crate::{ast::*, checker::rules::assert_operation_len};
-use indexmap::IndexSet;
+use crate::{
+    ast::*,
+    checker::{error::CongruenceError, rules::assert_operation_len},
+    utils::{MultiSet, MultiSetDifference},
+};
 
 pub fn reordering(RuleArgs { conclusion, premises, .. }: RuleArgs) -> RuleResult {
     assert_num_premises(premises, 1)?;
@@ -13,15 +16,35 @@ pub fn reordering(RuleArgs { conclusion, premises, .. }: RuleArgs) -> RuleResult
     let premise = premises[0].clause;
     assert_clause_len(conclusion, premise.len())?;
 
-    let premise_set: IndexSet<_> = premise.iter().collect();
-    let conclusion_set: IndexSet<_> = conclusion.iter().collect();
-    if let Some(&t) = premise_set.difference(&conclusion_set).next() {
-        Err(CheckerError::ContractionMissingTerm(t.clone()))
-    } else if let Some(&t) = conclusion_set.difference(&premise_set).next() {
-        Err(CheckerError::ContractionExtraTerm(t.clone()))
-    } else {
-        Ok(())
+    let premise_set: MultiSet<_> = premise.iter().collect();
+    let conclusion_set: MultiSet<_> = conclusion.iter().collect();
+    match conclusion_set.symmetric_difference(&premise_set) {
+        MultiSetDifference::None => Ok(()),
+        MultiSetDifference::Missing(t) => Err(CheckerError::ContractionMissingTerm((*t).clone())),
+        MultiSetDifference::Extra(t) => Err(CheckerError::ContractionExtraTerm((*t).clone())),
     }
+}
+
+pub fn shuffle(RuleArgs { conclusion, .. }: RuleArgs) -> RuleResult {
+    assert_clause_len(conclusion, 1)?;
+    let (left, right) = match_term_err!((= l r) = &conclusion[0])?;
+    let (left_args, right_args) = {
+        let ((l_op, l), (r_op, r)) = (left.as_op_err()?, right.as_op_err()?);
+        if l_op != r_op {
+            return Err(CongruenceError::DifferentOperators(l_op, r_op).into());
+        }
+        match l_op {
+            Operator::Add | Operator::Mult | Operator::And | Operator::Or => (l, r),
+            other => return Err(CheckerError::OperatorNotCommutative(other)),
+        }
+    };
+
+    let left_multiset: MultiSet<_> = left_args.iter().collect();
+    let right_multiset: MultiSet<_> = right_args.iter().collect();
+    if left_multiset != right_multiset {
+        return Err(CheckerError::ShuffleArgsNotEqual);
+    }
+    Ok(())
 }
 
 pub fn symm(RuleArgs { conclusion, premises, .. }: RuleArgs) -> RuleResult {
@@ -48,9 +71,20 @@ pub fn not_symm(RuleArgs { conclusion, premises, .. }: RuleArgs) -> RuleResult {
 
 pub fn eq_symmetric(RuleArgs { conclusion, .. }: RuleArgs) -> RuleResult {
     assert_clause_len(conclusion, 1)?;
-    let ((t_1, u_1), (u_2, t_2)) = match_term_err!((= (= t u) (= u t)) = &conclusion[0])?;
-    assert_eq(t_1, t_2)?;
-    assert_eq(u_1, u_2)
+    match_term_err!((= (= t u) (= u t)) = &conclusion[0])?;
+    Ok(())
+}
+
+pub fn eq_mp(RuleArgs { conclusion, premises, .. }: RuleArgs) -> RuleResult {
+    assert_num_premises(premises, 2)?;
+    assert_clause_len(conclusion, 1)?;
+
+    let phi_1 = get_premise_term(&premises[0])?;
+    let equivalence = get_premise_term(&premises[1])?;
+    let (left, right) = match_term_err!((= phi_1 phi_2) = equivalence)?;
+
+    assert_eq(left, phi_1)?;
+    assert_eq(right, &conclusion[0])
 }
 
 pub fn weakening(RuleArgs { conclusion, premises, .. }: RuleArgs) -> RuleResult {
@@ -59,6 +93,30 @@ pub fn weakening(RuleArgs { conclusion, premises, .. }: RuleArgs) -> RuleResult 
     assert_clause_len(conclusion, premise.len()..)?;
     for (t, u) in premise.iter().zip(conclusion) {
         assert_eq(t, u)?;
+    }
+    Ok(())
+}
+
+pub fn and_intro(RuleArgs { conclusion, premises, pool, .. }: RuleArgs) -> RuleResult {
+    assert_clause_len(conclusion, 1)?;
+    let and_contents = match_term_err!((and ...) = &conclusion[0])?;
+    assert_num_premises(premises, and_contents.len())?;
+
+    // for the rule to be correct, each element of `and_contents` must
+    // be the conclusion of a premise, in the right order. If a
+    // premise has a non-unit conclusion, it must correspond to an OR
+    // term in `and_contents`
+    for i in 0..and_contents.len() {
+        let and_arg = &and_contents[i];
+        match premises[i].clause {
+            [term] => {
+                assert_eq(and_arg, term)?;
+            }
+            _ => {
+                let premise_as_or = pool.add(Term::Op(Operator::Or, premises[i].clause.to_vec()));
+                assert_eq(and_arg, &premise_as_or)?;
+            }
+        };
     }
     Ok(())
 }
@@ -135,7 +193,7 @@ fn la_mult_generic(conclusion: &[Rc<Term>], is_pos: bool) -> RuleResult {
     }
 
     assert_clause_len(conclusion, 1)?;
-    let ((m_comparison, original), scaled) =
+    let (m_comparison, original, scaled) =
         match_term_err!((=> (and m_comparison original) scaled) = &conclusion[0])?;
     let (m, zero) = if is_pos {
         match_term_err!((> m zero) = m_comparison)
@@ -206,210 +264,8 @@ pub fn mod_simplify(RuleArgs { conclusion, .. }: RuleArgs) -> RuleResult {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn reordering() {
-        test_cases! {
-            definitions = "
-                (declare-fun p () Bool)
-                (declare-fun q () Bool)
-                (declare-fun r () Bool)
-                (declare-fun s () Bool)
-            ",
-            "Simple working examples" {
-                "(step t1 (cl p q r s) :rule hole)
-                (step t2 (cl r q p s) :rule reordering :premises (t1))": true,
-
-                "(step t1 (cl p q q p r s) :rule hole)
-                (step t2 (cl r q p p s q) :rule reordering :premises (t1))": true,
-
-                "(step t1 (cl) :rule hole)
-                (step t2 (cl) :rule reordering :premises (t1))": true,
-            }
-        }
-    }
-
-    #[test]
-    fn symm() {
-        test_cases! {
-            definitions = "
-                (declare-sort T 0)
-                (declare-fun a () T)
-                (declare-fun b () T)
-            ",
-            "Simple working examples" {
-                "(assume h1 (= a b))
-                (step t1 (cl (= b a)) :rule symm :premises (h1))": true,
-            }
-            "Failing examples" {
-                "(assume h1 (not (= a b)))
-                (step t1 (cl (not (= b a))) :rule symm :premises (h1))": false,
-            }
-        }
-    }
-
-    #[test]
-    fn not_symm() {
-        test_cases! {
-            definitions = "
-                (declare-sort T 0)
-                (declare-fun a () T)
-                (declare-fun b () T)
-            ",
-            "Simple working examples" {
-                "(assume h1 (not (= a b)))
-                (step t1 (cl (not (= b a))) :rule not_symm :premises (h1))": true,
-            }
-            "Failing examples" {
-                "(assume h1 (= a b))
-                (step t1 (cl (= b a)) :rule not_symm :premises (h1))": false,
-            }
-        }
-    }
-
-    #[test]
-    fn eq_symmetric() {
-        test_cases! {
-            definitions = "
-                (declare-sort T 0)
-                (declare-fun a () T)
-                (declare-fun b () T)
-            ",
-            "Simple working examples" {
-                "(step t1 (cl (= (= b a) (= a b))) :rule eq_symmetric)": true,
-                "(step t1 (cl (= (= a a) (= a a))) :rule eq_symmetric)": true,
-            }
-            "Failing examples" {
-                "(step t1 (cl (= (= a b) (= a b))) :rule eq_symmetric)": false,
-                "(step t1 (cl (= (not (= a b)) (not (= b a)))) :rule eq_symmetric)": false,
-            }
-        }
-    }
-
-    #[test]
-    fn weakening() {
-        test_cases! {
-            definitions = "
-                (declare-fun a () Bool)
-                (declare-fun b () Bool)
-                (declare-fun c () Bool)
-            ",
-            "Simple working examples" {
-                "(step t1 (cl a b) :rule hole)
-                (step t2 (cl a b c) :rule weakening :premises (t1))": true,
-
-                "(step t1 (cl) :rule hole)
-                (step t2 (cl a b) :rule weakening :premises (t1))": true,
-            }
-            "Failing examples" {
-                "(step t1 (cl a b) :rule hole)
-                (step t2 (cl a c b) :rule weakening :premises (t1))": false,
-
-                "(step t1 (cl a b c) :rule hole)
-                (step t2 (cl a b) :rule weakening :premises (t1))": false,
-            }
-        }
-    }
-
-    #[test]
-    fn bind_let() {
-        test_cases! {
-            definitions = "",
-            "Simple working examples" {
-                "(anchor :step t1 :args ((x Int) (y Int)))
-                (step t1.t1 (cl (= x y)) :rule hole)
-                (step t1 (cl (= (let ((a 0)) x) (let ((a 0)) y))) :rule bind_let)": true,
-            }
-            "Premise is of the wrong form" {
-                "(anchor :step t1 :args ((x Int) (y Int)))
-                (step t1.t1 (cl (< (+ x y) 0)) :rule hole)
-                (step t1 (cl (= (let ((a 0)) x) (let ((a 0)) y))) :rule bind_let)": false,
-            }
-            "Premise doesn't justify inner terms' equality" {
-                "(anchor :step t1 :args ((x Int) (y Int)))
-                (step t1.t1 (cl (= x y)) :rule hole)
-                (step t1 (cl (= (let ((a 0)) a) (let ((a 0)) 0))) :rule bind_let)": false,
-
-                "(anchor :step t1 :args ((x Int) (y Int)))
-                (step t1.t1 (cl (= x y)) :rule hole)
-                (step t1 (cl (= (let ((a 0)) y) (let ((a 0)) x))) :rule bind_let)": false,
-            }
-            "Bindings can't be renamed" {
-                "(anchor :step t1 :args ((x Int) (y Int)))
-                (step t1.t1 (cl (= x y)) :rule hole)
-                (step t1 (cl (= (let ((a 0)) x) (let ((b 0)) y))) :rule bind_let)": false,
-            }
-            "Polyequality in variable values" {
-                "(anchor :step t1 :args ((x Int) (y Int)))
-                (step t1.t1 (cl (= (= 0 1) (= 1 0))) :rule hole)
-                (step t1.t2 (cl (= x y)) :rule hole)
-                (step t1 (cl (= (let ((a (= 0 1))) x) (let ((a (= 1 0))) y)))
-                    :rule bind_let :premises (t1.t1))": true,
-            }
-        }
-    }
-
-    #[test]
-    fn la_mult_pos() {
-        test_cases! {
-            definitions = "
-                (declare-fun a () Int)
-                (declare-fun b () Int)
-                (declare-fun x () Real)
-                (declare-fun y () Real)
-            ",
-            "Simple working examples" {
-                "(step t1 (cl (=> (and (> 2 0) (> a b)) (> (* 2 a) (* 2 b))))
-                    :rule la_mult_pos)": true,
-                "(step t1 (cl (=>
-                    (and (> (/ 10.0 13.0) 0.0) (= x y))
-                    (= (* (/ 10.0 13.0) x) (* (/ 10.0 13.0) y)))
-                ) :rule la_mult_pos)": true,
-            }
-        }
-    }
-
-    #[test]
-    fn la_mult_neg() {
-        test_cases! {
-            definitions = "
-                (declare-fun a () Int)
-                (declare-fun b () Int)
-                (declare-fun x () Real)
-                (declare-fun y () Real)
-            ",
-            "Simple working examples" {
-                "(step t1 (cl (=> (and (< (- 2) 0) (>= a b)) (<= (* (- 2) a) (* (- 2) b))))
-                    :rule la_mult_neg)": true,
-                "(step t1 (cl (=>
-                    (and (< (/ (- 1.0) 13.0) 0.0) (= x y))
-                    (= (* (/ (- 1.0) 13.0) x) (* (/ (- 1.0) 13.0) y)))
-                ) :rule la_mult_neg)": true,
-            }
-        }
-    }
-
-    #[test]
-    fn mod_simplify() {
-        test_cases! {
-            definitions = "",
-            "Simple working examples" {
-                "(step t1 (cl (= (mod 2 2) 0)) :rule mod_simplify)": true,
-                "(step t1 (cl (= (mod 42 8) 2)) :rule mod_simplify)": true,
-            }
-            "Negative numbers" {
-                "(step t1 (cl (= (mod (- 8) 3) 1)) :rule mod_simplify)": true,
-                "(step t1 (cl (= (mod 8 (- 3)) 2)) :rule mod_simplify)": true,
-                "(step t1 (cl (= (mod (- 8) (- 3)) 1)) :rule mod_simplify)": true,
-
-                "(step t1 (cl (= (mod (- 8) 3) (- 2))) :rule mod_simplify)": false,
-                "(step t1 (cl (= (mod 8 (- 3)) (- 1))) :rule mod_simplify)": false,
-                "(step t1 (cl (= (mod (- 8) (- 3)) (- 2))) :rule mod_simplify)": false,
-            }
-            "Modulo by zero" {
-                "(step t1 (cl (= (mod 3 0) 1)) :rule mod_simplify)": false,
-            }
-        }
-    }
+pub fn evaluate(RuleArgs { conclusion, pool, .. }: RuleArgs) -> RuleResult {
+    assert_clause_len(conclusion, 1)?;
+    let (term, value) = match_term_err!((= term value) = &conclusion[0])?;
+    assert_eq(&term.evaluate(pool), value)
 }

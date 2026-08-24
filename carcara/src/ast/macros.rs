@@ -1,193 +1,5 @@
 //! Some useful helper macros.
 
-/// A macro to help pattern match terms.
-///
-/// Since a term holds references to its subterms in `Vec`s and `Rc`s, pattern matching a complex
-/// term can be difficult and verbose. This macro helps with that. Given a term and a pattern with
-/// which to match it, this macro will deconstruct the term and (if it matches the pattern) return
-/// the subterms specified by the pattern.
-///
-/// The syntax to use this macro is `match_term!(<pattern> = <value>)`, where `<value>` is an
-/// expression of type `Term` or `Rc<Term>`, and `<pattern>` is an s-expression that specifies the
-/// pattern with which to match the given term. Free variables in the pattern will match any term,
-/// and this term will be returned by the macro.
-///
-/// The return type of this macro is `Option<T>` where the exact structure of `T` will reflect the
-/// pattern given. For example, `match_term!((and (= a b) c) = term)` will return an
-/// `Option<((&Rc<Term>, &Rc<Term>), &Rc<Term>)>`. If the term does not match the pattern, the macro
-/// returns `None`.
-///
-/// # Examples
-///
-/// Removing two leading negations from a term:
-/// ```
-/// # use carcara::{ast::*, build_term, match_term};
-/// # let mut pool = PrimitivePool::new();
-/// # let t = build_term!(pool, (not (not {pool.bool_false()})));
-/// let p = match_term!((not (not p)) = t).unwrap();
-/// ```
-///
-/// Deconstructing complex nested terms:
-/// ```
-/// # use carcara::{ast::*, match_term, parser::*};
-/// # pub fn parse_term(input: &str) -> Rc<Term> {
-/// #     let mut pool = PrimitivePool::new();
-/// #     let mut parser = Parser::new(&mut pool, Config::new(), input.as_bytes()).unwrap();
-/// #     parser.parse_term().unwrap()
-/// # }
-/// # let t = parse_term("(and (=> false false) (> (+ 0 0) 0))");
-/// let ((p, q), ((a, b), c)) = match_term!((and (=> p q) (> (+ a b) c)) = t).unwrap();
-/// ```
-///
-/// Pattern matching against boolean constants:
-/// ```
-/// # use carcara::{ast::*, build_term, match_term};
-/// # let mut pool = PrimitivePool::new();
-/// # let t = build_term!(pool, (or {pool.bool_false()} {pool.bool_false()}));
-/// let (p, ()) = match_term!((or p false) = t).unwrap();
-/// ```
-///
-/// Pattern matching quantifier terms:
-/// ```
-/// # use carcara::{ast::*, match_term, parser::*};
-/// # pub fn parse_term(input: &str) -> Rc<Term> {
-/// #     let mut pool = PrimitivePool::new();
-/// #     let mut parser = Parser::new(&mut pool, Config::new(), input.as_bytes()).unwrap();
-/// #     parser.parse_term().unwrap()
-/// # }
-/// # let t = parse_term("(forall ((x Int) (y Int)) (> x y))");
-/// let (bindings, (x, y)) = match_term!((forall ... (> x y)) = t).unwrap();
-/// ```
-///
-/// Pattern matching against a variable number of arguments:
-/// ```
-/// # use carcara::{ast::*, build_term, match_term};
-/// # let mut pool = PrimitivePool::new();
-/// # let t = build_term!(pool, (and {pool.bool_false()} {pool.bool_false()}));
-/// let args: &[Rc<Term>] = match_term!((and ...) = t).unwrap();
-/// ```
-#[macro_export]
-macro_rules! match_term {
-    (true = $var:expr $(, $flag:ident)?) => {
-        if $var.is_bool_true() { Some(()) } else { None }
-    };
-    (false = $var:expr $(, $flag:ident)?) => {
-        if $var.is_bool_false() { Some(()) } else { None }
-    };
-    (0 = $var:expr $(, $flag:ident)?) => {
-        if let Some(i) = $var.as_integer() {
-            if i == 0 { Some(()) } else { None }
-        } else { None }
-    };
-    ("" = $var:expr $(, $flag:ident)?) => {
-        if $var.is_empty_string() { Some(()) } else { None }
-    };
-    ((forall ... $args:tt) = $var:expr) => {
-        if let $crate::ast::Term::Binder($crate::ast::Binder::Forall, bindings, inner) =
-            &$var as &$crate::ast::Term
-        {
-            match_term!($args = inner).and_then(|inner| Some((bindings, inner)))
-        } else {
-            None
-        }
-    };
-    ((exists ... $args:tt) = $var:expr) => {
-        if let $crate::ast::Term::Binder($crate::ast::Binder::Exists, bindings, inner) =
-            &$var as &$crate::ast::Term
-        {
-            match_term!($args = inner).and_then(|inner| Some((bindings, inner)))
-        } else {
-            None
-        }
-    };
-    ($bind:ident = $var:expr) => { Some($var) };
-    (((_ $indexed_op:tt $($op_args:tt)+) $($args:tt)+) = $var:expr) => {{
-        if let $crate::ast::Term::ParamOp {
-            op: match_term!(@GET_VARIANT $indexed_op),
-            op_args,
-            args,
-        } = &$var as &$crate::ast::Term {
-            match_term!(@ARGS ($($op_args)+) = op_args.as_slice()).and_then(|op_args| {
-                match_term!(@ARGS ($($args)+) = args.as_slice()).map(|args| {
-                    (op_args, args)
-                })
-            })
-        } else {
-            None
-        }
-    }};
-    (($op:tt $($args:tt)+) = $var:expr) => {{
-        if let $crate::ast::Term::Op(match_term!(@GET_VARIANT $op), args) =
-            &$var as &$crate::ast::Term
-        {
-            match_term!(@ARGS ($($args)+) = args.as_slice())
-        } else {
-            None
-        }
-    }};
-
-    (@ARGS (...) = $var:expr) => { Some($var) };
-    (@ARGS ($arg:tt) = $var:expr) => {
-        match_term!(@ARGS_IDENT (arg1: $arg) = $var)
-    };
-    (@ARGS ($arg1:tt $arg2:tt) = $var:expr) => {
-        match_term!(@ARGS_IDENT (arg1: $arg1, arg2: $arg2) = $var)
-    };
-    (@ARGS ($arg1:tt $arg2:tt $arg3:tt) = $var:expr) => {
-        match_term!(@ARGS_IDENT (arg1: $arg1, arg2: $arg2, arg3: $arg3) = $var)
-    };
-    (@ARGS ($arg1:tt $arg2:tt $arg3:tt $arg4:tt) = $var:expr) => {
-        match_term!(@ARGS_IDENT (arg1: $arg1, arg2: $arg2, arg3: $arg3, arg4: $arg4) = $var)
-    };
-    (@ARGS_IDENT ( $($name:ident : $arg:tt),* ) = $var:expr) => {
-        if let [$($name),*] = $var {
-            #[allow(unused_parens)]
-            #[allow(clippy::manual_map)]
-            match ($(match_term!($arg = $name)),*) {
-                ($(Some($name)),*) => Some(($($name),*)),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    };
-    (@GET_VARIANT not)      => { $crate::ast::Operator::Not };
-    (@GET_VARIANT =>)       => { $crate::ast::Operator::Implies };
-    (@GET_VARIANT and)      => { $crate::ast::Operator::And };
-    (@GET_VARIANT or)       => { $crate::ast::Operator::Or };
-    (@GET_VARIANT xor)      => { $crate::ast::Operator::Xor };
-    (@GET_VARIANT =)        => { $crate::ast::Operator::Equals };
-    (@GET_VARIANT distinct) => { $crate::ast::Operator::Distinct };
-    (@GET_VARIANT ite)      => { $crate::ast::Operator::Ite };
-    (@GET_VARIANT +)        => { $crate::ast::Operator::Add };
-    (@GET_VARIANT -)        => { $crate::ast::Operator::Sub };
-    (@GET_VARIANT *)        => { $crate::ast::Operator::Mult };
-    (@GET_VARIANT div)      => { $crate::ast::Operator::IntDiv };
-    (@GET_VARIANT /)        => { $crate::ast::Operator::RealDiv };
-    (@GET_VARIANT mod)      => { $crate::ast::Operator::Mod };
-    (@GET_VARIANT <)        => { $crate::ast::Operator::LessThan };
-    (@GET_VARIANT >)        => { $crate::ast::Operator::GreaterThan };
-    (@GET_VARIANT <=)       => { $crate::ast::Operator::LessEq };
-    (@GET_VARIANT >=)       => { $crate::ast::Operator::GreaterEq };
-    (@GET_VARIANT bbterm)   => { $crate::ast::Operator::BvBbTerm };
-    (@GET_VARIANT bvult)    => { $crate::ast::Operator::BvULt };
-    (@GET_VARIANT bvadd)    => { $crate::ast::Operator::BvAdd };
-    (@GET_VARIANT cl)    => { $crate::ast::Operator::Cl };
-    (@GET_VARIANT delete)    => { $crate::ast::Operator::Delete };
-
-    (@GET_VARIANT extract)     => { $crate::ast::ParamOperator::BvExtract };
-    (@GET_VARIANT bit_of)      => { $crate::ast::ParamOperator::BvBitOf };
-    (@GET_VARIANT zero_extend) => { $crate::ast::ParamOperator::ZeroExtend };
-    (@GET_VARIANT sign_extend) => { $crate::ast::ParamOperator::SignExtend };
-
-    (@GET_VARIANT strconcat) => { $crate::ast::Operator::StrConcat };
-    (@GET_VARIANT strsubstr) => { $crate::ast::Operator::Substring };
-    (@GET_VARIANT strlen)    => { $crate::ast::Operator::StrLen };
-
-    (@GET_VARIANT strinre)    => { $crate::ast::Operator::StrInRe };
-    (@GET_VARIANT reinter)    => { $crate::ast::Operator::ReIntersection };
-}
-
 /// A variant of `match_term` that returns a `Result<_, CheckerError>` instead of an `Option`.
 ///
 /// The error returned by this macro is always `CheckerError::TermOfWrongForm`.
@@ -195,14 +7,9 @@ macro_rules! match_term {
 macro_rules! match_term_err {
     ($pat:tt = $var:expr) => {{
         let var = $var;
-        match_term!($pat = var).ok_or_else(|| {
-            // Note: Annoyingly, the `stringify!` macro can't fully keep whitespace when turning a
-            // token tree into a string. It will add spaces when they are required for the tokens
-            // to make sense, but remove any other whitespace. This means that, for instance, the
-            // token tree `(not (and ...))` will be stringified to `(not(and ...))`. One way to
-            // solve this would be to create a procedural macro that uses the tokens `span` to
-            // infer how many characters there were between each token, and assume they were all
-            // spaces
+        carcara_macros::match_term!($pat = var).ok_or_else(|| {
+            // Note: `stringify!` can't fully preserve whitespace when turning a token
+            // tree into a string — e.g. `(not (and ...))` becomes `(not(and ...))`.
             $crate::checker::error::CheckerError::TermOfWrongForm(stringify!($pat), var.clone())
         })
     }};
@@ -217,7 +24,7 @@ macro_rules! match_term_err {
 /// # Examples
 ///
 /// Building the term `(and true (not false))`:
-/// ```
+/// ```text
 /// # use carcara::{ast::*, build_term, match_term};
 /// let mut pool = PrimitivePool::new();
 /// let t = build_term!(pool, (and {pool.bool_true()} (not {pool.bool_false()})));
@@ -227,19 +34,37 @@ macro_rules! match_term_err {
 macro_rules! build_term {
     ($pool:expr, true) => { $pool.bool_true() };
     ($pool:expr, false) => { $pool.bool_false() };
-    ($pool:expr, $int:literal) => { $pool.add(Term::Const(Constant::Integer($int.into()))) };
+    ($pool:expr, (let $name:ident $sort:ident)) => {{
+        let sort = $pool.add($crate::ast::Term::Sort($crate::ast::Sort::$sort));
+        $pool.add($crate::ast::Term::new_var(stringify!($name), sort))
+    }};
+    ($pool:expr, (choice (($z:literal $sort:ident)) $arg:tt)) => {{
+        let sort = $pool.add($crate::ast::Term::Sort($crate::ast::Sort::$sort));
+        let bindings = $crate::ast::BindingList(vec![($z.into(), sort)]);
+        let body = build_term!($pool, $arg);
+        $pool.add(Term::Binder(Binder::Choice, bindings, body))
+    }};
+    ($pool:expr, $int:literal) => { $pool.add($crate::ast::Term::Const($crate::ast::Constant::Integer($int.into()))) };
+    ($pool:expr, (const $name:ident)) => { $pool.add($crate::ast::Term::Const($crate::ast::Constant::Integer($name.clone()))) };
     ($pool:expr, {$terminal:expr}) => { $terminal };
     ($pool:expr, ((_ $indexed_op:tt $($op_args:tt)+) $($args:tt)+)) => {{
         let term = $crate::ast::Term::ParamOp {
-            op: match_term!(@GET_VARIANT $indexed_op),
+            op: carcara_macros::get_param_op_variant!($indexed_op),
             op_args: vec![ $(build_term!($pool, $op_args)),+ ],
             args: vec![ $(build_term!($pool, $args)),+ ],
         };
         $pool.add(term)
     }};
+    ($pool:expr, ($op:tt [$arg:expr])) => {{
+        let term = $crate::ast::Term::Op(
+            carcara_macros::get_op_variant!($op),
+            $arg,
+        );
+        $pool.add(term)
+    }};
     ($pool:expr, ($op:tt $($args:tt)+)) => {{
         let term = $crate::ast::Term::Op(
-            match_term!(@GET_VARIANT $op),
+            carcara_macros::get_op_variant!($op),
             vec![ $(build_term!($pool, $args)),+ ],
         );
         $pool.add(term)
@@ -306,6 +131,7 @@ macro_rules! impl_str_conversion_traits {
 mod tests {
     use crate::ast::{pool::PrimitivePool, *};
     use crate::parser::tests::{parse_term, parse_terms};
+    use carcara_macros::match_term;
 
     #[test]
     fn test_match_term() {
@@ -313,7 +139,7 @@ mod tests {
         let [one, two, five] = [1, 2, 5].map(|n| p.add(Term::new_int(n)));
 
         let term = parse_term(&mut p, "(= (= (not false) (= true false)) (not true))");
-        let ((a, (b, c)), d) = match_term!((= (= (not a) (= b c)) (not d)) = &term).unwrap();
+        let (a, b, c, d) = match_term!((= (= (not a) (= b c)) (not d)) = &term).unwrap();
         assert_eq!(a, &p.bool_false());
         assert_eq!(b, &p.bool_true());
         assert_eq!(c, &p.bool_false());
@@ -350,22 +176,69 @@ mod tests {
         }
 
         let term = parse_term(&mut p, "((_ extract 3 1) (_ bv0 5))");
-        let ((i, j), b): ((&Rc<Term>, &Rc<Term>), &Rc<Term>) =
+        let (i, j, b): (&Rc<Term>, &Rc<Term>, &Rc<Term>) =
             match_term!(((_ extract i j) b) = term).unwrap();
         assert_eq!(3, i.as_integer().unwrap());
         assert_eq!(1, j.as_integer().unwrap());
         assert_eq!(Term::new_bv(0, 5), **b);
 
-        let term = parse_term(&mut p, "((_ bit_of 2) (_ bv0 5))");
+        let term = parse_term(&mut p, "((_ @bit_of 2) (_ bv0 5))");
         let (i, b): (&Rc<Term>, &[Rc<Term>]) = match_term!(((_ bit_of i) ...) = term).unwrap();
         assert_eq!(2, i.as_integer().unwrap());
         assert_eq!(Term::new_bv(0, 5), *b[0]);
 
-        let term = parse_term(&mut p, "((_ zero_extend 3) (_ bv0 5))");
-        let (i, b): (&[Rc<Term>], &[Rc<Term>]) =
-            match_term!(((_ zero_extend ...) ...) = term).unwrap();
-        assert_eq!(3, i[0].as_integer().unwrap());
+        let term = parse_term(&mut p, "((_ @int_of 2) (_ bv0 5))");
+        let (i, b): (&Rc<Term>, &[Rc<Term>]) = match_term!(((_ int_of i) ...) = term).unwrap();
+        assert_eq!(2, i.as_integer().unwrap());
         assert_eq!(Term::new_bv(0, 5), *b[0]);
+    }
+
+    #[test]
+    fn test_match_term_repeated_names() {
+        let mut p = PrimitivePool::new();
+        let (true_, false_) = (p.bool_true(), p.bool_false());
+        let not_true = p.add(Term::Op(Operator::Not, vec![true_]));
+        let not_false = p.add(Term::Op(Operator::Not, vec![false_]));
+
+        // A name used more than once only matches if all the terms bound to it are equal, and it
+        // contributes a single element to the resulting tuple
+        let term = parse_term(&mut p, "(= (not true) (not true))");
+        let t: &Rc<Term> = match_term!((= x x) = &term).unwrap();
+        assert_eq!(t, &not_true);
+
+        let term = parse_term(&mut p, "(= (not true) (not false))");
+        assert!(match_term!((= x x) = &term).is_none());
+
+        // Distinct names still match distinct terms
+        let (a, b) = match_term!((= x y) = &term).unwrap();
+        assert_eq!(a, &not_true);
+        assert_eq!(b, &not_false);
+
+        // Repeated names in nested positions, mixed with distinct ones
+        let term = parse_term(&mut p, "(= (= 1 2) (and (<= 1 2) (<= 2 1)))");
+        let (t, u) = match_term!((= (= t u) (and (<= t u) (<= u t))) = &term).unwrap();
+        assert_eq!(1, t.as_integer().unwrap());
+        assert_eq!(2, u.as_integer().unwrap());
+
+        let term = parse_term(&mut p, "(= (= 1 2) (and (<= 1 2) (<= 2 5)))");
+        assert!(match_term!((= (= t u) (and (<= t u) (<= u t))) = &term).is_none());
+
+        // '_' is a wildcard: distinct occurrences don't have to be equal, but they are still
+        // captured
+        let term = parse_term(&mut p, "(= 1 2)");
+        let (a, b) = match_term!((= _ _) = &term).unwrap();
+        assert_eq!(1, a.as_integer().unwrap());
+        assert_eq!(2, b.as_integer().unwrap());
+
+        // Repeated names inside a binder's body
+        let term = parse_term(&mut p, "(forall ((x Int)) (= (not true) (not true)))");
+        let (bindings, t): (&BindingList, &Rc<Term>) =
+            match_term!((forall ... (= x x)) = &term).unwrap();
+        assert_eq!(1, bindings.len());
+        assert_eq!(t, &not_true);
+
+        let term = parse_term(&mut p, "(forall ((x Int)) (= (not true) (not false)))");
+        assert!(match_term!((forall ... (= x x)) = &term).is_none());
     }
 
     #[test]
@@ -415,9 +288,15 @@ mod tests {
                 )),
             ),
             (
-                "((_ bit_of 1) ((_ extract 3 2) #b000000))",
+                "((_ @bit_of 1) ((_ extract 3 2) #b000000))",
                 build_term!(pool,
-                    ((_ bit_of 1) ((_ extract 3 2) {zeros}))
+                    ((_ bit_of 1) ((_ extract 3 2) {zeros.clone()}))
+                ),
+            ),
+            (
+                "((_ @int_of 1) ((_ extract 3 2) #b000000))",
+                build_term!(pool,
+                    ((_ int_of 1) ((_ extract 3 2) {zeros.clone()}))
                 ),
             ),
             ("(and true false)", build_term!(pool, (and true false))),

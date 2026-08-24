@@ -1,207 +1,185 @@
-use super::CheckerError;
-use super::*;
-use crate::ast::*;
-use crate::drup::*;
+use super::{error::ElaborationError, IdHelper};
+use crate::{
+    ast::{match_term, ContextStack, PrimitivePool, ProofNode, Rc, StepNode, Term, TermPool},
+    drup::{check_drup, hash_term, DRupProofAction},
+    CheckerError,
+};
 use indexmap::IndexSet;
 use std::collections::HashMap;
+
+type Literal = (bool, Rc<Term>);
+
+fn clause_from_literals(pool: &mut dyn TermPool, literals: &IndexSet<Literal>) -> Vec<Rc<Term>> {
+    literals
+        .iter()
+        .map(|(polarity, term)| {
+            if *polarity {
+                term.clone()
+            } else {
+                build_term!(pool, (not {term.clone()}))
+            }
+        })
+        .collect()
+}
+
+fn resolve(
+    clause1: &IndexSet<Literal>,
+    clause2: &IndexSet<Literal>,
+    pivot: &Rc<Term>,
+) -> IndexSet<Literal> {
+    clause1
+        .union(clause2)
+        .filter(|literal| &literal.1 != pivot)
+        .cloned()
+        .collect()
+}
+
+fn finish_goal(
+    ids: &mut IdHelper,
+    depth: usize,
+    current_literals: &IndexSet<Literal>,
+    current_proof: Rc<ProofNode>,
+    goal_literals: &IndexSet<Literal>,
+    goal_clause: Vec<Rc<Term>>,
+) -> Rc<ProofNode> {
+    let current_clause = current_proof.clause();
+    if current_clause == goal_clause {
+        return current_proof;
+    }
+
+    if current_literals == goal_literals {
+        return Rc::new(ProofNode::Step(StepNode {
+            id: ids.next_id(),
+            depth,
+            clause: goal_clause,
+            rule: "reordering".to_owned(),
+            premises: vec![current_proof],
+            ..Default::default()
+        }));
+    }
+
+    let mut weakened_clause = current_clause.to_vec();
+    for term in &goal_clause {
+        let literal = term.remove_all_negations_with_polarity();
+        let literal = (literal.0, literal.1.clone());
+        if !current_literals.contains(&literal) {
+            weakened_clause.push(term.clone());
+        }
+    }
+
+    let weakened = Rc::new(ProofNode::Step(StepNode {
+        id: ids.next_id(),
+        depth,
+        clause: weakened_clause.clone(),
+        rule: "weakening".to_owned(),
+        premises: vec![current_proof],
+        ..Default::default()
+    }));
+
+    if weakened_clause == goal_clause {
+        weakened
+    } else {
+        Rc::new(ProofNode::Step(StepNode {
+            id: ids.next_id(),
+            depth,
+            clause: goal_clause,
+            rule: "reordering".to_owned(),
+            premises: vec![weakened],
+            ..Default::default()
+        }))
+    }
+}
 
 pub fn elaborate_drup(
     pool: &mut PrimitivePool,
     _: &mut ContextStack,
     step: &StepNode,
-) -> Result<Rc<ProofNode>, CheckerError> {
-    #[derive(Debug)]
-    enum ResolutionStep<'a> {
-        Resolvent(
-            &'a(bool, Rc<Term>),
-            u64,
-            u64,
-            (Vec<Rc<Term>>, IndexSet<(bool, &'a Rc<Term>)>, u64),
-        ),
-        UnChanged(IndexSet<(bool, &'a Rc<Term>)>, u64),
-    }
+) -> Result<Rc<ProofNode>, ElaborationError> {
+    let premise_terms: Vec<_> = step
+        .premises
+        .iter()
+        .map(|premise| build_term!(pool, (cl[premise.clause().to_vec()])))
+        .collect();
+    let conclusion = build_term!(pool, (cl[step.clause.clone()]));
+    let trace = check_drup(pool, conclusion.clone(), &premise_terms, &step.args, false)
+        .map_err(CheckerError::from)?;
 
-    fn resolve<'a>(
-        clause1: &IndexSet<(bool, &'a Rc<Term>)>,
-        clause2: &IndexSet<(bool, &'a Rc<Term>)>,
-        pivot: (bool, &Rc<Term>),
-    ) -> IndexSet<(bool, &'a Rc<Term>)> {
-        let mut resolvent = IndexSet::new();
-        for literal in clause1.union(clause2) {
-            if literal.1 == pivot.1 {
+    let mut proofs: HashMap<u64, Rc<ProofNode>> = premise_terms
+        .iter()
+        .zip(&step.premises)
+        .map(|(clause, premise)| (hash_term(pool, clause.clone()), premise.clone()))
+        .collect();
+    let mut ids = IdHelper::new(&step.id);
+
+    for (action, argument) in trace.into_iter().zip(&step.args) {
+        let DRupProofAction::RupStory(goal_literals, history) = action else {
+            continue;
+        };
+        let goal_clause = match_term!((cl ...) = argument)
+            .ok_or(ElaborationError::InvalidDrupTrace(
+                "addition argument is not a clause",
+            ))?
+            .to_vec();
+
+        let (final_literals, _, final_hash) = history
+            .last()
+            .ok_or(ElaborationError::InvalidDrupTrace("RUP history is empty"))?;
+        let mut current_literals = final_literals.clone();
+        let mut current_proof = proofs
+            .get(final_hash)
+            .ok_or(ElaborationError::DrupMissingClause(*final_hash))?
+            .clone();
+
+        for (source_literals, pivot, source_hash) in history[..history.len() - 1].iter().rev() {
+            if current_literals.is_subset(&goal_literals) {
+                break;
+            }
+
+            let pivot = pivot.as_ref().ok_or(ElaborationError::InvalidDrupTrace(
+                "a non-final RUP entry has no pivot",
+            ))?;
+            if !current_literals.contains(&(!pivot.0, pivot.1.clone())) {
                 continue;
             }
 
-            resolvent.insert(*literal);
+            let source_proof = proofs
+                .get(source_hash)
+                .ok_or(ElaborationError::DrupMissingClause(*source_hash))?
+                .clone();
+            current_literals = resolve(source_literals, &current_literals, &pivot.1);
+            let clause = clause_from_literals(pool, &current_literals);
+            current_proof = Rc::new(ProofNode::Step(StepNode {
+                id: ids.next_id(),
+                depth: step.depth,
+                clause,
+                rule: "resolution".to_owned(),
+                premises: vec![source_proof, current_proof],
+                args: vec![pivot.1.clone(), pool.bool_constant(pivot.0)],
+                ..Default::default()
+            }));
         }
 
-        return resolvent;
-    }
-
-    let trace = check_drup(
-        pool,
-        step.clause.as_slice(),
-        step.premises
-            .iter()
-            .map(|x| x.clause())
-            .collect::<Vec<_>>()
-            .as_slice(),
-        step.args.as_slice(),
-    );
-
-    if let Err(err) = trace {
-        return Err(CheckerError::DrupFormatError(err));
-    }
-
-    let premises: &mut HashMap<u64, _> = &mut step
-        .premises
-        .iter()
-        .map(|p| (hash_term(pool, p.clause()), p.clone()))
-        .collect();
-
-    let mut ids = IdHelper::new(&step.id);
-    let mut trace = trace.unwrap();
-    trace.retain(|x| match x {
-        DRupProofAction::Delete(_) => false,
-        _ => true,
-    });
-
-    for (arg_index, rup_story) in trace.iter().enumerate() {
-        match rup_story {
-            DRupProofAction::RupStory(rup_clause, rup_history) => {
-                let mut rup: Vec<(IndexSet<(bool, &Rc<Term>)>, u64)> = rup_history
-                    .iter()
-                    .map(|(vec, _, key)| (vec.clone(), *key))
-                    .collect();
-                let pivots: Vec<_> = rup_history.iter().map(|(_, term, _)| term).collect();
-
-                let mut resolutions = vec![];
-                for i in (0..rup_history.len() - 1).rev() {
-                    let pivot = pivots[i].as_ref().unwrap();
-
-                    if rup[i + 1].0.contains(&(!pivot.0, &pivot.1)) {
-                        let resolvent_indexset: IndexSet<(bool, &Rc<Term>)> =
-                            resolve(&rup[i].0, &rup[i + 1].0, (pivot.0, &pivot.1));
-                        let resolvent: Vec<Rc<Term>> = resolvent_indexset
-                            .iter()
-                            .map(|(polarity, term)| {
-                                if *polarity {
-                                    (*term).clone()
-                                } else {
-                                    build_term!(pool, (not { (*term).clone() }))
-                                }
-                            })
-                            .collect();
-
-                        let resolvent_hash = hash_term(pool, resolvent.as_slice());
-
-                        resolutions.push(ResolutionStep::Resolvent(
-                            pivot,
-                            rup[i].1,
-                            rup[i + 1].1,
-                            (resolvent, resolvent_indexset.clone(), resolvent_hash),
-                        ));
-
-                        rup[i] = (resolvent_indexset, resolvent_hash);
-                    } else {
-                        rup[i] = (rup[i + 1].0.clone(), rup[i + 1].1);
-                        resolutions.push(ResolutionStep::UnChanged(rup[i + 1].0.clone(), rup[i].1));
-                    }
-                }
-
-                match &resolutions[resolutions.len() - 1] {
-                    ResolutionStep::Resolvent(_, _, _, (resolvent, _, _)) => {
-                        if resolvent.len() > 0 {
-                            return Err(CheckerError::DrupFormatError(
-                                DrupFormatError::NoFinalBottomInDrup,
-                            ));
-                        }
-                    }
-                    ResolutionStep::UnChanged(resolvent, _) => {
-                        if resolvent.len() > 0 {
-                            return Err(CheckerError::DrupFormatError(
-                                DrupFormatError::NoFinalBottomInDrup,
-                            ));
-                        }
-                    }
-                }
-
-                resolutions.retain(|step| match step {
-                    ResolutionStep::Resolvent(_, _, _, (resolvent, _, _)) => {
-                        resolvent.len() > 0 || rup_clause.len() == 0
-                    }
-                    ResolutionStep::UnChanged(_, _) => false, // Since unchanged are trivally avaliable we can ignore them
-                });
-
-                for (i, resolution_step) in resolutions.iter().enumerate() {
-                    match resolution_step {
-                        ResolutionStep::Resolvent(
-                            pivot,
-                            c,
-                            d,
-                            (resolvent, resolvent_indexset, resolvent_hash),
-                        ) => {
-                            let mut clause = resolvent.clone();
-                            let mut hash = *resolvent_hash;
-
-                            let mut proof_step = Rc::new(ProofNode::Step(StepNode {
-                                id: ids.next_id(),
-                                depth: step.depth,
-                                clause: clause,
-                                rule: "resolution".to_owned(),
-                                premises: vec![
-                                    (*premises.get(c).unwrap()).clone(),
-                                    (*premises.get(d).unwrap()).clone(),
-                                ],
-                                discharge: Vec::new(),
-                                args: vec![pivot.1.clone(), pool.bool_constant(pivot.0)],
-                                previous_step: None,
-                            }));
-
-                            if i == resolutions.len() - 1
-                                && resolvent_indexset.is_subset(rup_clause) && resolvent_indexset != rup_clause
-                            {
-                                clause = rup_clause
-                                    .iter()
-                                    .map(|(polarity, term)| {
-                                        if *polarity {
-                                            (*term).clone()
-                                        } else {
-                                            build_term!(pool, (not { (*term).clone() }))
-                                        }
-                                    })
-                                    .collect();
-                                hash = hash_term(pool, clause.as_slice());
-
-                                proof_step = Rc::new(ProofNode::Step(StepNode {
-                                    id: ids.next_id(),
-                                    depth: step.depth,
-                                    clause: clause,
-                                    rule: "weakening".to_owned(),
-                                    premises: vec![proof_step],
-                                    discharge: Vec::new(),
-                                    args: Vec::new(),
-                                    previous_step: None,
-                                }));
-                            }
-
-                            if i == resolutions.len() - 1 {
-                                if arg_index == trace.len() - 1 {
-                                    return Ok(proof_step);
-                                }
-                            }
-
-                            premises.insert(hash, proof_step);
-                        }
-
-                        ResolutionStep::UnChanged(_, _) => unreachable!(),
-                    }
-                }
-            }
-
-            DRupProofAction::Delete(_) => unreachable!(),
+        if !current_literals.is_subset(&goal_literals) {
+            return Err(ElaborationError::InvalidDrupTrace(
+                "RUP trace reaches a goal assumption before deriving the goal",
+            ));
         }
+
+        let proof = finish_goal(
+            &mut ids,
+            step.depth,
+            &current_literals,
+            current_proof,
+            &goal_literals,
+            goal_clause,
+        );
+        proofs.insert(hash_term(pool, argument.clone()), proof);
     }
 
-    unreachable!()
+    proofs
+        .get(&hash_term(pool, conclusion))
+        .cloned()
+        .ok_or(ElaborationError::InvalidDrupTrace(
+            "the conclusion has no reconstructed proof",
+        ))
 }

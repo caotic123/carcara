@@ -11,7 +11,6 @@
 #![warn(clippy::explicit_iter_loop)]
 #![warn(clippy::from_iter_instead_of_collect)]
 #![warn(clippy::get_unwrap)]
-#![warn(clippy::if_not_else)]
 #![warn(clippy::implicit_clone)]
 #![warn(clippy::inconsistent_struct_constructor)]
 #![warn(clippy::index_refutable_slice)]
@@ -38,14 +37,19 @@
 pub mod ast;
 pub mod benchmarking;
 pub mod checker;
-pub mod elaborator;
-pub mod parser;
-mod resolution;
 mod drup;
+pub mod elaborator;
+pub mod external;
+pub mod parser;
+mod rare;
+mod resolution;
+pub mod slice;
+pub mod translation;
 mod utils;
 
 use crate::benchmarking::{CollectResults, OnlineBenchmarkResults, RunMeasurement};
 use checker::{error::CheckerError, CheckerStatistics};
+use elaborator::error::ElaborationError;
 use parser::{ParserError, Position};
 use std::io;
 use std::time::{Duration, Instant};
@@ -73,19 +77,27 @@ pub enum Error {
     #[error("checking failed on step '{step}' with rule '{rule}': {inner}")]
     Checker {
         inner: CheckerError,
-        rule: String,
-        step: String,
+        rule: Box<str>,
+        step: Box<str>,
     },
 
     // While this is a kind of checking error, it does not happen in a specific step like all other
     // checker errors, so we model it as a different variant
     #[error("checker error: proof does not conclude empty clause")]
     DoesNotReachEmptyClause,
+
+    #[error("elaboration failed on step '{step}' with rule '{rule}': {inner}")]
+    Elaborator {
+        inner: ElaborationError,
+        rule: Box<str>,
+        step: Box<str>,
+    },
 }
 
-pub fn check<T: io::BufRead>(
-    problem: T,
-    proof: T,
+pub fn check<'s>(
+    problem: &'s str,
+    proof: &'s str,
+    rules: Option<&'s str>,
     parser_config: parser::Config,
     checker_config: checker::Config,
     collect_stats: bool,
@@ -94,12 +106,13 @@ pub fn check<T: io::BufRead>(
 
     // Parsing
     let total = Instant::now();
-    let (problem, proof, mut pool) = parser::parse_instance(problem, proof, parser_config)?;
+    let (problem, proof, rules, mut pool) =
+        parser::parse_instance(problem, proof, rules, parser_config)?;
     run_measures.parsing = total.elapsed();
 
     // Checking
     let checking = Instant::now();
-    let mut checker = checker::ProofChecker::new(&mut pool, checker_config);
+    let mut checker = checker::ProofChecker::new(&mut pool, &rules, checker_config);
     if collect_stats {
         let mut checker_stats = CheckerStatistics {
             file_name: "this",
@@ -136,9 +149,11 @@ pub fn check<T: io::BufRead>(
     }
 }
 
-pub fn check_parallel<T: io::BufRead>(
-    problem: T,
-    proof: T,
+#[allow(clippy::too_many_arguments)]
+pub fn check_parallel<'s>(
+    problem: &'s str,
+    proof: &'s str,
+    rules: Option<&'s str>,
     parser_config: parser::Config,
     checker_config: checker::Config,
     collect_stats: bool,
@@ -149,9 +164,9 @@ pub fn check_parallel<T: io::BufRead>(
     use std::sync::Arc;
     let mut run_measures: RunMeasurement = RunMeasurement::default();
 
-    // Parsing
     let total = Instant::now();
-    let (problem, proof, pool) = parser::parse_instance(problem, proof, parser_config)?;
+    let (problem, proof, rules, pool) =
+        parser::parse_instance(problem, proof, rules, parser_config)?;
     run_measures.parsing = total.elapsed();
 
     // Checking
@@ -164,6 +179,7 @@ pub fn check_parallel<T: io::BufRead>(
         &problem.prelude,
         &schedule_context_usage,
         stack_size,
+        rules,
     );
 
     if collect_stats {
@@ -202,27 +218,30 @@ pub fn check_parallel<T: io::BufRead>(
     }
 }
 
-pub fn check_and_elaborate<T: io::BufRead>(
-    problem: T,
-    proof: T,
+#[allow(clippy::too_many_arguments)]
+pub fn check_and_elaborate<'s>(
+    problem: &'s str,
+    proof: &'s str,
+    rules: Option<&'s str>,
     parser_config: parser::Config,
     checker_config: checker::Config,
     elaborator_config: elaborator::Config,
-    pipeline: Vec<elaborator::ElaborationStep>,
+    pipeline: Vec<elaborator::ElaborationPass>,
     collect_stats: bool,
 ) -> Result<(bool, ast::Problem, ast::Proof, ast::PrimitivePool), Error> {
     let mut run: RunMeasurement = RunMeasurement::default();
 
-    // Parsing
+    // Parsing (Complete rare rules)
     let total = Instant::now();
-    let (problem, proof, mut pool) = parser::parse_instance(problem, proof, parser_config)?;
+    let (problem, proof, rules, mut pool) =
+        parser::parse_instance(problem, proof, rules, parser_config)?;
     run.parsing = total.elapsed();
 
     let mut stats = OnlineBenchmarkResults::new();
 
     // Checking
     let checking = Instant::now();
-    let mut checker = checker::ProofChecker::new(&mut pool, checker_config);
+    let mut checker = checker::ProofChecker::new(&mut pool, &rules, checker_config);
     let checking_result = if collect_stats {
         let mut checker_stats = CheckerStatistics {
             file_name: "this",
@@ -247,10 +266,10 @@ pub fn check_and_elaborate<T: io::BufRead>(
     // Elaborating
     let elaboration = Instant::now();
 
-    let node = ast::ProofNode::from_commands(proof.commands);
+    let node = ast::ProofNodeForest::from_commands(proof.commands);
     let (elaborated, pipeline_durations) =
         elaborator::Elaborator::new(&mut pool, &problem, elaborator_config)
-            .elaborate_with_stats(&node, pipeline);
+            .elaborate_with_stats(node, pipeline)?;
     let elaborated = ast::Proof {
         commands: elaborated.into_commands(),
         ..proof
@@ -269,14 +288,15 @@ pub fn check_and_elaborate<T: io::BufRead>(
     Ok((checking_result, problem, elaborated, pool))
 }
 
-pub fn generate_lia_smt_instances<T: io::BufRead>(
-    problem: T,
-    proof: T,
+pub fn generate_lia_smt_instances<'s>(
+    problem: &'s str,
+    proof: &'s str,
+    rules: Option<&'s str>,
     config: parser::Config,
     use_sharing: bool,
 ) -> Result<Vec<(String, String)>, Error> {
     use std::fmt::Write;
-    let (problem, proof, mut pool) = parser::parse_instance(problem, proof, config)?;
+    let (problem, proof, _, mut pool) = parser::parse_instance(problem, proof, rules, config)?;
 
     let mut iter = proof.iter();
     let mut result = Vec::new();
