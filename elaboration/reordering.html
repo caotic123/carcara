@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Proof parsing/printing - Carcara Documentation</title>
+        <title>Reordering elimination - Carcara Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -12,34 +12,34 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "";
+            const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex.js";
+            window.path_to_searchindex_js = "../searchindex.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -106,7 +106,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -141,7 +141,7 @@
                     <h1 class="menu-title">Carcara Documentation</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/ufmg-smite/carcara" title="Git repository" aria-label="Git repository">
@@ -178,32 +178,41 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="proof-parsingprinting"><a class="header" href="#proof-parsingprinting">Proof parsing/printing</a></h1>
-<p>You can use the <code>carcara parse</code> command to parse a proof file and print it back to standard output.
-This can be used to validate if a proof is syntactically valid without checking any proof steps, or
-to print the proof with some syntactical transformation applied.</p>
-<h2 id="addingremoving-term-sharing"><a class="header" href="#addingremoving-term-sharing">Adding/removing term sharing</a></h2>
-<p>When printing a proof, Carcara automatically adds term sharing (i.e., the <code>(! ... :named ...)</code>
-syntax). If you parse a proof that does not make use of term sharing with <code>carcara parse</code>, it will
-by default be printed with term sharing added. Alternatively, you can remove term sharing from a
-proof that uses it by passing the <code>--no-print-with-sharing</code>/<code>-v</code> option.</p>
-<h2 id="expanding-let-terms"><a class="header" href="#expanding-let-terms">Expanding <code>let</code> terms</a></h2>
-<p>You can use the <code>--expand-let-bindings</code> option to remove all <code>let</code> terms from the proof by inlining all attributed values. For example, the term</p>
-<pre><code>(let ((x 1)) (let ((y (+ x 2))) (+ y 3)))
+                        <h1 id="reordering-elimination"><a class="header" href="#reordering-elimination">Reordering elimination</a></h1>
+<p>For many use cases of Alethe like proof translation or reconstruction in proof assistants, clause
+reordering steps can be challenging to deal with. With that in mind, Carcara has an elaboration step
+that can completely remove all <code>reordering</code> steps from a proof.</p>
+<p>This is done by replacing the <code>reordering</code> step with its premise and, anytime it is used as a
+premise in another step, recomputing the clause of the step that used it. As an exmple, consider the
+following proof:</p>
+<pre><code>(step t1 (cl a b c) :rule hole)
+(step t2 (cl b a c) :rule reordering :premises (t1))
+(step t3 (cl b a c d) :rule weakening :premises (t2))
 </code></pre>
-<p>will be expanded into</p>
-<pre><code>(+ (+ 1 2) 3)
+<p>Here, step <code>t2</code> will be eliminated, such that step <code>t3</code> uses <code>t1</code> directly as its premise. However,
+simply changing the premise clause of step <code>t4</code> would make it invalid<sup class="footnote-reference" id="fr-1-1"><a href="#footnote-1">1</a></sup>. To avoid this, Carcara
+must also recompute the conclusion of <code>t3</code>, resulting in the following proof:</p>
+<pre><code>(step t1 (cl a b c) :rule hole)
+(step t3 (cl a b c d) :rule weakening :premises (t1))
 </code></pre>
-
+<p>Of course, if any step further down in the proof uses <code>t3</code> as a premise, it will also need to
+be recomputed, and these changes will propagate down the proof.</p>
+<hr>
+<ol class="footnote-definition"><li id="footnote-1">
+<p>Strictly speaking, the step would not be invalid according to the semantics of Alethe, which
+are entirely agnostic to clause ordering. However, when elaborating a proof, we aim to ensure a more
+strict semantics, in which clause ordering is maitained in rules such as <code>weakening</code>. <a href="#fr-1-1">↩</a></p>
+</li>
+</ol>
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="other-features.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../elaboration/uncrowding.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="slicing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../etc.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -213,11 +222,11 @@ proof that uses it by passing the <code>--no-print-with-sharing</code>/<code>-v<
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="other-features.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../elaboration/uncrowding.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="slicing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../etc.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -232,13 +241,13 @@ proof that uses it by passing the <code>--no-print-with-sharing</code>/<code>-v<
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
 
