@@ -961,17 +961,6 @@ fn construct_rules(
         if !premises.is_empty() {
             let lhs_available =
                 EggExpr::Call("Avaliable".to_string(), vec![(*egg_equations.0).clone()]);
-            let mut availability_premises = premises.clone();
-            availability_premises.push(lhs_available.clone());
-            rules.insert(EggStatement::Rule {
-                ruleset: None,
-                body: availability_premises,
-                head: vec![EggExpr::Call(
-                    "Avaliable".to_string(),
-                    vec![(*egg_equations.1).clone()],
-                )],
-            });
-
             let mut seen_body = vec![lhs_available];
             let mut available_args = premise_available_args;
             for premise in definition.premises.iter() {

@@ -41,26 +41,29 @@ pub fn aci_rules(
     }
 
     // 2. Identity elimination: (op x identity) → x
-    let args = egg_expr!((args "x" (args {identity.clone()} ())));
+    // The head must be a genuine element (Mk x): an unguarded variable can bind
+    // the (Args a b) pair that Args-associativity puts in the same class as the
+    // flat list, which would union the formula with a raw argument list.
+    let args = egg_expr!((args (mk "x") (args {identity.clone()} ())));
     let call = EggExpr::Call(op_with_at.into(), vec![args]);
     let lhs = egg_expr!((mk { call }));
-    let rhs = egg_expr!("x");
+    let rhs = egg_expr!((mk "x"));
     decls.push(EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![]));
 
-    // 3. Singleton elimination: (Mk (op (Args x ()))) → x
+    // 3. Singleton elimination: (Mk (op (Args (Mk x) ()))) → (Mk x)
     // Match on Args representation directly to avoid set-insert/set-empty cycle
-    let args = egg_expr!((args "x" ()));
+    let args = egg_expr!((args (mk "x") ()));
     let call = EggExpr::Call(op_with_at.into(), vec![args]);
     let lhs = egg_expr!((mk { call }));
-    let rhs = egg_expr!("x");
+    let rhs = egg_expr!((mk "x"));
     decls.push(EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![]));
 
-    // 4. Idempotency: (Mk (op (Args x (Args x ())))) → x
+    // 4. Idempotency: (Mk (op (Args (Mk x) (Args (Mk x) ())))) → (Mk x)
     // Matches (op x x) directly on Args representation
-    let args = egg_expr!((args "x" (args "x" ())));
+    let args = egg_expr!((args (mk "x") (args (mk "x") ())));
     let call = EggExpr::Call(op_with_at.into(), vec![args]);
     let lhs = egg_expr!((mk { call }));
-    let rhs = egg_expr!("x");
+    let rhs = egg_expr!((mk "x"));
     decls.push(EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![]));
 
     // 5. General singleton elimination for Assoc: (op (Assoc {x})) → x

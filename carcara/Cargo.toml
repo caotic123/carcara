@@ -28,6 +28,9 @@ thiserror = "1.0.47"
 debug-egglog = []
 
 [dev-dependencies]
+# Keep the production RARE engine on egglog 0.4 while the proof-producing
+# backend is evaluated in isolation. Cargo resolves both versions side by side.
+egglog-proofs = { package = "egglog", version = "3.0.0", default-features = false }
 test-generator = { path = "../test-generator" }
 rand = "0.8.5"
 colored = "2.1.0"

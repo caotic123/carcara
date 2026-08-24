@@ -1,0 +1,25 @@
+;; A proof-free saturation fixture for post-hoc reconstruction.  Both rules are
+;; direct RARE-style equalities; there are no availability relations, generated
+;; Datalog rules, or computational rules.
+
+(datatype Term
+  (Atom)
+  (False)
+  (True)
+  (Not Term)
+  (And Term Term)
+  (Ite Term Term Term))
+
+(rewrite
+  (Ite c (False) x)
+  (And (Not c) x)
+  :name "ite-then-false")
+
+(rewrite
+  (And x (True))
+  x
+  :name "and-true-right")
+
+(let $lhs (Ite (Atom) (False) (True)))
+(let $nested_lhs (Not (Ite (Atom) (False) (True))))
+(run 2)
