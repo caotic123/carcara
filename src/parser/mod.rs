@@ -1302,9 +1302,6 @@ impl<'p, 's> Parser<'p, 's> {
             self.next_token()?;
             self.expect_token(Token::OpenParen)?;
 
-            // Without full hole-argument parsing, preserve a leading string marker so downstream
-            // consumers can still recognize structured hole kinds. Ignore all remaining tokens so
-            // arbitrary solver-specific arguments stay accepted.
             if rule == "hole" && !self.config.parse_hole_args {
                 let marker = match &self.current_token {
                     Token::String(marker) => Some(self.pool.add(Term::new_string(marker.clone()))),
@@ -1839,9 +1836,7 @@ impl<'p, 's> Parser<'p, 's> {
                 assert_num_args(&args, 0)?;
                 let value = op_args[0].as_integer().unwrap();
                 let width_value = op_args[1].as_integer().unwrap();
-
-                // Bitvector values are arbitrary-precision integers. Only the width needs to fit
-                // in `usize`, which is how `Constant::BitVec` represents it.
+                
                 if value < 0 {
                     return Err(ParserError::WrongValueOfArgs((0..).into(), value));
                 }
