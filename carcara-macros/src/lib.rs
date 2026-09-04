@@ -1,13 +1,13 @@
 extern crate proc_macro;
 
-use std::collections::HashMap;
-
 use proc_macro::TokenStream;
 use proc_macro2::{Delimiter, Ident, Spacing, TokenStream as TokenStream2, TokenTree};
 use quote::{format_ident, quote};
+use std::{collections::HashMap, process::Command};
 use syn::{
+    DataStruct, DeriveInput, Expr, Token,
     parse::{Parse, ParseStream},
-    parse_macro_input, Expr, Token,
+    parse_macro_input,
 };
 
 // Represents the full macro input: '<pattern> = <expr>'
@@ -115,10 +115,10 @@ fn read_op(tokens: &[TokenTree]) -> (String, usize) {
     match &tokens[0] {
         TokenTree::Ident(id) => (id.to_string(), 1),
         TokenTree::Punct(p) => {
-            if p.spacing() == Spacing::Joint {
-                if let Some(TokenTree::Punct(p2)) = tokens.get(1) {
-                    return (format!("{}{}", p.as_char(), p2.as_char()), 2);
-                }
+            if p.spacing() == Spacing::Joint
+                && let Some(TokenTree::Punct(p2)) = tokens.get(1)
+            {
+                return (format!("{}{}", p.as_char(), p2.as_char()), 2);
             }
             (p.as_char().to_string(), 1)
         }
@@ -208,7 +208,7 @@ fn parse_pat(tt: TokenTree, ctx: &mut ParseCtx) -> Pat {
             // so patterns like (forall blah t) or (forall foo bar t) are rejected.
             if let TokenTree::Ident(id) = &tokens[0] {
                 let name = id.to_string();
-                if matches!(name.as_str(), "forall" | "exists" | "choice") {
+                if matches!(name.as_str(), "forall" | "exists" | "choice" | "lambda") {
                     assert!(
                         tokens.len() == 5,
                         "binder pattern must be ({name} ... <body>), got {} tokens",
@@ -233,15 +233,15 @@ fn parse_pat(tt: TokenTree, ctx: &mut ParseCtx) -> Pat {
 
             // Detect ((_ op op_args...) args...) - ParamOp pattern.
             // The '_' here is an Ident token, not a Punct.
-            if let TokenTree::Group(inner) = &tokens[0] {
-                if inner.delimiter() == Delimiter::Parenthesis {
-                    let inner_tokens: Vec<_> = inner.stream().into_iter().collect();
-                    if matches!(&inner_tokens[0], TokenTree::Ident(id) if *id == "_") {
-                        let (op, op_len) = read_op(&inner_tokens[1..]);
-                        let op_args = parse_args(&inner_tokens[1 + op_len..], ctx);
-                        let args = parse_args(&tokens[1..], ctx);
-                        return Pat::ParamOp { op, op_args, args };
-                    }
+            if let TokenTree::Group(inner) = &tokens[0]
+                && inner.delimiter() == Delimiter::Parenthesis
+            {
+                let inner_tokens: Vec<_> = inner.stream().into_iter().collect();
+                if matches!(&inner_tokens[0], TokenTree::Ident(id) if *id == "_") {
+                    let (op, op_len) = read_op(&inner_tokens[1..]);
+                    let op_args = parse_args(&inner_tokens[1 + op_len..], ctx);
+                    let args = parse_args(&tokens[1..], ctx);
+                    return Pat::ParamOp { op, op_args, args };
                 }
             }
 
@@ -289,11 +289,17 @@ fn op_to_variant(op: &str) -> TokenStream2 {
         "div" => quote! { crate::ast::Operator::IntDiv },
         "/" => quote! { crate::ast::Operator::RealDiv },
         "mod" => quote! { crate::ast::Operator::Mod },
+        "abs" => quote! { crate::ast::Operator::Abs },
         "<" => quote! { crate::ast::Operator::LessThan },
         ">" => quote! { crate::ast::Operator::GreaterThan },
         "<=" => quote! { crate::ast::Operator::LessEq },
         ">=" => quote! { crate::ast::Operator::GreaterEq },
         "to_real" => quote! { crate::ast::Operator::ToReal },
+        "to_int" => quote! { crate::ast::Operator::ToInt },
+
+        // TODO: we should support dots in operators for these cases
+        "int_pow2" => quote! { crate::ast::Operator::Pow2 },
+        "int_log2" => quote! { crate::ast::Operator::Log2 },
 
         // Clause / delete
         "cl" => quote! { crate::ast::Operator::Cl },
@@ -394,19 +400,19 @@ fn gen_match(pat: &Pat, var: &TokenStream2, inner: TokenStream2, ctr: &mut usize
             let variant = op_to_variant(op);
 
             // Special case: sole variadic arg — capture entire args slice directly.
-            if args.len() == 1 {
-                if let Pat::Variadic(var_id) = &args[0] {
-                    *ctr += 1;
-                    let args_ident = format_ident!("__mt_args_{}", ctr);
-                    let body = gen_sole_variadic_body(var_id, &args_ident, inner);
-                    return quote! {
-                        if let crate::ast::Term::Op(#variant, #args_ident) = (&(#var) as &crate::ast::Term) {
-                            #body
-                        } else {
-                            None
-                        }
-                    };
-                }
+            if args.len() == 1
+                && let Pat::Variadic(var_id) = &args[0]
+            {
+                *ctr += 1;
+                let args_ident = format_ident!("__mt_args_{}", ctr);
+                let body = gen_sole_variadic_body(var_id, &args_ident, inner);
+                return quote! {
+                    if let crate::ast::Term::Op(#variant, #args_ident) = (&(#var) as &crate::ast::Term) {
+                        #body
+                    } else {
+                        None
+                    }
+                };
             }
 
             // Normal fixed-arity case.
@@ -456,26 +462,26 @@ fn gen_match(pat: &Pat, var: &TokenStream2, inner: TokenStream2, ctr: &mut usize
             let args_vec = format_ident!("__mt_args_{}", ctr);
 
             // Special case: sole variadic in args — capture entire args slice directly.
-            if args.len() == 1 {
-                if let Pat::Variadic(var_id) = &args[0] {
-                    let slice_body = gen_sole_variadic_body(var_id, &args_vec, inner);
-                    let mut body = slice_body;
-                    for (sub_pat, arg_id) in op_args.iter().zip(op_arg_idents.iter()).rev() {
-                        let v = quote! { #arg_id };
-                        body = gen_match(sub_pat, &v, body, ctr);
-                    }
-                    return quote! {
-                        if let crate::ast::Term::ParamOp {
-                            op: #variant,
-                            op_args: #op_args_vec,
-                            args: #args_vec,
-                        } = (&(#var) as &crate::ast::Term) {
-                            if let [#(#op_arg_idents),*] = #op_args_vec.as_slice() {
-                                #body
-                            } else { None }
-                        } else { None }
-                    };
+            if args.len() == 1
+                && let Pat::Variadic(var_id) = &args[0]
+            {
+                let slice_body = gen_sole_variadic_body(var_id, &args_vec, inner);
+                let mut body = slice_body;
+                for (sub_pat, arg_id) in op_args.iter().zip(op_arg_idents.iter()).rev() {
+                    let v = quote! { #arg_id };
+                    body = gen_match(sub_pat, &v, body, ctr);
                 }
+                return quote! {
+                    if let crate::ast::Term::ParamOp {
+                        op: #variant,
+                        op_args: #op_args_vec,
+                        args: #args_vec,
+                    } = (&(#var) as &crate::ast::Term) {
+                        if let [#(#op_arg_idents),*] = #op_args_vec.as_slice() {
+                            #body
+                        } else { None }
+                    } else { None }
+                };
             }
 
             let n_arg = args.len();
@@ -524,6 +530,7 @@ fn gen_match(pat: &Pat, var: &TokenStream2, inner: TokenStream2, ctr: &mut usize
                 "forall" => quote! { crate::ast::Binder::Forall },
                 "exists" => quote! { crate::ast::Binder::Exists },
                 "choice" => quote! { crate::ast::Binder::Choice },
+                "lambda" => quote! { crate::ast::Binder::Lambda },
                 other => panic!("unknown binder in match_term_flat!: {other}"),
             };
 
@@ -584,4 +591,85 @@ pub fn get_op_variant(input: TokenStream) -> TokenStream {
 pub fn get_param_op_variant(input: TokenStream) -> TokenStream {
     let input = input.to_string();
     param_op_to_variant(&input).into()
+}
+
+#[proc_macro_derive(GenerateSetters, attributes(skip_setter, const_setters))]
+pub fn generate_setters(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+    let struct_name = &ast.ident;
+    let generics = &ast.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let const_modifier = if ast.attrs.iter().any(|a| a.path().is_ident("const_setters")) {
+        quote! { const }
+    } else {
+        quote! {}
+    };
+
+    let syn::Data::Struct(DataStruct { fields, .. }) = &ast.data else {
+        panic!("can only be used with a struct")
+    };
+    let generated_setters = fields.iter().map(|f| {
+        let field_name = f.ident.clone().expect("expected the field to have a name");
+        let ty = f.ty.clone();
+        let doc = f.attrs.iter().filter(|v| v.meta.path().is_ident("doc"));
+
+        if f.attrs.iter().any(|a| a.path().is_ident("skip_setter")) {
+            quote! {}
+        } else {
+            quote! {
+                #(#doc)*
+                #[inline(always)]
+                pub #const_modifier fn #field_name(mut self, val: #ty) -> Self {
+                    self.#field_name = val;
+                    self
+                }
+            }
+        }
+    });
+
+    quote! {
+        impl #impl_generics #struct_name #ty_generics #where_clause {
+            #(#generated_setters)*
+        }
+    }
+    .into()
+}
+
+/// Run `git` on the manifest directory with the given arguments, and return its output.
+fn run_git(args: &[&str]) -> Option<String> {
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(manifest_dir)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|c| c.wait_with_output())
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let mut stdout = output.stdout;
+    if stdout.last().copied() == Some(b'\n') {
+        stdout.pop();
+    }
+    String::from_utf8(stdout).ok()
+}
+
+/// Generates a version string for Carcara.
+#[proc_macro]
+pub fn version_string(input: TokenStream) -> TokenStream {
+    parse_macro_input!(input as syn::parse::Nothing); // error if we are given args
+
+    let version = std::env::var("CARGO_PKG_VERSION").expect("couldn't get package version");
+    let hash = run_git(&["describe", "--always"]);
+    let branch = run_git(&["rev-parse", "--abbrev-ref", "HEAD"]).filter(|b| b != "HEAD");
+
+    let full_string = match (hash, branch) {
+        (None, _) => version.to_owned(),
+        (Some(hash), None) => format!("{} [git {}]", version, hash),
+        (Some(hash), Some(branch)) => format!("{} [git {} {}]", version, hash, branch),
+    };
+    quote! { #full_string }.into()
 }
