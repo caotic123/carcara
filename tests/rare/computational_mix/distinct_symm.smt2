@@ -1,0 +1,8 @@
+(set-info :smt-lib-version 2.6)
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-fun a () U)
+(declare-fun b () U)
+(assert (distinct a b))
+(check-sat)
+(exit)

@@ -1,0 +1,7 @@
+(set-info :smt-lib-version 2.6)
+(set-logic QF_LIA)
+(declare-fun x () Int)
+(declare-fun y () Int)
+(assert (not (not (<= (* 2 x) (* 2 y)))))
+(check-sat)
+(exit)

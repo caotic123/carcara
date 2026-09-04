@@ -1,0 +1,6 @@
+(set-info :smt-lib-version 2.6)
+(set-logic QF_LIA)
+(declare-fun f3 () Int)
+(assert (= (+ (* 4 f3) 1) (+ 1 (* 4 f3))))
+(check-sat)
+(exit)

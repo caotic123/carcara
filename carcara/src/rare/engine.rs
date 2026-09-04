@@ -1076,15 +1076,19 @@ fn available_subterm_premises(
         .collect()
 }
 
+/// The computational solvers (list folds, evaluation) advance one sequential
+/// step per iteration and are useless until they finish — e.g. a nine-element
+/// distinct only unions its expansion after ~50 iterations — so they run to
+/// fixpoint.  They terminate by construction (structural recursion over
+/// finite seeded lists); only the open-ended rewrite ruleset needs the
+/// per-round iteration budget.
 fn goal_run_schedule(iter: i16) -> Vec<EggStatement> {
     let mut schedule = vec![
-        EggStatement::Run {
+        EggStatement::Saturate {
             ruleset: Some("list-ruleset".to_string()),
-            iterations: iter,
         },
-        EggStatement::Run {
+        EggStatement::Saturate {
             ruleset: Some("evaluation".to_string()),
-            iterations: iter,
         },
     ];
     schedule.push(EggStatement::Run { ruleset: None, iterations: iter });

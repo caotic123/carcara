@@ -81,7 +81,7 @@ pub fn distinct_solver_statements() -> Vec<EggStatement> {
             egg_expr!(("Avaliable" {distinct_term.clone()})),
             egg_expr!((= ("to_formula" "xs" "x" "xs") "f")),
         ],
-        head: vec![egg_expr!((union (mk (_and (args "f" ()))) {distinct_term.clone()}))],
+        head: vec![egg_expr!((union (mk (_and "f")) {distinct_term.clone()}))],
     });
 
     // Rule 7: trigger to_formula_rel from distinct availability
