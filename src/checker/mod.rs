@@ -80,9 +80,6 @@ pub enum SatRefConfig {
 }
 
 /// Options for validating trusted theory-rewrite holes using RARE and egglog.
-///
-/// The checker integration is added by the accompanying RARE engine change; these options are
-/// defined here so command-line configuration has a stable, engine-independent API.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RunEgglogOptions {
     /// Maximum number of goal-schedule rounds to execute for a proof step.
@@ -142,7 +139,7 @@ pub struct Config {
     /// Whether to validate trusted theory-rewrite holes using RARE and egglog.
     check_hole_rewrites: bool,
 
-    /// Options that will control egglog checks of trusted theory rewrites.
+    /// Options controlling egglog checks of trusted theory rewrites.
     hole_rewrite_options: RunEgglogOptions,
 }
 
@@ -167,11 +164,15 @@ pub struct ProofChecker<'c> {
     reached_empty_clause: bool,
     is_holey: bool,
     rare_rules: &'c Rules,
+    rare_check_context: Option<crate::rare::engine::RareCtx<'c>>,
 }
 
 impl<'c> ProofChecker<'c> {
     /// Constructs a new `ProofChecker` with a given pool, set of rare rules, and `Config`.
     pub fn new(pool: &'c mut PrimitivePool, rare_rules: &'c Rules, config: Config) -> Self {
+        let rare_check_context = config
+            .check_hole_rewrites
+            .then(|| crate::rare::engine::RareCtx::new(rare_rules));
         ProofChecker {
             pool,
             config,
@@ -179,6 +180,7 @@ impl<'c> ProofChecker<'c> {
             reached_empty_clause: false,
             is_holey: false,
             rare_rules,
+            rare_check_context,
         }
     }
 
@@ -369,6 +371,7 @@ impl<'c> ProofChecker<'c> {
             current_subproof: iter.current_subproof(),
             subproof_depth: iter.depth(),
             is_holey: &mut self.is_holey,
+            rare_check_context: self.rare_check_context.as_ref(),
         };
 
         let result = check_step_core(step, rule_args, context, stats);

@@ -425,12 +425,17 @@ impl<'c> ParallelProofChecker<'c> {
         };
 
         // Use shared core logic
+        let rare_check_context = self
+            .config
+            .check_hole_rewrites
+            .then(|| crate::rare::engine::RareCtx::new(&self.rare_rules));
         let context = StepCheckContext {
             config: &self.config,
             is_end_step: iter.is_end_step(),
             current_subproof: iter.current_subproof(),
             subproof_depth: iter.depth(),
             is_holey: &mut self.is_holey,
+            rare_check_context: rare_check_context.as_ref(),
         };
 
         let result = check_step_core(step, rule_args, context, stats);
