@@ -17,6 +17,8 @@ carcara-macros = { path = "carcara-macros" }
 clap = { version = "4.6.6", features = ["derive"] }
 crossbeam-queue = "0.3.13"
 ansi_term = "0.12"
+egg = "0.10.0"
+egglog = "0.4.0"
 indexmap = "2.14.0"
 log = { version = "0.4.34", features = ["std"] }
 rapidhash = "4.5.1"
@@ -26,6 +28,10 @@ rug = { version = "1.30.0", default-features = false, features = [
 ] }
 thiserror = "2.0.20"
 nom = "8.0.0"
+num = "0.4.0"
+
+[features]
+debug-egglog = []
 
 [dev-dependencies]
 test-generator = { path = "test-generator" }

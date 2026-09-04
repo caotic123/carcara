@@ -1,8 +1,14 @@
 use indexmap::{IndexMap, IndexSet};
 use rug::Integer;
 
+pub mod computational;
+pub mod engine;
+pub mod language;
+pub mod meta;
+pub mod util;
+
 use crate::ast::{
-    Operator, Rc, Sort, Term,
+    MatchCase, Operator, Rc, Sort, Term,
     pool::TermPool,
     rare_rules::{RewriteTerm, build_equation, pseudo_term},
 };
@@ -368,7 +374,17 @@ fn rewrite_meta_terms_inner(
                 .collect::<Vec<_>>();
             pool.add(Term::AsOp(*op, sort.clone(), new_args))
         }
-        Term::Match(_, _) => todo!(), // TODO
+        Term::Match(term, cases) => {
+            let term = rewrite_meta_terms_inner(pool, term.clone(), rules, ctx);
+            let cases = cases
+                .iter()
+                .map(|case| MatchCase {
+                    pattern: case.pattern.clone(),
+                    body: rewrite_meta_terms_inner(pool, case.body.clone(), rules, ctx),
+                })
+                .collect();
+            pool.add(Term::Match(term, cases))
+        }
     };
 
     ctx.in_progress.shift_remove(&term);
