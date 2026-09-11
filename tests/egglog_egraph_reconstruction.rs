@@ -3069,10 +3069,7 @@ fn run_qf_uf_case(
         &mut pool,
         (conclusion.clone(), &node),
         &database,
-        RunEgglogOptions {
-            continuous_saturation: true,
-            ..RunEgglogOptions::default()
-        },
+        RunEgglogOptions::default(),
     );
     let saturation = start.elapsed();
     let egraph = result.expect("production egglog should prove the QF_UF equality");
