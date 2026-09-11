@@ -448,7 +448,7 @@ pub mod tests {
 
     fn assert_single_round_raw_then_poly_pipeline(code: &str) {
         let goal_schedule = code
-            .find("(run-schedule (repeat 1 (run list-ruleset)))")
+            .find("(run-schedule (saturate (run list-ruleset)))")
             .expect("missing goal schedule round");
         let raw_check = code
             .find("(check (= goal_lhs goal_rhs))")
@@ -494,7 +494,7 @@ pub mod tests {
 
     fn assert_single_round_raw_then_poly_then_rel_pipeline(code: &str) {
         let goal_schedule = code
-            .find("(run-schedule (repeat 1 (run list-ruleset)))")
+            .find("(run-schedule (saturate (run list-ruleset)))")
             .expect("missing goal schedule round");
         let raw_check = code
             .find("(check (= goal_lhs goal_rhs))")

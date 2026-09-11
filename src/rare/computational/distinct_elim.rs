@@ -81,7 +81,11 @@ pub fn distinct_solver_statements() -> Vec<EggStatement> {
             egg_expr!(("Avaliable" {distinct_term.clone()})),
             egg_expr!((= ("to_formula" "xs" "x" "xs") "f")),
         ],
-        head: vec![egg_expr!((union (mk (_and (args "f" ()))) {distinct_term.clone()}))],
+        // `f` is already the `Args` list of conjuncts built by `to_formula`,
+        // so it is passed to `@and` directly — wrapping it in another list
+        // cell would nest a list inside a list and never meet the
+        // well-formed `(and ...)` the rest of the system builds.
+        head: vec![egg_expr!((union (mk (_and "f")) {distinct_term.clone()}))],
     });
 
     // Rule 7: trigger to_formula_rel from distinct availability

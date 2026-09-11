@@ -1173,19 +1173,21 @@ fn available_subterm_premises(
     Ok(premises)
 }
 
+/// The computational solvers step per iteration and are useless until they
+/// finish — e.g. a nine-element distinct only unions its expansion after
+/// ~50 iterations — so their rulesets run to fixpoint.  They terminate by
+/// construction (structural recursion over finite seeded lists); only the
+/// open-ended rewrite ruleset needs the per-round iteration budget.
 fn goal_run_schedule(iterations: i16) -> Vec<EggStatement> {
-    let mut schedule = vec![
-        EggStatement::Run {
+    vec![
+        EggStatement::Saturate {
             ruleset: Some("list-ruleset".to_owned()),
-            iterations,
         },
-        EggStatement::Run {
+        EggStatement::Saturate {
             ruleset: Some("evaluation".to_owned()),
-            iterations,
         },
-    ];
-    schedule.push(EggStatement::Run { ruleset: None, iterations });
-    schedule
+        EggStatement::Run { ruleset: None, iterations },
+    ]
 }
 
 fn should_deduplicate_statement(statement: &EggStatement) -> bool {
@@ -1314,7 +1316,15 @@ fn run_goal_schedule_round(
     goal_label: &str,
 ) -> Result<(), String> {
     for statement in goal_run_schedule(1) {
-        for _ in 0..iterations {
+        // Saturating statements reach their fixpoint in one execution; only
+        // the bounded default run is stepped per iteration, keeping a
+        // timeout checkpoint between iterations.
+        let repeats = if matches!(statement, EggStatement::Saturate { .. }) {
+            1
+        } else {
+            iterations
+        };
+        for _ in 0..repeats {
             check_timeout(deadline, goal_label)?;
             run_and_record_statements(egraph, code_str, vec![statement.clone()])?;
             check_timeout(deadline, goal_label)?;
