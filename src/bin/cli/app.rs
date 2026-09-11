@@ -203,16 +203,19 @@ pub struct CheckingOptions {
     #[clap(long)]
     pub check_hole_rewrites: bool,
 
-    /// Print the egglog program generated for each checked hole rewrite.
-    #[clap(long, requires = "check_hole_rewrites")]
+    // The three egglog options below apply to both `--check-hole-rewrites`
+    // and the elaborator's `--elaborate-hole-rewrites`, so they do not
+    // require either; without a hole mode they are simply unused.
+    /// Print the egglog program generated for each checked or elaborated hole rewrite.
+    #[clap(long)]
     pub print_egglog: bool,
 
     /// Keep running RARE egglog schedules until goals are saturated.
-    #[clap(long = "continuous-saturation", requires = "check_hole_rewrites")]
+    #[clap(long = "continuous-saturation")]
     pub continuous_saturation: bool,
 
     /// Cooperative time budget in milliseconds for each RARE hole rewrite.
-    #[clap(long, requires = "check_hole_rewrites", value_name = "MILLISECONDS")]
+    #[clap(long, value_name = "MILLISECONDS")]
     pub rare_check_timeout: Option<u64>,
 }
 
