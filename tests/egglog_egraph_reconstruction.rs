@@ -1574,13 +1574,15 @@ impl AletheElaborator {
                     self.emit(lhs, rhs, "refl", "")
                 }
                 Computation::DistinctElim => self.emit(lhs, rhs, "distinct_elim", ""),
-                Computation::Evaluation => self.trusted(lhs, rhs, "evaluate"),
-                Computation::AciNorm => self.trusted(lhs, rhs, "aci_norm"),
-                // Carcara checks `poly_simp` natively by recomputing both
-                // polynomial normal forms, so the step needs no trust.  The
-                // relation form still awaits its scaled-difference premise
-                // construction, so it stays a tagged hole for now.
+                // Each computational kind maps to the native Carcara rule
+                // that re-decides it, so the elaborated step carries no
+                // trust: `evaluate` constant-folds, `aci_simp` normalizes
+                // and/or, `poly_simp` compares polynomial normal forms.
+                Computation::Evaluation => self.emit(lhs, rhs, "evaluate", ""),
+                Computation::AciNorm => self.emit(lhs, rhs, "aci_simp", ""),
                 Computation::ArithPolyNorm => self.emit(lhs, rhs, "poly_simp", ""),
+                // The relation form still awaits its scaled-difference
+                // premise construction, so it stays a tagged hole for now.
                 Computation::ArithPolyNormRel => self.trusted(lhs, rhs, "arith_poly_norm_rel"),
             },
             Certificate::Symm { lhs, rhs, proof } => {
@@ -3805,7 +3807,11 @@ fn reconstructs_rational_evaluation_from_production_egraph() {
         "tests/rare/computational_mix/real_eval.smt2",
         "tests/rare/computational_mix/mix.rare",
     );
-    assert!(steps.iter().any(|step| step.contains("\"evaluate\"")), "{steps:#?}");
+    assert!(
+        steps.iter().any(|step| step.contains(":rule evaluate")),
+        "{steps:#?}"
+    );
+    assert!(!steps.iter().any(|step| step.contains(":rule hole")), "{steps:#?}");
     eprintln!("real_eval: saturation={:?}, steps={steps:#?}", run.saturation);
 }
 
