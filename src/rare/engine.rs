@@ -1031,11 +1031,24 @@ fn construct_rules(
             )?),
         );
 
-        rules.insert(EggStatement::Rewrite(
-            egg_equations.0.clone(),
-            egg_equations.1.clone(),
-            premises.clone(),
-        ));
+        // An unconditional rewrite carries the RARE name into the program
+        // as a unique egglog rule name (the suffix keeps several
+        // instantiations of one rule apart), so reconstruction can cite the
+        // rule.  Conditional rewrites are never reconstructed and stay plain.
+        rules.insert(if premises.is_empty() {
+            EggStatement::NamedRewrite {
+                name: format!("rare:{}#{}", definition.name, rules.len()),
+                lhs: egg_equations.0.clone(),
+                rhs: egg_equations.1.clone(),
+                conditions: Vec::new(),
+            }
+        } else {
+            EggStatement::Rewrite(
+                egg_equations.0.clone(),
+                egg_equations.1.clone(),
+                premises.clone(),
+            )
+        });
         if !premises.is_empty() {
             let lhs_available =
                 EggExpr::Call("Avaliable".to_owned(), vec![(*egg_equations.0).clone()]);

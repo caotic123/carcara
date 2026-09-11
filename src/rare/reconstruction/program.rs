@@ -1,6 +1,9 @@
 //! Bridge from the engine's generated egglog program: goals, rules, RARE names.
 use std::collections::HashMap;
-use egglog::ast::{Action as EgglogAction, Command as EgglogCommand, Expr as EgglogExpr, GenericExpr};
+use egglog::ast::{
+    Action as EgglogAction, Command as EgglogCommand, Expr as EgglogExpr, GenericAction,
+    GenericExpr, GenericFact,
+};
 use super::*;
 
 /// Recover original variable names by walking the original conclusion term
@@ -144,115 +147,51 @@ pub fn rules_from_generated_program(program: &str) -> Vec<Rewrite> {
                 add(&rewrite.lhs, &rewrite.rhs, &mut rules);
                 add(&rewrite.rhs, &rewrite.lhs, &mut rules);
             }
+            // A named RARE rewrite lowers to the rule it is sugar for,
+            // `((= pivot lhs)) ((union pivot rhs))`; only that unconditional
+            // shape is a declarative rule, and it keeps the RARE name.
+            EgglogCommand::Rule { name, rule, .. } => {
+                let egglog_name = name.to_string();
+                let Some(rare_name) = rare_name_of(&egglog_name) else {
+                    continue;
+                };
+                let (
+                    [GenericFact::Eq(_, GenericExpr::Var(_, pivot), lhs)],
+                    [GenericAction::Union(_, GenericExpr::Var(_, target), rhs)],
+                ) = (rule.body.as_slice(), rule.head.0.as_slice())
+                else {
+                    continue;
+                };
+                if pivot != target {
+                    continue;
+                }
+                rules.push(Rewrite {
+                    name: leak(rare_name.to_owned()),
+                    lhs: pattern_from_egglog_expr(lhs),
+                    rhs: pattern_from_egglog_expr(rhs),
+                });
+            }
             _ => {}
         }
     }
     rules
 }
 
-/// Compile a RARE rule term into the encoded pattern shape the engine
-/// generates: rule parameters become pattern variables (their names are
-/// preserved verbatim by the compilation), operators and uninterpreted
-/// functions become `@`-prefixed constructors over `Args` lists.
-pub fn encode_rare_pattern(
-    term: &crate::ast::Rc<crate::ast::Term>,
-    parameters: &indexmap::IndexMap<String, crate::ast::rare_rules::TypeParameter>,
-) -> Option<Pattern> {
-    use crate::ast::Term as Original;
-    let mk = |inner: Pattern| Pattern::App("Mk", vec![inner]);
-    let encode_call = |operator: String,
-                       args: &[crate::ast::Rc<crate::ast::Term>]|
-     -> Option<Pattern> {
-        let list = args.iter().rev().try_fold(
-            Pattern::App("Empty", Vec::new()),
-            |tail, argument| {
-                Some(Pattern::App(
-                    "Args",
-                    vec![encode_rare_pattern(argument, parameters)?, tail],
-                ))
-            },
-        )?;
-        Some(mk(Pattern::App(leak(operator), vec![list])))
-    };
-    match term.as_ref() {
-        Original::Var(name, _) if parameters.contains_key(name) => {
-            Some(mk(Pattern::Var(leak(name.clone()))))
-        }
-        // Boolean constants are operators in Carcara's AST but literals in
-        // the encoding; without this arm the generic operator case would
-        // encode them as `@true`/`@false` applications and no `-> true`
-        // rule would ever map back to its RARE name.
-        Original::Op(crate::ast::Operator::True, args) if args.is_empty() => {
-            Some(mk(Pattern::App("Bool", vec![Pattern::App("true", Vec::new())])))
-        }
-        Original::Op(crate::ast::Operator::False, args) if args.is_empty() => {
-            Some(mk(Pattern::App("Bool", vec![Pattern::App("false", Vec::new())])))
-        }
-        Original::Op(operator, args) => encode_call(format!("@{operator}"), args),
-        Original::App(function, args) => {
-            let Original::Var(name, _) = function.as_ref() else {
-                return None;
-            };
-            encode_call(format!("@{name}"), args)
-        }
-        Original::Const(crate::ast::Constant::Integer(value)) => Some(mk(Pattern::App(
-            "Num",
-            vec![Pattern::App(leak(value.to_string()), Vec::new())],
-        ))),
-        Original::Const(crate::ast::Constant::Real(value)) => {
-            let (numer, denom) = value.clone().into_numer_denom();
-            Some(mk(Pattern::App(
-                "Real",
-                vec![
-                    Pattern::App(leak(numer.to_string()), Vec::new()),
-                    Pattern::App(leak(denom.to_string()), Vec::new()),
-                ],
-            )))
-        }
-        _ => match format!("{term}").as_str() {
-            "true" => Some(mk(Pattern::App("Bool", vec![Pattern::App("true", Vec::new())]))),
-            "false" => Some(mk(Pattern::App("Bool", vec![Pattern::App("false", Vec::new())]))),
-            _ => None,
-        },
-    }
+/// The RARE rule name a generated egglog rule carries, if the engine
+/// compiled it from one: `rare:<name>#<k>`, the suffix keeping several
+/// instantiations of one rule apart.
+fn rare_name_of(egglog_name: &str) -> Option<&str> {
+    let name = egglog_name.strip_prefix("rare:")?;
+    Some(name.rsplit_once('#').map_or(name, |(name, _)| name))
 }
 
-/// Associate generated egglog rewrites back to the RARE rules they were
-/// compiled from, by structural pattern equality of both sides.  Returns
-/// generated-name -> (RARE name, argument order).
-pub fn rare_rule_index(
+/// Argument order of every RARE rule, by name: the instantiation a
+/// `rare_rewrite` step spells out.
+pub fn rare_arguments(
     database: &indexmap::IndexMap<String, crate::ast::rare_rules::RuleDefinition>,
-    generated: &[Rewrite],
-) -> HashMap<String, (String, Vec<String>)> {
-    use crate::ast::Term as Original;
-    let mut compiled = Vec::new();
-    for (name, rule) in database {
-        if !rule.premises.is_empty() {
-            continue;
-        }
-        let Original::Op(crate::ast::Operator::Equals, sides) = rule.conclusion.as_ref() else {
-            continue;
-        };
-        if sides.len() != 2 {
-            continue;
-        }
-        let (Some(lhs), Some(rhs)) = (
-            encode_rare_pattern(&sides[0], &rule.parameters),
-            encode_rare_pattern(&sides[1], &rule.parameters),
-        ) else {
-            continue;
-        };
-        compiled.push((name.clone(), rule.arguments.clone(), lhs, rhs));
-    }
-
-    let mut index = HashMap::new();
-    for rewrite in generated {
-        for (name, arguments, lhs, rhs) in &compiled {
-            if &rewrite.lhs == lhs && &rewrite.rhs == rhs {
-                index.insert(rewrite.name.to_owned(), (name.clone(), arguments.clone()));
-                break;
-            }
-        }
-    }
-    index
+) -> HashMap<String, Vec<String>> {
+    database
+        .iter()
+        .map(|(name, rule)| (name.clone(), rule.arguments.clone()))
+        .collect()
 }

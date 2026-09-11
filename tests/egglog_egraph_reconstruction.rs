@@ -797,7 +797,7 @@ fn elaborate_and_check(
 ) -> Vec<String> {
     let rules = rules_from_generated_program(&run.generated_program);
     let names = goal_variable_names(&run.lhs, &run.rhs, &run.conclusion);
-    let rare_index = rare_rule_index(&run.rare_rules, &rules);
+    let rare_index = rare_arguments(&run.rare_rules);
     let steps = AletheElaborator::elaborate_full(certificate, hole, names, rare_index)
         .expect("certificate should elaborate to Alethe");
     if let Err(error) = check_with_carcara(
@@ -1149,7 +1149,7 @@ fn run_benchmark_corpus() {
             );
         };
         let names = goal_variable_names(&lhs, &rhs, &conclusion);
-        let rare_index = rare_rule_index(&database.rules, &rules);
+        let rare_index = rare_arguments(&database.rules);
         let Some(steps) =
             AletheElaborator::elaborate_full(&certificate, hole, names.clone(), rare_index)
         else {

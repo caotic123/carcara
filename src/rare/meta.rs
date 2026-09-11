@@ -273,6 +273,29 @@ pub fn lower_egg_language(lang: EggLanguage) -> Vec<Command> {
                     false, /* subsume = false */
                 )],
 
+                /* --------- named rewrite ----------- */
+                // egglog's `rewrite` cannot carry a name, so a named rewrite
+                // lowers to the rule it is sugar for, keeping the name.
+                EggStatement::NamedRewrite { name, lhs, rhs, conditions } => {
+                    const PIVOT: &str = "__rare_rewrite_var";
+                    let pivot = Expr::Var(dummy_span(), Symbol::from(PIVOT));
+                    let mut body = vec![Fact::Eq(dummy_span(), pivot.clone(), to_expr(*lhs))];
+                    body.extend(facts(conditions));
+                    vec![Command::Rule {
+                        ruleset: Symbol::from(""),
+                        name: Symbol::from(name),
+                        rule: Rule {
+                            span: dummy_span(),
+                            body,
+                            head: GenericActions(vec![GenericAction::Union(
+                                dummy_span(),
+                                pivot,
+                                to_expr(*rhs),
+                            )]),
+                        },
+                    }]
+                }
+
                 /* -------------- rule --------------- */
                 EggStatement::Rule { ruleset, body, head } => vec![Command::Rule {
                     ruleset: Symbol::from(ruleset.as_deref().unwrap_or("")),

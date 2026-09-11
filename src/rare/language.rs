@@ -56,6 +56,15 @@ pub enum EggStatement {
     Premise(String, Box<EggExpr>),
     Let(String, Box<EggExpr>),
     Rewrite(Box<EggExpr>, Box<EggExpr>, Vec<EggExpr>),
+    /// A rewrite compiled from a named RARE rule.  The name travels into
+    /// the generated program as the egglog rule's name, so a proof
+    /// reconstructed from the e-graph can cite the rule it used.
+    NamedRewrite {
+        name: String,
+        lhs: Box<EggExpr>,
+        rhs: Box<EggExpr>,
+        conditions: Vec<EggExpr>,
+    },
     Union(Box<EggExpr>, Box<EggExpr>),
     Rule {
         ruleset: Option<String>,

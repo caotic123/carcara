@@ -14,9 +14,9 @@ pub struct AletheElaborator {
     pub prefix: String,
     pub steps: Vec<String>,
     pub names: HashMap<String, String>,
-    /// Generated-rule name -> (RARE rule name, argument order), for emitting
-    /// checkable `rare_rewrite` steps instead of trusted holes.
-    pub rare: HashMap<String, (String, Vec<String>)>,
+    /// RARE rule name -> argument order, for emitting checkable
+    /// `rare_rewrite` steps instead of trusted holes.
+    pub rare: HashMap<String, Vec<String>>,
 }
 
 impl AletheElaborator {
@@ -36,7 +36,7 @@ impl AletheElaborator {
         certificate: &Certificate,
         prefix: &str,
         names: HashMap<String, String>,
-        rare: HashMap<String, (String, Vec<String>)>,
+        rare: HashMap<String, Vec<String>>,
     ) -> Option<Vec<String>> {
         let mut elaborator =
             Self { prefix: prefix.to_owned(), steps: Vec::new(), names, rare };
@@ -64,12 +64,11 @@ impl AletheElaborator {
         match certificate {
             Certificate::Refl { term } => self.emit(term, term, "refl", ""),
             Certificate::Rule { name, lhs, rhs, substitution } => {
-                // A rule that maps back to the RARE database becomes a real,
-                // checkable rare_rewrite step carrying the rule's name and
-                // its argument instantiation; engine-generated rewrites keep
-                // the trusted form.
-                let mapped = self.rare.get(name).cloned();
-                if let Some((rare_name, arguments)) = mapped {
+                // A rewrite the engine compiled from the RARE database
+                // carries its name, so the step becomes a checkable
+                // rare_rewrite with the rule's argument instantiation;
+                // engine-internal rewrites keep the trusted form.
+                if let Some(arguments) = self.rare.get(name).cloned() {
                     let decoded: Option<Vec<String>> = arguments
                         .iter()
                         .map(|parameter| {
@@ -79,10 +78,7 @@ impl AletheElaborator {
                         })
                         .collect();
                     if let Some(decoded) = decoded {
-                        let tail = format!(
-                            " :args (\"{rare_name}\" {})",
-                            decoded.join(" "),
-                        );
+                        let tail = format!(" :args (\"{name}\" {})", decoded.join(" "));
                         return self.emit(lhs, rhs, "rare_rewrite", &tail);
                     }
                 }
@@ -268,7 +264,7 @@ pub fn elaborate(
         )
     })?;
     let names = goal_variable_names(&lhs, &rhs, conclusion);
-    let index = rare_rule_index(&rules.rules, &rewrites);
+    let index = rare_arguments(&rules.rules);
     let steps = AletheElaborator::elaborate_full(&certificate, &step.id, names, index)
         .ok_or_else(|| {
             fail(
