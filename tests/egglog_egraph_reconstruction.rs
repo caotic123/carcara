@@ -1581,9 +1581,12 @@ impl AletheElaborator {
                 Computation::Evaluation => self.emit(lhs, rhs, "evaluate", ""),
                 Computation::AciNorm => self.emit(lhs, rhs, "aci_simp", ""),
                 Computation::ArithPolyNorm => self.emit(lhs, rhs, "poly_simp", ""),
-                // The relation form still awaits its scaled-difference
-                // premise construction, so it stays a tagged hole for now.
-                Computation::ArithPolyNormRel => self.emit(lhs, rhs, "poly_simp_rel", ""),
+                // The relation form stays a tagged hole: Carcara's native
+                // `poly_simp_rel` needs a scaled-difference premise and the
+                // same relation operator on both sides, which these
+                // certificates (negated, mixed-operator, integer-tightened
+                // relations) do not generally provide.
+                Computation::ArithPolyNormRel => self.trusted(lhs, rhs, "arith_poly_norm_rel"),
             },
             Certificate::Symm { lhs, rhs, proof } => {
                 let premise = self.step_for(proof)?;
