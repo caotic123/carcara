@@ -23,6 +23,20 @@ use std::{
 use clap::Parser;
 
 fn main() {
+    // The recursive-descent parser needs a few (debug-build) frames per
+    // nesting level, and real proofs nest hundreds of levels deep — past the
+    // main thread's default stack.  The CLI runs on a thread with room.
+    const STACK_SIZE: usize = 512 * 1024 * 1024;
+    let cli = std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(run_cli)
+        .expect("failed to spawn the CLI thread");
+    if cli.join().is_err() {
+        std::process::exit(101);
+    }
+}
+
+fn run_cli() {
     let cli = Cli::parse();
     let colors_enabled = !cli.no_color && std::io::stderr().is_terminal();
 
