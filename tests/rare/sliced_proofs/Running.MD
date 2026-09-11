@@ -27,10 +27,10 @@ The egglog options of the checking flags (`--continuous-saturation`,
 Each `<problem>__from-<step>.smt2.alethe` file is a proof fragment ending
 at one trust hole, not a refutation, so `carcara elaborate` rejects it at
 the checking stage (the proof does not conclude the empty clause). They
-are exercised by the `egglog_egraph_reconstruction` integration test,
-which drives the same pipeline hole by hole:
+are exercised by the reconstruction unit tests (`src/rare/reconstruction/tests`),
+whose corpus sweep drives the same pipeline hole by hole:
 
     BENCH_LIST=<tsv: alethe, smt2, hole id> BENCH_RARE=tests/rare/big.rare BENCH_OUT=<dir> \
-      cargo test --test egglog_egraph_reconstruction -- --ignored reconstructs_benchmark_corpus --nocapture
+      cargo test --lib -- --ignored reconstructs_benchmark_corpus --nocapture
 
 writing one elaborated proof per hole into `BENCH_OUT`.

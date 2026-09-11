@@ -8,6 +8,9 @@ pub mod search;
 pub mod snapshot;
 pub mod term;
 
+#[cfg(test)]
+mod tests;
+
 pub use certificate::*;
 pub use computation::*;
 pub use program::*;
