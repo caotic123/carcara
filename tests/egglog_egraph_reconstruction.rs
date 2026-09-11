@@ -1577,8 +1577,8 @@ impl AletheElaborator {
                 Computation::Evaluation => self.trusted(lhs, rhs, "evaluate"),
                 Computation::AciNorm => self.trusted(lhs, rhs, "aci_norm"),
                 // cvc5's Alethe names for ARITH_POLY_NORM and ARITH_POLY_NORM_REL.
-                Computation::ArithPolyNorm => self.trusted(lhs, rhs, "poly_simp"),
-                Computation::ArithPolyNormRel => self.trusted(lhs, rhs, "poly_simp_rel"),
+                Computation::ArithPolyNorm => self.trusted(lhs, rhs, "arith_poly_norm"),
+                Computation::ArithPolyNormRel => self.trusted(lhs, rhs, "arith_poly_norm_rel"),
             },
             Certificate::Symm { lhs, rhs, proof } => {
                 let premise = self.step_for(proof)?;
@@ -3954,6 +3954,20 @@ fn rare_rule_index(
 #[test]
 #[ignore = "corpus reconstruction sweep; set BENCH_LIST and BENCH_RARE"]
 fn reconstructs_benchmark_corpus() {
+    // Carcara's recursive-descent parser consumes several debug-build
+    // frames per nesting level, and corpus problems nest a few hundred
+    // levels deep (medium11.smt2 reaches 188) — past the default
+    // test-thread stack, though not the CLI's 8 MiB main thread.  The
+    // sweep therefore runs on an explicitly sized thread.
+    std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(run_benchmark_corpus)
+        .expect("corpus thread should spawn")
+        .join()
+        .expect("corpus thread should not panic");
+}
+
+fn run_benchmark_corpus() {
     let list = std::fs::read_to_string(std::env::var("BENCH_LIST").expect("set BENCH_LIST"))
         .expect("BENCH_LIST should be readable");
     let rare_path = std::env::var("BENCH_RARE").expect("set BENCH_RARE");
@@ -4050,6 +4064,18 @@ fn reconstructs_benchmark_corpus() {
                 "--- elaborated proof (case {index}, hole {hole}) ---\n{}\n",
                 steps.join("\n")
             );
+        }
+        // BENCH_OUT: directory to write each case's elaborated proof into,
+        // named after the slice file.
+        if let Ok(out_dir) = std::env::var("BENCH_OUT") {
+            let stem = Path::new(alethe)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(alethe)
+                .trim_end_matches(".smt2.alethe");
+            let out_path = Path::new(&out_dir).join(format!("{stem}.alethe"));
+            std::fs::write(&out_path, format!("{}\n", steps.join("\n")))
+                .expect("BENCH_OUT directory should be writable");
         }
         if let Err(error) = check_with_carcara(Path::new(smt2), &steps, Path::new(&rare_path)) {
             panic!(
