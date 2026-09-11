@@ -1576,8 +1576,11 @@ impl AletheElaborator {
                 Computation::DistinctElim => self.emit(lhs, rhs, "distinct_elim", ""),
                 Computation::Evaluation => self.trusted(lhs, rhs, "evaluate"),
                 Computation::AciNorm => self.trusted(lhs, rhs, "aci_norm"),
-                // cvc5's Alethe names for ARITH_POLY_NORM and ARITH_POLY_NORM_REL.
-                Computation::ArithPolyNorm => self.trusted(lhs, rhs, "arith_poly_norm"),
+                // Carcara checks `poly_simp` natively by recomputing both
+                // polynomial normal forms, so the step needs no trust.  The
+                // relation form still awaits its scaled-difference premise
+                // construction, so it stays a tagged hole for now.
+                Computation::ArithPolyNorm => self.emit(lhs, rhs, "poly_simp", ""),
                 Computation::ArithPolyNormRel => self.trusted(lhs, rhs, "arith_poly_norm_rel"),
             },
             Certificate::Symm { lhs, rhs, proof } => {
@@ -3665,8 +3668,8 @@ fn arith_relation_keys_are_sound_on_fractional_strict_bounds() {
 /// The `poly_norm` fixture through the full production pipeline: the step
 /// claims `(= (+ (* 4 f3) 1) (+ 1 (* 4 f3)))`, which no RARE rule derives.
 /// The solver proves it by polynomial normal forms without merging the two
-/// sides, so the certificate is one arithmetic step, elaborated as cvc5's
-/// `poly_simp`.
+/// sides, so the certificate is one arithmetic step, elaborated as
+/// Carcara's native `poly_simp` rule.
 #[test]
 fn reconstructs_arith_poly_norm_from_production_egraph() {
     let run = run_qf_uf_case(
@@ -3710,7 +3713,11 @@ fn reconstructs_arith_poly_norm_from_production_egraph() {
         "tests/rare/computational_mix/mix.rare",
     );
     assert_eq!(steps.len(), 1);
-    assert!(steps[0].contains("\"poly_simp\""), "{}", steps[0]);
+    assert!(
+        steps[0].contains(":rule poly_simp") && !steps[0].contains(":rule hole"),
+        "{}",
+        steps[0]
+    );
     eprintln!("poly_norm: saturation={:?}, steps={steps:#?}", run.saturation);
 }
 
@@ -3757,7 +3764,10 @@ fn reconstructs_arith_poly_norm_rel_mixed_with_double_not_from_production_egraph
         "tests/rare/computational_mix/mix.rare",
     );
     assert!(steps.iter().any(|step| step.contains("rare_rewrite") && step.contains("\"bool-double-not-elim\"")), "{steps:#?}");
-    assert!(steps.iter().any(|step| step.contains("\"poly_simp_rel\"")), "{steps:#?}");
+    assert!(
+        steps.iter().any(|step| step.contains("\"arith_poly_norm_rel\"")),
+        "{steps:#?}"
+    );
     eprintln!("poly_norm_rel mix: saturation={:?}, steps={steps:#?}", run.saturation);
 }
 
