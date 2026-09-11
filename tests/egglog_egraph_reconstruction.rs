@@ -1921,3 +1921,66 @@ fn capture(egraph: &ProofEGraph) -> EGraphSnapshot {
             .collect(),
     )
 }
+
+/// End to end through the library entry point: `check_and_elaborate` with
+/// the RARE hole elaboration replaces every `TRUST_THEORY_REWRITE` hole of
+/// a cvc5 proof by a checked subproof, and the elaborated proof then passes
+/// the checker with no hole checking at all.
+#[test]
+fn elaborates_cvc5_theory_rewrite_holes_end_to_end() {
+    use carcara::elaborator::{self, ElaborationPass};
+
+    let problem_path = Path::new("tests/rare/elaborate/RF-12.smt2");
+    let proof_path = Path::new("tests/rare/elaborate/RF-12.smt2.alethe");
+    let rare_path = Path::new("tests/rare/big.rare");
+    let parser_config = parser::Config::default()
+        .expand_lets(true)
+        .allow_int_real_subtyping(true)
+        .parse_hole_args(true);
+
+    let (mut problem_text, mut proof_text, mut rare_text) =
+        (String::new(), String::new(), String::new());
+    let (status, problem, elaborated, mut pool) = carcara::check_and_elaborate(
+        parser::Source::file(problem_path, &mut problem_text).expect("problem should exist"),
+        parser::Source::file(proof_path, &mut proof_text).expect("proof should exist"),
+        Some(parser::Source::file(rare_path, &mut rare_text).expect("RARE database should exist")),
+        parser_config,
+        carcara::checker::Config::new(),
+        elaborator::Config::new().elaborate_hole_rewrites(true),
+        vec![ElaborationPass::Hole],
+        false,
+    )
+    .expect("the cvc5 proof should check and elaborate");
+    assert_eq!(
+        status,
+        carcara::Status::Holey,
+        "before elaboration the proof carries trust holes"
+    );
+
+    let mut printed = Vec::new();
+    carcara::ast::printer::write_proof_to_dest(
+        &mut pool,
+        &problem.prelude,
+        &elaborated,
+        &mut printed,
+        false,
+    )
+    .expect("the elaborated proof should print");
+    let printed = String::from_utf8(printed).expect("printed proof should be UTF-8");
+    assert!(!printed.contains("TRUST_THEORY_REWRITE"), "{printed}");
+    assert!(!printed.contains(":rule hole"), "{printed}");
+
+    // Re-check the elaborated proof from its text, with no hole checking.
+    let (mut problem_text, mut rare_text) = (String::new(), String::new());
+    let rechecked = carcara::check(
+        parser::Source::file(problem_path, &mut problem_text).expect("problem should exist"),
+        parser::Source::new(Path::new("<elaborated RF-12>"), &printed),
+        Some(parser::Source::file(rare_path, &mut rare_text).expect("RARE database should exist")),
+        parser_config,
+        carcara::checker::Config::new(),
+        false,
+    )
+    .expect("the elaborated proof should parse and check");
+    assert_eq!(rechecked, carcara::Status::Valid, "{printed}");
+    eprintln!("elaborated RF-12:\n{printed}");
+}
