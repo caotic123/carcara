@@ -1,0 +1,1 @@
+(step t1 (cl (= (distinct a b c) (and (not (= a b)) (not (= a c)) (not (= b c))))) :rule hole :args ("TRUST_THEORY_REWRITE" (= (distinct a b c) (and (not (= a b)) (not (= a c)) (not (= b c)))) 0 6))

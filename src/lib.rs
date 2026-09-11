@@ -51,7 +51,7 @@ pub mod elaborator;
 pub mod external;
 pub mod parser;
 #[allow(dead_code)]
-mod rare;
+pub mod rare;
 mod resolution;
 pub mod slice;
 pub mod translation;

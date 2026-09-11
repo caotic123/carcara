@@ -1,0 +1,6 @@
+(set-info :smt-lib-version 2.6)
+(set-logic QF_LRA)
+(declare-fun r () Real)
+(assert (= r (+ 1/2 1/2)))
+(check-sat)
+(exit)

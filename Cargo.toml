@@ -37,6 +37,9 @@ debug-egglog = []
 test-generator = { path = "test-generator" }
 rand = "0.10.2"
 colored = "3.1.1"
+# Keep the production RARE engine on egglog 0.4 while the proof-producing
+# backend is evaluated in isolation. Cargo resolves both versions side by side.
+egglog-proofs = { package = "egglog", version = "3.0.0", default-features = false }
 
 [[bin]]
 name = "carcara"

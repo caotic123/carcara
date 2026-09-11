@@ -1,0 +1,18 @@
+;; Direct, proof-mode translation of tests/rare/big.rare's
+;; `ite-then-false` RARE rule.  This intentionally contains no Carcara
+;; availability relations, generated Datalog rules, or computational rules.
+
+(datatype Term
+  (Bool bool)
+  (Var String)
+  (Not Term)
+  (And Term Term)
+  (Ite Term Term Term))
+
+(rule
+  ((= root (Ite c (Bool false) x)))
+  ((union root (And (Not c) x)))
+  :name "ite-then-false")
+
+(let $lhs (Ite (Var "c") (Bool false) (Bool true)))
+(run 1)
