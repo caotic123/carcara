@@ -4,6 +4,7 @@ pub mod error;
 mod hole;
 mod local;
 mod polyeq;
+pub mod rare_hole;
 mod reordering;
 mod sat_refutation;
 mod uncrowding;

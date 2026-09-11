@@ -5,6 +5,7 @@ pub mod computational;
 pub mod engine;
 pub mod language;
 pub mod meta;
+pub mod reconstruction;
 pub mod util;
 
 use crate::ast::{
