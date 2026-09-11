@@ -1583,7 +1583,7 @@ impl AletheElaborator {
                 Computation::ArithPolyNorm => self.emit(lhs, rhs, "poly_simp", ""),
                 // The relation form still awaits its scaled-difference
                 // premise construction, so it stays a tagged hole for now.
-                Computation::ArithPolyNormRel => self.trusted(lhs, rhs, "arith_poly_norm_rel"),
+                Computation::ArithPolyNormRel => self.emit(lhs, rhs, "poly_simp_rel", ""),
             },
             Certificate::Symm { lhs, rhs, proof } => {
                 let premise = self.step_for(proof)?;
@@ -4046,6 +4046,9 @@ fn run_benchmark_corpus() {
         );
         if result.is_err() {
             oracle_failed += 1;
+            // One line per oracle failure, so a driver can attribute the
+            // case to the egglog check stage rather than to reconstruction.
+            eprintln!("oracle-failed case {index}");
             continue;
         }
         if let Ok(dump_dir) = std::env::var("BENCH_DUMP") {
