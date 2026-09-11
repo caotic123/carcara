@@ -3884,6 +3884,16 @@ fn encode_rare_pattern(
         Original::Var(name, _) if parameters.contains_key(name) => {
             Some(mk(Pattern::Var(leak(name.clone()))))
         }
+        // Boolean constants are operators in Carcara's AST but literals in
+        // the encoding; without this arm the generic operator case would
+        // encode them as `@true`/`@false` applications and no `-> true`
+        // rule would ever map back to its RARE name.
+        Original::Op(carcara::ast::Operator::True, args) if args.is_empty() => {
+            Some(mk(Pattern::App("Bool", vec![Pattern::App("true", Vec::new())])))
+        }
+        Original::Op(carcara::ast::Operator::False, args) if args.is_empty() => {
+            Some(mk(Pattern::App("Bool", vec![Pattern::App("false", Vec::new())])))
+        }
         Original::Op(operator, args) => encode_call(format!("@{operator}"), args),
         Original::App(function, args) => {
             let Original::Var(name, _) = function.as_ref() else {
@@ -4032,6 +4042,16 @@ fn run_benchmark_corpus() {
             oracle_failed += 1;
             continue;
         }
+        if let Ok(dump_dir) = std::env::var("BENCH_DUMP") {
+            let stem = Path::new(alethe)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(alethe)
+                .trim_end_matches(".smt2.alethe");
+            let dump_path = Path::new(&dump_dir).join(format!("{stem}__hole-{hole}.egg"));
+            std::fs::write(&dump_path, &program).expect("BENCH_DUMP directory should be writable");
+        }
+
         let snapshot = EGraphSnapshot::capture_production(&result.unwrap());
         let (lhs, rhs) = generated_goals(&program);
         let rules = rules_from_generated_program(&program);
@@ -4083,7 +4103,7 @@ fn run_benchmark_corpus() {
                 .and_then(|name| name.to_str())
                 .unwrap_or(alethe)
                 .trim_end_matches(".smt2.alethe");
-            let out_path = Path::new(&out_dir).join(format!("{stem}.alethe"));
+            let out_path = Path::new(&out_dir).join(format!("{stem}__hole-{hole}.alethe"));
             std::fs::write(&out_path, format!("{}\n", steps.join("\n")))
                 .expect("BENCH_OUT directory should be writable");
         }
