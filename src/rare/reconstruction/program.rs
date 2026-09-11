@@ -128,7 +128,7 @@ pub fn rules_from_generated_program(program: &str) -> Vec<Rewrite> {
         .get_program_from_string(None, program)
         .expect("Carcara's generated egglog program should parse");
     let mut rules = Vec::new();
-    let mut add = |lhs: &EgglogExpr, rhs: &EgglogExpr, rules: &mut Vec<Rewrite>| {
+    let add = |lhs: &EgglogExpr, rhs: &EgglogExpr, rules: &mut Vec<Rewrite>| {
         rules.push(Rewrite {
             name: leak(format!("gen-{}", rules.len())),
             lhs: pattern_from_egglog_expr(lhs),

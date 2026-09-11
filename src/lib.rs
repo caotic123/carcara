@@ -356,6 +356,7 @@ pub fn check_and_elaborate<'s>(
         &problem,
         elaborator_config,
     )
+    .with_rare_rules(&rules)
     .elaborate_with_stats(node, &proof.filename, pipeline)?;
     let elaborated = ast::Proof {
         commands: elaborated.into_commands(),

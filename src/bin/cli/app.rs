@@ -233,6 +233,13 @@ pub struct ElaborationOptions {
     #[clap(long)]
     pub uncrowd_rotate: bool,
 
+    /// Elaborate `hole` steps marked as `TRUST_THEORY_REWRITE` through the RARE post-hoc
+    /// reconstruction pipeline: the egglog engine proves the rewrite, a certificate is
+    /// reconstructed from its saturated e-graph, and the certificate is inserted as checkable
+    /// Alethe steps. Requires a RARE file; the `hole` pass must be in the pipeline.
+    #[clap(long)]
+    pub elaborate_hole_rewrites: bool,
+
     /// The pipeline of elaboration passes to use.
     #[clap(
         value_enum,

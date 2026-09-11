@@ -54,6 +54,11 @@ pub enum ElaborationError {
     /// arguments.
     #[error("cannot uncrowd resolution without pivots being provided")]
     UncrowdMissingPivots,
+
+    /// A `TRUST_THEORY_REWRITE` hole could not be elaborated through the RARE post-hoc
+    /// reconstruction pipeline; the message names the stage that failed.
+    #[error("could not reconstruct theory rewrite: {0}")]
+    RareReconstruction(String),
 }
 
 impl ElaborationError {

@@ -194,3 +194,135 @@ pub fn spine_arguments<'c>(certificate: &'c Certificate, out: &mut Vec<&'c Certi
         _ => None,
     }
 }
+
+use std::path::Path;
+
+use crate::{
+    Status,
+    ast::{
+        Constant, ProofCommand, ProofNode, StepNode,
+        pool::{PrimitivePool, TermPool},
+        rare_rules::Rules,
+    },
+    checker,
+    elaborator::{Elaborator, error::ElaborationError},
+    external, parser,
+    rare::engine::run_egglog,
+};
+
+/// Whether `step` is a cvc5 `TRUST_THEORY_REWRITE` hole.
+pub fn is_theory_rewrite_hole(step: &StepNode) -> bool {
+    step.rule == "hole"
+        && matches!(
+            step.args.first().map(|arg| arg.as_ref()),
+            Some(crate::ast::Term::Const(Constant::String(tag))) if tag == "TRUST_THEORY_REWRITE"
+        )
+}
+
+/// Elaborates a `TRUST_THEORY_REWRITE` hole through the post-hoc pipeline:
+/// the egglog engine proves the rewrite, a certificate is reconstructed from
+/// its saturated e-graph, the certificate's Alethe steps are checked against
+/// the RARE database, and the checked proof replaces the hole as a subproof
+/// — the same insertion an external solver's proof goes through.
+pub fn elaborate(
+    elaborator: &mut Elaborator,
+    node: &crate::ast::Rc<ProofNode>,
+    step: &StepNode,
+) -> Result<crate::ast::Rc<ProofNode>, ElaborationError> {
+    let fail = |stage: &str, detail: String| {
+        ElaborationError::RareReconstruction(format!("{stage}: {detail}"))
+    };
+    let rules = elaborator
+        .rare_rules
+        .ok_or_else(|| fail("setup", "no RARE database was given".to_owned()))?;
+    let [conclusion] = step.clause.as_slice() else {
+        return Err(fail(
+            "setup",
+            format!("expected a single-literal clause, found {} literals", step.clause.len()),
+        ));
+    };
+
+    let (result, program) = run_egglog(
+        elaborator.pool,
+        (conclusion.clone(), node),
+        rules,
+        elaborator.config.hole_rewrite_options,
+    );
+    let egraph = result.map_err(|error| fail("egglog check", error))?;
+    let snapshot = EGraphSnapshot::capture_production(&egraph);
+    let (lhs, rhs) = generated_goals(&program);
+    let rewrites = rules_from_generated_program(&program);
+    let sorts = ArithSorts::from_generated_program(&program);
+    let reconstruction = reconstruct_with_sorts(
+        &snapshot,
+        &lhs,
+        &rhs,
+        &rewrites,
+        &sorts,
+        SearchStrategy::default(),
+    );
+    let certificate = reconstruction.certificate.ok_or_else(|| {
+        fail(
+            "reconstruction",
+            format!("no certificate found; stats: {:?}", reconstruction.stats),
+        )
+    })?;
+    let names = goal_variable_names(&lhs, &rhs, conclusion);
+    let index = rare_rule_index(&rules.rules, &rewrites);
+    let steps = AletheElaborator::elaborate_full(&certificate, &step.id, names, index)
+        .ok_or_else(|| {
+            fail(
+                "alethe elaboration",
+                "a certificate term failed to decode".to_owned(),
+            )
+        })?;
+
+    // `insert_solver_proof` expects a refutation of the negated conclusion,
+    // so the equality proof is closed by resolving its last step against
+    // that assumption.
+    let negated = elaborator.pool.add(crate::ast::Term::Op(
+        crate::ast::Operator::Not,
+        vec![conclusion.clone()],
+    ));
+    let problem =
+        external::get_problem_string(elaborator.pool, &elaborator.problem.prelude, [&negated]);
+    let assumption = format!("{}.h", step.id);
+    let last = format!("{}.{}", step.id, steps.len());
+    let proof = format!(
+        "(assume {assumption} {negated})\n{}\n(step {}.{} (cl) :rule resolution :premises ({last} {assumption}))\n",
+        steps.join("\n"),
+        step.id,
+        steps.len() + 1,
+    );
+    // A holey inner proof (an `arith_poly_norm_rel` hole) is still accepted:
+    // the trusted content strictly decreased.
+    let (commands, _status) = parse_and_check(elaborator.pool, &problem, &proof, rules)
+        .map_err(|error| fail("checking the reconstructed steps", error.to_string()))?;
+    Ok(external::insert_solver_proof(
+        elaborator.pool,
+        commands,
+        &step.clause,
+        &step.id,
+        step.depth,
+    ))
+}
+
+/// Parses the reconstructed proof against the problem's prelude and checks it
+/// with the RARE database, so its `rare_rewrite` steps resolve.
+fn parse_and_check(
+    pool: &mut PrimitivePool,
+    problem: &str,
+    proof: &str,
+    rules: &Rules,
+) -> Result<(Vec<ProofCommand>, Status), crate::Error> {
+    let config = parser::Config::new()
+        .expand_lets(true)
+        .allow_int_real_subtyping(true)
+        .parse_hole_args(true);
+    let problem = parser::Source::new(Path::new("<problem for reconstructed rewrite>"), problem);
+    let proof = parser::Source::new(Path::new("<reconstructed rewrite proof>"), proof);
+    let (problem, proof, _) = parser::parse_instance_with_pool(problem, proof, None, config, pool)?;
+    let status = checker::ProofChecker::new(pool, rules, checker::Config::new())
+        .check(&problem, &proof)?;
+    Ok((proof.commands, status))
+}

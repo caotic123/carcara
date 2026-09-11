@@ -10,11 +10,12 @@ mod sat_refutation;
 mod uncrowding;
 
 use crate::{
-    Error,
+    Error, RunEgglogOptions,
     ast::{
         ContextStack, Polyeq, Problem, ProofNode, ProofNodeForest, Rc, StepNode, SubproofNode,
         Term, build_term, match_term,
         pool::{PrimitivePool, TermPool},
+        rare_rules::Rules,
     },
     external::{ExternalTool, SatTools},
 };
@@ -47,6 +48,16 @@ pub struct Config {
 
     /// The external tools used to elaborate `sat_refutation` steps.
     sat_ref_tools: Option<SatTools>,
+
+    /// Enables the elaboration of `hole` steps marked as `TRUST_THEORY_REWRITE` through the
+    /// RARE post-hoc reconstruction pipeline: the egglog engine proves the rewrite, a
+    /// certificate is reconstructed from its saturated e-graph, and the certificate's checked
+    /// Alethe steps replace the hole. Needs the RARE database, given with
+    /// [`Elaborator::with_rare_rules`].
+    elaborate_hole_rewrites: bool,
+
+    /// Options for the egglog runs behind `elaborate_hole_rewrites`.
+    hole_rewrite_options: RunEgglogOptions,
 }
 
 impl Config {
@@ -90,12 +101,20 @@ pub struct Elaborator<'e> {
     pool: &'e mut PrimitivePool,
     problem: &'e Problem,
     config: Config,
+    rare_rules: Option<&'e Rules>,
 }
 
 impl<'e> Elaborator<'e> {
     /// Constructs a new [`Elaborator`] with the given `pool`, `problem`, and `config`.
     pub fn new(pool: &'e mut PrimitivePool, problem: &'e Problem, config: Config) -> Self {
-        Self { pool, problem, config }
+        Self { pool, problem, config, rare_rules: None }
+    }
+
+    /// Gives the elaborator the RARE database that the `TRUST_THEORY_REWRITE` hole elaboration
+    /// runs the egglog engine with and checks the reconstructed steps against.
+    pub fn with_rare_rules(mut self, rules: &'e Rules) -> Self {
+        self.rare_rules = Some(rules);
+        self
     }
 
     /// Elaborates a proof, applying the default pipeline of passes.
@@ -205,12 +224,16 @@ impl<'e> Elaborator<'e> {
         &mut self,
         proof: ProofNodeForest,
     ) -> Result<ProofNodeForest, ElaborationErrorAtStep> {
-        // Skip `mutate` in the common case where neither option was given
-        if self.config.hole_solver.is_none() && self.config.lia_solver.is_none() {
+        // Skip `mutate` in the common case where none of the options was given
+        let rare_holes = self.config.elaborate_hole_rewrites && self.rare_rules.is_some();
+        if self.config.hole_solver.is_none() && self.config.lia_solver.is_none() && !rare_holes {
             return Ok(proof);
         }
 
         proof.mutate(|_, node, _| match node.as_ref() {
+            ProofNode::Step(s) if rare_holes && rare_hole::is_theory_rewrite_hole(s) => {
+                rare_hole::elaborate(self, node, s).map_err(|e| e.at(s))
+            }
             ProofNode::Step(s)
                 if self.config.hole_solver.is_some()
                     && (s.rule == "all_simplify" || s.rule == "rare_rewrite") =>
