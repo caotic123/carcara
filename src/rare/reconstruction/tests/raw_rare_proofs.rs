@@ -6,11 +6,14 @@ use std::{
 };
 
 use egglog_proofs::{
-    proof::{Justification, ProofId, ProofStore},
     CommandOutput, EGraph,
+    proof::{Justification, ProofId, ProofStore},
 };
 
-const RAW_RARE_PROGRAM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/raw_rare_ite_then_false.egg"));
+const RAW_RARE_PROGRAM: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/raw_rare_ite_then_false.egg"
+));
 const GOAL: &str = "(= $lhs (And (Not (Var \"c\")) (Bool true)))";
 
 #[derive(Debug, PartialEq, Eq)]
