@@ -18,6 +18,7 @@ use egglog_proofs::{
     CommandOutput, EGraph as ProofEGraph, SerializeConfig as ProofSerializeConfig,
 };
 
+mod bounded_scheduler;
 mod raw_rare_proofs;
 
 const PROGRAM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/raw_rare_posthoc.egg"));
