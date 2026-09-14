@@ -62,6 +62,23 @@ pub enum Command {
 
     /// Translates an Alethe proof into different formats (Eunoia, TSTP).
     Translate(TranslateCommandOptions),
+
+    /// Reconstructs one `TRUST_THEORY_REWRITE` hole read from stdin: the
+    /// worker that `--hole-isolate` runs in a child process.
+    #[clap(hide = true, name = "reconstruct-hole")]
+    ReconstructHole(ReconstructHoleOptions),
+}
+
+#[derive(Args)]
+pub struct ReconstructHoleOptions {
+    #[clap(long)]
+    pub rare_file: String,
+
+    #[clap(long, value_name = "MILLISECONDS")]
+    pub rare_check_timeout: Option<u64>,
+
+    #[clap(long = "continuous-saturation")]
+    pub continuous_saturation: bool,
 }
 
 #[derive(Args)]
@@ -250,6 +267,22 @@ pub struct ElaborationOptions {
     /// original single-threaded pass.
     #[clap(long, default_value_t = 1, value_name = "THREADS")]
     pub hole_threads: usize,
+
+    /// Reconstruct each hole in a child process that is killed outright when
+    /// `--rare-check-timeout` expires.
+    ///
+    /// This is the only hard per-hole bound: the in-process budget can stop
+    /// egglog only between iterations, and one iteration may run for minutes.
+    /// A hole whose child fails or is killed is kept as it was.
+    #[clap(long)]
+    pub hole_isolate: bool,
+
+    /// Address-space limit for each hole's child process, in megabytes.
+    ///
+    /// The worker reserves a 512 MiB stack for parsing, so limits below
+    /// roughly 700 MB kill every child before it starts.
+    #[clap(long, value_name = "MEGABYTES", requires = "hole_isolate")]
+    pub hole_memory_limit: Option<usize>,
 
     /// The pipeline of elaboration passes to use.
     #[clap(

@@ -420,12 +420,19 @@ pub fn spine_arguments<'c>(
     }
 }
 
-use std::{path::Path, time::Instant};
+use std::{
+    fmt::Write as _,
+    io::Write as _,
+    os::unix::process::ExitStatusExt,
+    path::Path,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
 
 use crate::{
     Status,
     ast::{
-        Constant, ProofCommand, ProofNode, StepNode,
+        Constant, ProblemPrelude, ProofCommand, ProofNode, ProofNodeForest, Rc, StepNode,
         pool::{PrimitivePool, TermPool},
         rare_rules::Rules,
     },
@@ -454,6 +461,237 @@ pub fn is_theory_rewrite_hole(step: &StepNode) -> bool {
 /// its saturated e-graph, the certificate's Alethe steps are checked against
 /// the RARE database, and the checked proof replaces the hole as a subproof
 /// — the same insertion an external solver's proof goes through.
+/// Every `TRUST_THEORY_REWRITE` hole in the forest, in encounter order.
+pub fn theory_rewrite_holes(proof: &ProofNodeForest) -> Vec<(Rc<ProofNode>, StepNode)> {
+    let mut holes = Vec::new();
+    let mut seen: std::collections::HashSet<Rc<ProofNode>> = std::collections::HashSet::new();
+    let mut todo: Vec<Rc<ProofNode>> = proof.0.iter().cloned().collect();
+    while let Some(node) = todo.pop() {
+        if !seen.insert(node.clone()) {
+            continue;
+        }
+        match node.as_ref() {
+            ProofNode::Step(s) => {
+                if is_theory_rewrite_hole(s) {
+                    holes.push((node.clone(), s.clone()));
+                }
+                todo.extend(s.premises.iter().cloned());
+                todo.extend(s.discharge.iter().cloned());
+                todo.extend(s.previous_step.iter().cloned());
+            }
+            ProofNode::Subproof(s) => {
+                todo.push(s.last_step.clone());
+                todo.extend(s.extra_steps.iter().cloned());
+                todo.extend(s.outbound_premises.iter().cloned());
+            }
+            ProofNode::Assume { .. } => {}
+        }
+    }
+    holes
+}
+
+/// The line separating the problem from the hole in a child process's input.
+pub const HOLE_INPUT_BOUNDARY: &str = ";; --- hole ---";
+
+/// What a child process needs to reconstruct one hole: the problem prelude,
+/// then the hole's depth-0 assumptions as top-level `assume`s and the hole
+/// itself citing them as premises.  That is exactly what `run_egglog` reads
+/// off the in-process node, which collects the depth-0 assumptions beneath it,
+/// so the child works from the same inputs the in-process worker would.
+pub fn hole_input(
+    pool: &mut PrimitivePool,
+    prelude: &ProblemPrelude,
+    node: &Rc<ProofNode>,
+    step: &StepNode,
+) -> Option<String> {
+    let [conclusion] = step.clause.as_slice() else {
+        return None;
+    };
+    let mut text = external::get_problem_string(pool, prelude, []);
+    text.push_str(HOLE_INPUT_BOUNDARY);
+    text.push('\n');
+    let mut ids = Vec::new();
+    for (index, assumption) in node.get_assumptions().iter().enumerate() {
+        let ProofNode::Assume { term, .. } = assumption.as_ref() else {
+            continue;
+        };
+        let id = format!("h{index}");
+        // `{:#}` prints without term sharing, so the text stands on its own.
+        writeln!(text, "(assume {id} {term:#})").ok()?;
+        ids.push(id);
+    }
+    let premises = if ids.is_empty() {
+        String::new()
+    } else {
+        format!(" :premises ({})", ids.join(" "))
+    };
+    writeln!(
+        text,
+        "(step {} (cl {conclusion:#}) :rule hole{premises} :args (\"TRUST_THEORY_REWRITE\"))",
+        step.id
+    )
+    .ok()?;
+    Some(text)
+}
+
+/// The child's half of [`reconstruct_in_child`]: parse the input produced by
+/// [`hole_input`], find the hole, reconstruct it.
+pub fn reconstruct_from_input(
+    input: &str,
+    rules: parser::Source<'_>,
+    options: crate::checker::RunEgglogOptions,
+) -> Result<Vec<String>, String> {
+    let boundary = format!("{HOLE_INPUT_BOUNDARY}\n");
+    let (problem, proof) = input
+        .split_once(&boundary)
+        .ok_or_else(|| "hole input has no boundary line".to_owned())?;
+    let config = parser::Config::new()
+        .expand_lets(true)
+        .allow_int_real_subtyping(true)
+        .parse_hole_args(true);
+    let (_, proof, database, mut pool) = parser::parse_instance(
+        parser::Source::new(Path::new("<hole problem>"), problem),
+        parser::Source::new(Path::new("<hole>"), proof),
+        Some(rules),
+        config,
+    )
+    .map_err(|error| format!("parsing the hole input: {error}"))?;
+    let forest = ProofNodeForest::from_commands(proof.commands);
+    let (node, step) = theory_rewrite_holes(&forest)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "hole input contains no TRUST_THEORY_REWRITE hole".to_owned())?;
+    reconstruct_steps(&mut pool, &node, &step, &database, options)
+}
+
+/// Reconstructs a hole in a child process that is killed outright when the
+/// budget expires.  This is the only hard per-hole bound: the in-process
+/// budget can stop egglog only between iterations, and one iteration may run
+/// for minutes.  The child is this same binary's hidden `reconstruct-hole`
+/// subcommand, fed [`hole_input`] on stdin and read back as Alethe text; an
+/// optional address-space limit is applied to it through `ulimit`, so a hole
+/// that blows up in memory dies alone instead of taking the parent with it.
+pub fn reconstruct_in_child(
+    pool: &mut PrimitivePool,
+    prelude: &ProblemPrelude,
+    node: &Rc<ProofNode>,
+    step: &StepNode,
+    rare_file: &Path,
+    options: crate::checker::RunEgglogOptions,
+    memory_limit_mb: Option<usize>,
+) -> Result<Vec<String>, String> {
+    let input = hole_input(pool, prelude, node, step)
+        .ok_or_else(|| "expected a single-literal clause".to_owned())?;
+    let exe = std::env::current_exe().map_err(|error| format!("locating carcara: {error}"))?;
+    let mut arguments: Vec<std::ffi::OsString> = vec![
+        "reconstruct-hole".into(),
+        "--rare-file".into(),
+        rare_file.into(),
+    ];
+    if let Some(timeout) = options.timeout {
+        arguments.push("--rare-check-timeout".into());
+        arguments.push(timeout.as_millis().to_string().into());
+    }
+    if options.continuous_saturation {
+        arguments.push("--continuous-saturation".into());
+    }
+    let mut command = match memory_limit_mb {
+        // `exec` keeps the child's pid on carcara itself, so killing the pid
+        // kills the worker and not a shell wrapped around it.
+        Some(megabytes) => {
+            let mut command = Command::new("sh");
+            command
+                .arg("-c")
+                .arg("ulimit -v \"$0\" && exec \"$@\"")
+                .arg((megabytes * 1024).to_string())
+                .arg(&exe)
+                .args(&arguments);
+            command
+        }
+        None => {
+            let mut command = Command::new(&exe);
+            command.args(&arguments);
+            command
+        }
+    };
+    let started = Instant::now();
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("spawning the hole worker: {error}"))?;
+    // A child that dies early closes the pipe; the write then fails with
+    // EPIPE (Rust ignores SIGPIPE), which the exit status below explains.
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    // Both pipes are drained concurrently: the steps can run to megabytes, and
+    // a child blocked on a full pipe would look exactly like a stuck one.
+    let drain = |mut pipe: Option<_>| {
+        std::thread::spawn(move || {
+            let mut buffer = Vec::new();
+            if let Some(pipe) = pipe.as_mut() {
+                let _ = std::io::Read::read_to_end(pipe, &mut buffer);
+            }
+            buffer
+        })
+    };
+    let stdout = child
+        .stdout
+        .take()
+        .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>);
+    let stderr = child
+        .stderr
+        .take()
+        .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>);
+    let stdout = drain(stdout);
+    let stderr = drain(stderr);
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("waiting for the hole worker: {error}"))?
+        {
+            break Some(status);
+        }
+        if options
+            .timeout
+            .is_some_and(|timeout| started.elapsed() >= timeout)
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout.join().unwrap_or_default();
+    let stderr = stderr.join().unwrap_or_default();
+    let tail = || {
+        let text = String::from_utf8_lossy(&stderr);
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        lines[lines.len().saturating_sub(3)..].join(" | ")
+    };
+    match status {
+        None => Err(format!(
+            "killed after {:.1}s: hard budget exhausted",
+            started.elapsed().as_secs_f64()
+        )),
+        Some(status) if status.success() => Ok(String::from_utf8_lossy(&stdout)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_owned)
+            .collect()),
+        Some(status) => match status.signal() {
+            Some(signal) => Err(format!("worker killed by signal {signal}: {}", tail())),
+            None => Err(format!(
+                "worker exited with status {}: {}",
+                status.code().unwrap_or(-1),
+                tail()
+            )),
+        },
+    }
+}
+
 /// The Alethe steps justifying one `TRUST_THEORY_REWRITE` hole.
 ///
 /// Split out from [`elaborate`] because it is the whole cost of a hole and

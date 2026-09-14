@@ -79,6 +79,7 @@ fn run_cli() {
             generate_lia_problems_command(options, !cli.no_print_with_sharing)
         }
         Command::Translate(options) => translate_command(options),
+        Command::ReconstructHole(options) => reconstruct_hole_command(options),
     };
     if let Err(e) = result {
         log::error!("{}", e);
@@ -205,12 +206,18 @@ fn elaborate_command(
     };
     let elaborate_hole_rewrites = options.elaboration.elaborate_hole_rewrites;
     let hole_threads = options.elaboration.hole_threads;
+    let hole_isolate = options.elaboration.hole_isolate;
+    let hole_memory_limit = options.elaboration.hole_memory_limit;
+    let hole_rare_file = options.input.rare_file.clone().map(PathBuf::from);
 
     let checker_config = (options.checking, options.tools.clone()).into_config();
     let (elab_config, pipeline) = (options.elaboration, options.tools).into_config();
     let elab_config = elab_config
         .elaborate_hole_rewrites(elaborate_hole_rewrites)
         .hole_threads(hole_threads)
+        .hole_isolate(hole_isolate)
+        .hole_memory_limit_mb(hole_memory_limit)
+        .hole_rare_file(hole_rare_file)
         .hole_rewrite_options(hole_rewrite_options);
 
     check_and_elaborate(
@@ -415,4 +422,39 @@ fn translate_2_eunoia_command(
     println!("{}", std::str::from_utf8(&buf_proof).unwrap());
 
     Ok(())
+}
+
+/// The child side of `--hole-isolate`: one hole in, its Alethe steps out.
+fn reconstruct_hole_command(options: ReconstructHoleOptions) -> CliResult<()> {
+    let mut input = String::new();
+    io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|e| carcara::Error::Io { inner: e, file: "<stdin>".into() })?;
+    let rare_text =
+        std::fs::read_to_string(&options.rare_file).map_err(|e| carcara::Error::Io {
+            inner: e,
+            file: options.rare_file.clone().into(),
+        })?;
+    let egglog_options = carcara::RunEgglogOptions {
+        timeout: options
+            .rare_check_timeout
+            .map(std::time::Duration::from_millis),
+        continuous_saturation: options.continuous_saturation,
+        ..carcara::RunEgglogOptions::default()
+    };
+    let rules = parser::Source::new(std::path::Path::new(&options.rare_file), &rare_text);
+    match carcara::elaborator::rare_hole::reconstruct_from_input(&input, rules, egglog_options) {
+        Ok(steps) => {
+            let mut out = io::stdout().lock();
+            for step in steps {
+                writeln!(out, "{step}")
+                    .map_err(|e| carcara::Error::Io { inner: e, file: "<stdout>".into() })?;
+            }
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
 }

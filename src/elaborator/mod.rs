@@ -26,6 +26,7 @@ use polyeq::PolyeqElaborator;
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -59,6 +60,17 @@ pub struct Config {
     /// How many holes to reconstruct at once.  One keeps the original
     /// single-threaded pass.
     hole_threads: usize,
+
+    /// Reconstruct each hole in a child process that is killed when the
+    /// egglog budget expires — the only hard per-hole bound.  A hole whose
+    /// child fails is kept as it was rather than failing the elaboration.
+    hole_isolate: bool,
+
+    /// Address-space limit, in megabytes, for each hole's child process.
+    hole_memory_limit_mb: Option<usize>,
+
+    /// The RARE file's path, which a child process needs to load the rules.
+    hole_rare_file: Option<PathBuf>,
 
     /// Options for the egglog runs behind `elaborate_hole_rewrites`.
     hole_rewrite_options: RunEgglogOptions,
@@ -229,45 +241,16 @@ impl<'e> Elaborator<'e> {
         })
     }
 
-    /// Every `TRUST_THEORY_REWRITE` hole in the forest, in encounter order.
-    fn theory_rewrite_holes(proof: &ProofNodeForest) -> Vec<(Rc<ProofNode>, StepNode)> {
-        let mut holes = Vec::new();
-        let mut seen: HashSet<Rc<ProofNode>> = HashSet::new();
-        let mut todo: Vec<Rc<ProofNode>> = proof.0.iter().cloned().collect();
-        while let Some(node) = todo.pop() {
-            if !seen.insert(node.clone()) {
-                continue;
-            }
-            match node.as_ref() {
-                ProofNode::Step(s) => {
-                    if rare_hole::is_theory_rewrite_hole(s) {
-                        holes.push((node.clone(), s.clone()));
-                    }
-                    todo.extend(s.premises.iter().cloned());
-                    todo.extend(s.discharge.iter().cloned());
-                    todo.extend(s.previous_step.iter().cloned());
-                }
-                ProofNode::Subproof(s) => {
-                    todo.push(s.last_step.clone());
-                    todo.extend(s.extra_steps.iter().cloned());
-                    todo.extend(s.outbound_premises.iter().cloned());
-                }
-                ProofNode::Assume { .. } => {}
-            }
-        }
-        holes
-    }
-
-    /// Reconstructs every hole on a pool of worker threads, returning the
-    /// Alethe text each one produced.  Workers share nothing but the immutable
-    /// proof and rule database: each drives egglog on a term pool of its own,
-    /// and hands back text, so the proof's own pool is touched only by the
-    /// caller.  A hole whose worker fails is simply absent from the map.
+    /// Reconstructs every hole on a pool of workers, returning what each one
+    /// produced.  Workers share nothing but the immutable proof and rule
+    /// database: each drives egglog on a term pool of its own — or, with
+    /// `hole_isolate`, in a child process it can kill — and hands back text,
+    /// so the proof's own pool is touched only by the caller.
     fn reconstruct_holes_in_parallel(
         &mut self,
         proof: &ProofNodeForest,
-    ) -> HashMap<String, Vec<String>> {
-        let holes = Self::theory_rewrite_holes(proof);
+    ) -> HashMap<String, Result<Vec<String>, String>> {
+        let holes = rare_hole::theory_rewrite_holes(proof);
         if holes.is_empty() {
             return HashMap::new();
         }
@@ -275,6 +258,10 @@ impl<'e> Elaborator<'e> {
             return HashMap::new();
         };
         let options = self.config.hole_rewrite_options;
+        let isolate = self.config.hole_isolate;
+        let memory_limit = self.config.hole_memory_limit_mb;
+        let rare_file = self.config.hole_rare_file.clone();
+        let prelude = &self.problem.prelude;
         let workers = self.config.hole_threads.min(holes.len()).max(1);
         let next = std::sync::atomic::AtomicUsize::new(0);
         let results = std::sync::Mutex::new(HashMap::new());
@@ -288,11 +275,25 @@ impl<'e> Elaborator<'e> {
                         let Some((node, step)) = holes.get(index) else {
                             return;
                         };
-                        if let Ok(steps) =
+                        let result = if isolate {
+                            match rare_file.as_deref() {
+                                Some(path) => rare_hole::reconstruct_in_child(
+                                    &mut pool,
+                                    prelude,
+                                    node,
+                                    step,
+                                    path,
+                                    options,
+                                    memory_limit,
+                                ),
+                                None => {
+                                    Err("isolating holes needs the RARE file's path".to_owned())
+                                }
+                            }
+                        } else {
                             rare_hole::reconstruct_steps(&mut pool, node, step, rules, options)
-                        {
-                            results.lock().unwrap().insert(step.id.clone(), steps);
-                        }
+                        };
+                        results.lock().unwrap().insert(step.id.clone(), result);
                     }
                 });
             }
@@ -315,17 +316,24 @@ impl<'e> Elaborator<'e> {
         // finished text in.  A hole missing from the map (its worker failed)
         // falls through to the sequential path, which reports the error at the
         // right step.
-        let mut reconstructed = if rare_holes && self.config.hole_threads > 1 {
-            self.reconstruct_holes_in_parallel(&proof)
-        } else {
-            HashMap::new()
-        };
+        let mut reconstructed =
+            if rare_holes && (self.config.hole_threads > 1 || self.config.hole_isolate) {
+                self.reconstruct_holes_in_parallel(&proof)
+            } else {
+                HashMap::new()
+            };
 
         proof.mutate(|_, node, _| match node.as_ref() {
             ProofNode::Step(s) if rare_holes && rare_hole::is_theory_rewrite_hole(s) => {
                 match reconstructed.remove(&s.id) {
-                    Some(steps) => rare_hole::insert_steps(self, s, steps).map_err(|e| e.at(s)),
-                    None => rare_hole::elaborate(self, node, s).map_err(|e| e.at(s)),
+                    Some(Ok(steps)) => rare_hole::insert_steps(self, s, steps).map_err(|e| e.at(s)),
+                    // An isolated hole's failure is the child's verdict on it:
+                    // the hole stays trusted and the proof goes on.
+                    Some(Err(reason)) if self.config.hole_isolate => {
+                        log::warn!("hole {}: kept as trusted: {reason}", s.id);
+                        Ok(node.clone())
+                    }
+                    Some(Err(_)) | None => rare_hole::elaborate(self, node, s).map_err(|e| e.at(s)),
                 }
             }
             ProofNode::Step(s)
