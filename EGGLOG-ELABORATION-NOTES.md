@@ -865,3 +865,57 @@ one finds zero holes. `is_theory_rewrite_hole` now accepts both
 (`THEORY_REWRITE_TAGS`); the runner counts both. On a newer-cvc5 QF_UF proof
 with 43 such holes, four isolated workers at 30 s justified 40 and kept 3
 (each killed at the 30 s bound), 30 s wall, and the result re-checks.
+
+---
+
+## 12. Cluster run `egglog-holes/small` (2026-09-14)
+
+quad, 45 jobs (15 per logic from the alethecore-eval sample, proofs of at most
+600 holes), one job per benchmark: cvc5 `main@f9e5d3c312` at theory-rewrite
+granularity (60 s) → `carcara c7cc24a4 elaborate --hole-threads 4
+--hole-isolate --hole-memory-limit 5000 --rare-check-timeout 30000` under
+`timeout 600` with `big.rare` → `carcara check` of the result. Whole run:
+**11 minutes** wall. Results in `~/exp/results/egglog-holes/small/`;
+`~/exp/egglog-holes/analyze.py` summarizes.
+
+| logic | proofs | ok | holes | justified | kept | elab p50 | elab max | peak mem |
+|---|---|---|---|---|---|---|---|---|
+| QF_LIA | 15 | 14 | 347 | 344 (99.1%) | 3 | 2.1 s | 600 s (timeout) | 3.5 GB |
+| QF_LRA | 15 | 12 | 1,343 | 1,293 (96.3%) | 70 | 13.4 s | 379 s | 12.6 GB |
+| QF_UF | 15 | 13 | 4,689 | 4,400 (93.8%) | 146 | 112 s | 272 s | 11.2 GB |
+| **all** | **45** | **39** | **6,379** | **6,037 (94.6%)** | **219** | | | |
+
+`ok` = the elaborated proof re-checks (valid or holey). Every `ok` proof's
+reconstructed steps passed the checker; the holes that remain are exactly the
+`kept` ones plus, in QF_LIA/QF_LRA, a few `arith_poly_norm_rel` shapes.
+
+Why holes were kept (219): **killed at the 30 s hard budget 166** (QF_UF 117,
+QF_LRA 48, QF_LIA 1), **memory limit 35**, **egglog could not prove 12**,
+**no certificate found 6** (egglog proved it, the search found no replayable
+chain). The hard budget held: no hole ran past ~30.2 s, and no worker took a
+proof down with it.
+
+The six non-`ok` benchmarks are not hole failures:
+
+* 2 QF_LRA (`pd_not_sc_seen`, `pd_no_op_accs`) — **the up-front check of the
+  original cvc5 proof fails** on a `rare_rewrite` step citing `ite-eq`, which
+  `big.rare` lacks (rewrites.eo has it, but declares `t2 @T1` without a
+  `(@T1 Type)` parameter, so that file does not parse). Fixed for the next run
+  by `holes.rare` = big.rare + `ite-eq` (with `@T1` declared) + `distinct-false`.
+* 2 QF_UF (`iso_icl850`, `iso_icl941`) — the original proof's `resolution`
+  step is rejected ("pivot was not found in clause"): the cvc5-main resolution
+  defect the alethe-lag notes already record; not reproducible with a main
+  cvc5 without that branch's fix.
+* 1 QF_LRA (`no_op_accs`, 203 holes, 379 s) — a reconstructed `evaluate` step
+  was rejected by the checker (`(ite false x t) = t` is not what `evaluate`
+  proves), and because that rejection happened on the main thread it failed
+  the whole proof. `a6bf0d00` makes isolate mode keep such a hole instead.
+  The `Evaluation` → `evaluate` mapping for `ite` with a constant condition
+  is a real gap to fix (RARE's `ite-false-cond` is the right rule).
+* 1 QF_LIA (`ring_2exp6_6vars`, 199 holes) hit the runner's 600 s elaborate
+  cap: 199 holes at up to 30 s each over 4 workers is 1,492 s worst case.
+  All partial work is lost on that path; a larger cap or per-hole result
+  streaming would keep it.
+
+Time per hole is dominated by the kills: QF_UF's 117 killed holes alone are
+58 CPU-minutes of the run.
