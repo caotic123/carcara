@@ -204,11 +204,13 @@ fn elaborate_command(
         ..carcara::RunEgglogOptions::default()
     };
     let elaborate_hole_rewrites = options.elaboration.elaborate_hole_rewrites;
+    let hole_threads = options.elaboration.hole_threads;
 
     let checker_config = (options.checking, options.tools.clone()).into_config();
     let (elab_config, pipeline) = (options.elaboration, options.tools).into_config();
     let elab_config = elab_config
         .elaborate_hole_rewrites(elaborate_hole_rewrites)
+        .hole_threads(hole_threads)
         .hole_rewrite_options(hole_rewrite_options);
 
     check_and_elaborate(

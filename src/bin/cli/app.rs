@@ -243,6 +243,14 @@ pub struct ElaborationOptions {
     #[clap(long)]
     pub elaborate_hole_rewrites: bool,
 
+    /// Reconstruct this many `TRUST_THEORY_REWRITE` holes at a time.
+    ///
+    /// Each hole is an independent egglog run, so they are reconstructed on
+    /// this many threads before being spliced into the proof. One keeps the
+    /// original single-threaded pass.
+    #[clap(long, default_value_t = 1, value_name = "THREADS")]
+    pub hole_threads: usize,
+
     /// The pipeline of elaboration passes to use.
     #[clap(
         value_enum,

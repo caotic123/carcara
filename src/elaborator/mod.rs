@@ -56,6 +56,10 @@ pub struct Config {
     /// [`Elaborator::with_rare_rules`].
     elaborate_hole_rewrites: bool,
 
+    /// How many holes to reconstruct at once.  One keeps the original
+    /// single-threaded pass.
+    hole_threads: usize,
+
     /// Options for the egglog runs behind `elaborate_hole_rewrites`.
     hole_rewrite_options: RunEgglogOptions,
 }
@@ -220,6 +224,77 @@ impl<'e> Elaborator<'e> {
         })
     }
 
+    /// Every `TRUST_THEORY_REWRITE` hole in the forest, in encounter order.
+    fn theory_rewrite_holes(proof: &ProofNodeForest) -> Vec<(Rc<ProofNode>, StepNode)> {
+        let mut holes = Vec::new();
+        let mut seen: HashSet<Rc<ProofNode>> = HashSet::new();
+        let mut todo: Vec<Rc<ProofNode>> = proof.0.iter().cloned().collect();
+        while let Some(node) = todo.pop() {
+            if !seen.insert(node.clone()) {
+                continue;
+            }
+            match node.as_ref() {
+                ProofNode::Step(s) => {
+                    if rare_hole::is_theory_rewrite_hole(s) {
+                        holes.push((node.clone(), s.clone()));
+                    }
+                    todo.extend(s.premises.iter().cloned());
+                    todo.extend(s.discharge.iter().cloned());
+                    todo.extend(s.previous_step.iter().cloned());
+                }
+                ProofNode::Subproof(s) => {
+                    todo.push(s.last_step.clone());
+                    todo.extend(s.extra_steps.iter().cloned());
+                    todo.extend(s.outbound_premises.iter().cloned());
+                }
+                ProofNode::Assume { .. } => {}
+            }
+        }
+        holes
+    }
+
+    /// Reconstructs every hole on a pool of worker threads, returning the
+    /// Alethe text each one produced.  Workers share nothing but the immutable
+    /// proof and rule database: each drives egglog on a term pool of its own,
+    /// and hands back text, so the proof's own pool is touched only by the
+    /// caller.  A hole whose worker fails is simply absent from the map.
+    fn reconstruct_holes_in_parallel(
+        &mut self,
+        proof: &ProofNodeForest,
+    ) -> HashMap<String, Vec<String>> {
+        let holes = Self::theory_rewrite_holes(proof);
+        if holes.is_empty() {
+            return HashMap::new();
+        }
+        let Some(rules) = self.rare_rules else {
+            return HashMap::new();
+        };
+        let options = self.config.hole_rewrite_options;
+        let workers = self.config.hole_threads.min(holes.len()).max(1);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results = std::sync::Mutex::new(HashMap::new());
+
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    let mut pool = crate::ast::pool::PrimitivePool::new();
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some((node, step)) = holes.get(index) else {
+                            return;
+                        };
+                        if let Ok(steps) =
+                            rare_hole::reconstruct_steps(&mut pool, node, step, rules, options)
+                        {
+                            results.lock().unwrap().insert(step.id.clone(), steps);
+                        }
+                    }
+                });
+            }
+        });
+        results.into_inner().unwrap()
+    }
+
     fn elaborate_hole(
         &mut self,
         proof: ProofNodeForest,
@@ -230,9 +305,25 @@ impl<'e> Elaborator<'e> {
             return Ok(proof);
         }
 
+        // Reconstructing a hole is the whole cost and shares nothing, so the
+        // holes are done together up front and `mutate` below only splices the
+        // finished text in.  A hole missing from the map (its worker failed)
+        // falls through to the sequential path, which reports the error at the
+        // right step.
+        let mut reconstructed = if rare_holes && self.config.hole_threads > 1 {
+            self.reconstruct_holes_in_parallel(&proof)
+        } else {
+            HashMap::new()
+        };
+
         proof.mutate(|_, node, _| match node.as_ref() {
             ProofNode::Step(s) if rare_holes && rare_hole::is_theory_rewrite_hole(s) => {
-                rare_hole::elaborate(self, node, s).map_err(|e| e.at(s))
+                match reconstructed.remove(&s.id) {
+                    Some(steps) => {
+                        rare_hole::insert_steps(self, s, steps).map_err(|e| e.at(s))
+                    }
+                    None => rare_hole::elaborate(self, node, s).map_err(|e| e.at(s)),
+                }
             }
             ProofNode::Step(s)
                 if self.config.hole_solver.is_some()
