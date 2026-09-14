@@ -1321,6 +1321,62 @@ fn run_and_record_check(
     result
 }
 
+/// Maximum single-iteration steps used to approach a ruleset's fixpoint while
+/// a deadline is in force.  Generous enough that a ruleset which really does
+/// saturate gets there, bounded so a diverging one cannot run forever.
+const BOUNDED_SATURATION_STEPS: usize = 500;
+
+/// Soft cap on the e-graph size reached while saturating under a deadline.
+///
+/// The budget bounds saturation and the certificate search, but the snapshot
+/// taken between them is one uninterruptible serialization whose cost is
+/// proportional to the e-graph.  Letting saturation spend its whole budget can
+/// therefore build an e-graph that takes many times the budget merely to copy.
+/// Stopping growth here keeps that last phase bounded too.  Only the deadline
+/// path is capped; an untimed run saturates as before.
+const MAX_SATURATION_TUPLES: usize = 4_000_000;
+
+/// Runs one statement, observing `deadline`.
+///
+/// egglog executes a `(saturate ...)` to its fixpoint in a single call that
+/// cannot be interrupted, so a saturation that blows up ignores the budget
+/// entirely.  Under a deadline the fixpoint is therefore approached one
+/// iteration at a time, with the budget checked between iterations and the
+/// loop stopping as soon as the database stops growing (its fixpoint) or the
+/// step bound is reached.  With no deadline the original single saturating
+/// call is kept, so untimed runs behave exactly as before.
+fn run_statement_within_deadline(
+    egraph: &mut EGraph,
+    code_str: &mut String,
+    statement: &EggStatement,
+    deadline: Option<Instant>,
+    goal_label: &str,
+) -> Result<(), String> {
+    let EggStatement::Saturate { ruleset } = statement else {
+        check_timeout(deadline, goal_label)?;
+        run_and_record_statements(egraph, code_str, vec![statement.clone()])?;
+        return check_timeout(deadline, goal_label);
+    };
+    if deadline.is_none() {
+        return run_and_record_statements(egraph, code_str, vec![statement.clone()]);
+    }
+    for _ in 0..BOUNDED_SATURATION_STEPS {
+        check_timeout(deadline, goal_label)?;
+        let before = egraph.num_tuples();
+        run_and_record_statements(
+            egraph,
+            code_str,
+            vec![EggStatement::Run { ruleset: ruleset.clone(), iterations: 1 }],
+        )?;
+        check_timeout(deadline, goal_label)?;
+        let after = egraph.num_tuples();
+        if after == before || after > MAX_SATURATION_TUPLES {
+            break;
+        }
+    }
+    Ok(())
+}
+
 fn run_goal_schedule_round(
     egraph: &mut EGraph,
     code_str: &mut String,
@@ -1329,18 +1385,16 @@ fn run_goal_schedule_round(
     goal_label: &str,
 ) -> Result<(), String> {
     for statement in goal_run_schedule(1) {
-        // Saturating statements reach their fixpoint in one execution; only
-        // the bounded default run is stepped per iteration, keeping a
-        // timeout checkpoint between iterations.
+        // Saturating statements reach their fixpoint in one execution (or, under
+        // a deadline, in bounded steps); only the bounded default run is stepped
+        // per iteration, keeping a timeout checkpoint between iterations.
         let repeats = if matches!(statement, EggStatement::Saturate { .. }) {
             1
         } else {
             iterations
         };
         for _ in 0..repeats {
-            check_timeout(deadline, goal_label)?;
-            run_and_record_statements(egraph, code_str, vec![statement.clone()])?;
-            check_timeout(deadline, goal_label)?;
+            run_statement_within_deadline(egraph, code_str, &statement, deadline, goal_label)?;
         }
     }
     Ok(())
@@ -1382,8 +1436,7 @@ fn run_goal_fallback_attempt(
     goal_label: &str,
 ) -> Result<(), String> {
     for statement in &fallback.guard_setup {
-        check_timeout(deadline, goal_label)?;
-        run_and_record_statements(egraph, code_str, vec![statement.clone()])?;
+        run_statement_within_deadline(egraph, code_str, statement, deadline, goal_label)?;
     }
     check_timeout(deadline, goal_label)?;
     run_and_record_check(
@@ -1393,8 +1446,7 @@ fn run_goal_fallback_attempt(
         EggExpr::NativeBool(true),
     )?;
     for statement in &fallback.setup {
-        check_timeout(deadline, goal_label)?;
-        run_and_record_statements(egraph, code_str, vec![statement.clone()])?;
+        run_statement_within_deadline(egraph, code_str, statement, deadline, goal_label)?;
     }
     check_timeout(deadline, goal_label)?;
     let result = run_and_record_check(egraph, code_str, fallback.lhs.clone(), fallback.rhs.clone());

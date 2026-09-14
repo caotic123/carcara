@@ -1,5 +1,5 @@
 //! Candidate-graph search reconstructing a certificate from a snapshot.
-use std::{collections::{BTreeSet, HashMap, HashSet}, rc::Rc};
+use std::{collections::{BTreeSet, HashMap, HashSet}, rc::Rc, time::Instant};
 use super::*;
 
 /// Operators belonging to the egglog solvers' internal machinery
@@ -31,11 +31,27 @@ pub const ARITH_CANDIDATE_OPS: [&str; 12] = [
 pub struct SearchStrategy {
     pub max_depth: usize,
     pub max_states: usize,
+    /// Wall-clock instant past which the search abandons the goal, reusing
+    /// the same over-budget path as `max_states`.  The egglog check and this
+    /// search are separate phases of one per-hole budget, so a bound on the
+    /// former alone leaves the latter free to run away.
+    pub deadline: Option<Instant>,
 }
 
 impl Default for SearchStrategy {
     fn default() -> Self {
-        Self { max_depth: 8, max_states: 256 }
+        Self { max_depth: 8, max_states: 256, deadline: None }
+    }
+}
+
+impl SearchStrategy {
+    pub fn with_deadline(self, deadline: Option<Instant>) -> Self {
+        Self { deadline, ..self }
+    }
+
+    fn out_of_time(&self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
     }
 }
 
@@ -808,7 +824,7 @@ impl Reconstructor<'_> {
                 } else {
                     self.expand_level(&mut graph, &mut backward, &forward)
                 };
-                if meet.is_some() || graph.over_budget {
+                if meet.is_some() || graph.over_budget || self.strategy.out_of_time() {
                     break;
                 }
             }
@@ -921,7 +937,8 @@ impl Reconstructor<'_> {
                 }
                 near.frontier.push(neighbour.clone());
             }
-            if graph.over_budget {
+            if graph.over_budget || self.strategy.out_of_time() {
+                graph.over_budget = true;
                 return None;
             }
         }
@@ -938,7 +955,7 @@ impl Reconstructor<'_> {
     ) -> &'g [(Term, CandidateEdge)] {
         if !graph.adjacency.contains_key(vertex) {
             let edges = self.expand_vertex(graph, vertex);
-            if graph.discovered.len() > self.strategy.max_states {
+            if graph.discovered.len() > self.strategy.max_states || self.strategy.out_of_time() {
                 graph.over_budget = true;
             }
             graph.adjacency.insert(vertex.clone(), edges);
