@@ -111,7 +111,12 @@ pub struct Elaborator<'e> {
 impl<'e> Elaborator<'e> {
     /// Constructs a new [`Elaborator`] with the given `pool`, `problem`, and `config`.
     pub fn new(pool: &'e mut PrimitivePool, problem: &'e Problem, config: Config) -> Self {
-        Self { pool, problem, config, rare_rules: None }
+        Self {
+            pool,
+            problem,
+            config,
+            rare_rules: None,
+        }
     }
 
     /// Gives the elaborator the RARE database that the `TRUST_THEORY_REWRITE` hole elaboration
@@ -319,9 +324,7 @@ impl<'e> Elaborator<'e> {
         proof.mutate(|_, node, _| match node.as_ref() {
             ProofNode::Step(s) if rare_holes && rare_hole::is_theory_rewrite_hole(s) => {
                 match reconstructed.remove(&s.id) {
-                    Some(steps) => {
-                        rare_hole::insert_steps(self, s, steps).map_err(|e| e.at(s))
-                    }
+                    Some(steps) => rare_hole::insert_steps(self, s, steps).map_err(|e| e.at(s)),
                     None => rare_hole::elaborate(self, node, s).map_err(|e| e.at(s)),
                 }
             }

@@ -1366,7 +1366,10 @@ fn run_statement_within_deadline(
         run_and_record_statements(
             egraph,
             code_str,
-            vec![EggStatement::Run { ruleset: ruleset.clone(), iterations: 1 }],
+            vec![EggStatement::Run {
+                ruleset: ruleset.clone(),
+                iterations: 1,
+            }],
         )?;
         check_timeout(deadline, goal_label)?;
         let after = egraph.num_tuples();

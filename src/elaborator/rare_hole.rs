@@ -1,8 +1,8 @@
 //! Elaboration of `TRUST_THEORY_REWRITE` holes through the RARE
 //! post-hoc reconstruction pipeline.
-use std::collections::HashMap;
-use rug::{Integer, Rational};
 use crate::rare::reconstruction::*;
+use rug::{Integer, Rational};
+use std::collections::HashMap;
 
 /// Elaborates a certificate into Alethe proof steps.  Per-kind policy:
 /// RARE rules, evaluation, and ACI normalization become cvc5-style
@@ -52,8 +52,13 @@ impl AletheElaborator {
         rare: HashMap<String, Vec<String>>,
         sorts: ArithSorts,
     ) -> Option<Vec<String>> {
-        let mut elaborator =
-            Self { prefix: prefix.to_owned(), steps: Vec::new(), names, rare, sorts };
+        let mut elaborator = Self {
+            prefix: prefix.to_owned(),
+            steps: Vec::new(),
+            names,
+            rare,
+            sorts,
+        };
         elaborator.step_for(certificate)?;
         Some(elaborator.steps)
     }
@@ -75,7 +80,10 @@ impl AletheElaborator {
 
     /// An encoded integer literal.
     fn numeral(value: &Integer) -> Term {
-        Term::new("Mk", vec![Term::new("Num", vec![Term::leaf(&value.to_string())])])
+        Term::new(
+            "Mk",
+            vec![Term::new("Num", vec![Term::leaf(&value.to_string())])],
+        )
     }
 
     /// Emits a `rare_rewrite` step for `name` instantiated at `arguments`,
@@ -131,11 +139,9 @@ impl AletheElaborator {
                 let less = encoded_app("@<", vec![a.clone(), b.clone()]);
                 // arith-elim-lt: (= (< a b) (not (>= a b)))
                 let forward = self.rare_step(&less, side, "arith-elim-lt", &[a, b])?;
-                let backward = self.emit(side, &less, "symm", &format!(" :premises ({forward})"))?;
-                let bumped = encoded_app(
-                    "@+",
-                    vec![a.clone(), Self::numeral(&Integer::from(1))],
-                );
+                let backward =
+                    self.emit(side, &less, "symm", &format!(" :premises ({forward})"))?;
+                let bumped = encoded_app("@+", vec![a.clone(), Self::numeral(&Integer::from(1))]);
                 let geq = encoded_app("@>=", vec![b.clone(), bumped]);
                 // arith-elim-int-lt: (= (< a b) (>= b (+ a 1)))
                 let tightened = self.rare_step(&less, &geq, "arith-elim-int-lt", &[a, b])?;
@@ -205,13 +211,13 @@ impl AletheElaborator {
                 ],
             )
         };
-        let premise = self.emit(
-            &scaled(&c1, x1, x2),
-            &scaled(&c2, y1, y2),
-            "poly_simp",
-            "",
-        )?;
-        self.emit(lhs, rhs, "poly_simp_rel", &format!(" :premises ({premise})"))
+        let premise = self.emit(&scaled(&c1, x1, x2), &scaled(&c2, y1, y2), "poly_simp", "")?;
+        self.emit(
+            lhs,
+            rhs,
+            "poly_simp_rel",
+            &format!(" :premises ({premise})"),
+        )
     }
 
     /// Justifies an `arith_poly_norm_rel` obligation with `poly_simp_rel`.
@@ -233,8 +239,7 @@ impl AletheElaborator {
             let (right_geq, right_bridge) = self.to_geq(rhs)?;
             let (_, left_arguments) = encoded_application(&left_geq)?;
             let (_, right_arguments) = encoded_application(&right_geq)?;
-            let ([x1, x2], [y1, y2]) =
-                (left_arguments.as_slice(), right_arguments.as_slice())
+            let ([x1, x2], [y1, y2]) = (left_arguments.as_slice(), right_arguments.as_slice())
             else {
                 return None;
             };
@@ -253,7 +258,8 @@ impl AletheElaborator {
             }
             // Append `right_geq = rhs`, which is the reverse of the bridge.
             if let Some(bridge) = right_bridge {
-                let reversed = self.emit(&right_geq, rhs, "symm", &format!(" :premises ({bridge})"))?;
+                let reversed =
+                    self.emit(&right_geq, rhs, "symm", &format!(" :premises ({bridge})"))?;
                 current = self.emit(
                     &source,
                     rhs,
@@ -332,7 +338,11 @@ impl AletheElaborator {
                 // `distinct_elim` shape, so the pair collapses into the
                 // native rule.
                 if let (
-                    Certificate::Computational { kind: Computation::DistinctElim, lhs: d, .. },
+                    Certificate::Computational {
+                        kind: Computation::DistinctElim,
+                        lhs: d,
+                        ..
+                    },
                     Certificate::Computational { kind: Computation::AciNorm, .. },
                 ) = (first.as_ref(), second.as_ref())
                 {
@@ -381,7 +391,10 @@ impl AletheElaborator {
 /// `Args` cells, and the transitivity chains congruence builds when several
 /// arguments differ), collecting the certificates of the differing
 /// arguments in argument order — one `cong` premise each.
-pub fn spine_arguments<'c>(certificate: &'c Certificate, out: &mut Vec<&'c Certificate>) -> Option<()> {
+pub fn spine_arguments<'c>(
+    certificate: &'c Certificate,
+    out: &mut Vec<&'c Certificate>,
+) -> Option<()> {
     match certificate {
         Certificate::Refl { .. } => Some(()),
         Certificate::Congruence { lhs, child_index, child, .. } => {
@@ -408,7 +421,6 @@ pub fn spine_arguments<'c>(certificate: &'c Certificate, out: &mut Vec<&'c Certi
 }
 
 use std::{path::Path, time::Instant};
-
 
 use crate::{
     Status,
@@ -459,7 +471,10 @@ pub fn reconstruct_steps(
     let [conclusion] = step.clause.as_slice() else {
         return Err(stage(
             "setup",
-            format!("expected a single-literal clause, found {} literals", step.clause.len()),
+            format!(
+                "expected a single-literal clause, found {} literals",
+                step.clause.len()
+            ),
         ));
     };
 
@@ -528,9 +543,9 @@ pub fn elaborate(
     node: &crate::ast::Rc<ProofNode>,
     step: &StepNode,
 ) -> Result<crate::ast::Rc<ProofNode>, ElaborationError> {
-    let rules = elaborator
-        .rare_rules
-        .ok_or_else(|| ElaborationError::RareReconstruction("setup: no RARE database was given".to_owned()))?;
+    let rules = elaborator.rare_rules.ok_or_else(|| {
+        ElaborationError::RareReconstruction("setup: no RARE database was given".to_owned())
+    })?;
     let options = elaborator.config.hole_rewrite_options;
     let steps = reconstruct_steps(elaborator.pool, node, step, rules, options)
         .map_err(ElaborationError::RareReconstruction)?;
@@ -554,7 +569,10 @@ pub fn insert_steps(
     let [conclusion] = step.clause.as_slice() else {
         return Err(fail(
             "setup",
-            format!("expected a single-literal clause, found {} literals", step.clause.len()),
+            format!(
+                "expected a single-literal clause, found {} literals",
+                step.clause.len()
+            ),
         ));
     };
 
@@ -603,7 +621,7 @@ fn parse_and_check(
     let problem = parser::Source::new(Path::new("<problem for reconstructed rewrite>"), problem);
     let proof = parser::Source::new(Path::new("<reconstructed rewrite proof>"), proof);
     let (problem, proof, _) = parser::parse_instance_with_pool(problem, proof, None, config, pool)?;
-    let status = checker::ProofChecker::new(pool, rules, checker::Config::new())
-        .check(&problem, &proof)?;
+    let status =
+        checker::ProofChecker::new(pool, rules, checker::Config::new()).check(&problem, &proof)?;
     Ok((proof.commands, status))
 }
