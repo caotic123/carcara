@@ -8,11 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::*;
 use crate::{
     RunEgglogOptions, ast::ProofNode, elaborator::rare_hole::AletheElaborator, parser,
     rare::engine::run_egglog,
 };
-use super::*;
 use egglog::EGraph as ProductionEGraph;
 use egglog_proofs::{
     CommandOutput, EGraph as ProofEGraph, SerializeConfig as ProofSerializeConfig,
@@ -21,7 +21,10 @@ use egglog_proofs::{
 mod bounded_scheduler;
 mod raw_rare_proofs;
 
-const PROGRAM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/raw_rare_posthoc.egg"));
+const PROGRAM: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/raw_rare_posthoc.egg"
+));
 
 fn rules() -> Vec<Rewrite> {
     use Pattern::{App, Var};
@@ -234,7 +237,10 @@ fn encoded_bool_or_false_rule() -> Rewrite {
 
     Rewrite {
         name: "bool-or-false",
-        lhs: encoded_formula("@or", vec![Var("x"), App("Bool", vec![App("false", vec![])])]),
+        lhs: encoded_formula(
+            "@or",
+            vec![Var("x"), App("Bool", vec![App("false", vec![])])],
+        ),
         rhs: encoded_mk(Var("x")),
     }
 }
@@ -284,12 +290,9 @@ fn run_qf_uf_case(
     let (mut problem_text, mut proof_text, mut rare_text) =
         (String::new(), String::new(), String::new());
     let (_, proof, database, mut pool) = parser::parse_instance(
-        parser::Source::file(&problem_path, &mut problem_text)
-            .expect("QF_UF problem should exist"),
+        parser::Source::file(&problem_path, &mut problem_text).expect("QF_UF problem should exist"),
         parser::Source::file(&proof_path, &mut proof_text).expect("QF_UF proof should exist"),
-        Some(
-            parser::Source::file(&rare_path, &mut rare_text).expect("RARE database should exist"),
-        ),
+        Some(parser::Source::file(&rare_path, &mut rare_text).expect("RARE database should exist")),
         parser_config,
     )
     .expect("QF_UF instance should parse");
@@ -490,18 +493,26 @@ fn inspect_distinct_solver_egraph_minimal() {
         "Mk",
         vec![Term::new(
             "@distinct",
-            vec![["a", "b", "c"].iter().rev().fold(
-                Term::leaf("Empty"),
-                |tail, name| {
-                    Term::new(
-                        "Args",
-                        vec![
-                            Term::new("Mk", vec![Term::new("Const", vec![Term::leaf(&format!("\"{name}\""))])]),
-                            tail,
-                        ],
-                    )
-                },
-            )],
+            vec![
+                ["a", "b", "c"]
+                    .iter()
+                    .rev()
+                    .fold(Term::leaf("Empty"), |tail, name| {
+                        Term::new(
+                            "Args",
+                            vec![
+                                Term::new(
+                                    "Mk",
+                                    vec![Term::new(
+                                        "Const",
+                                        vec![Term::leaf(&format!("\"{name}\""))],
+                                    )],
+                                ),
+                                tail,
+                            ],
+                        )
+                    }),
+            ],
         )],
     );
     let mut cache = HashMap::new();
@@ -534,13 +545,8 @@ fn inspect_distinct_solver_egraph_minimal() {
     eprintln!("expanded term  = {}", rhs.to_egglog());
     eprintln!("same_class     = {}", snapshot.same_class(&lhs, &rhs));
 
-    let reconstruction = reconstruct_detailed(
-        &snapshot,
-        &lhs,
-        &rhs,
-        &[],
-        SearchStrategy::default(),
-    );
+    let reconstruction =
+        reconstruct_detailed(&snapshot, &lhs, &rhs, &[], SearchStrategy::default());
     eprintln!(
         "declarative reconstruction: found={}, stats={:?}",
         reconstruction.certificate.is_some(),
@@ -549,7 +555,12 @@ fn inspect_distinct_solver_egraph_minimal() {
 
     // The and-term the goal encoding would produce: conjuncts directly as
     // the operator's argument list, not wrapped in an extra Args cell.
-    let constant = |name: &str| Term::new("Mk", vec![Term::new("Const", vec![Term::leaf(&format!("\"{name}\""))])]);
+    let constant = |name: &str| {
+        Term::new(
+            "Mk",
+            vec![Term::new("Const", vec![Term::leaf(&format!("\"{name}\""))])],
+        )
+    };
     let not_equal = |x: &str, y: &str| {
         let equality = Term::new(
             "Mk",
@@ -557,7 +568,10 @@ fn inspect_distinct_solver_egraph_minimal() {
                 "@=",
                 vec![Term::new(
                     "Args",
-                    vec![constant(x), Term::new("Args", vec![constant(y), Term::leaf("Empty")])],
+                    vec![
+                        constant(x),
+                        Term::new("Args", vec![constant(y), Term::leaf("Empty")]),
+                    ],
                 )],
             )],
         );
@@ -616,23 +630,32 @@ fn elaborates_certificates_to_alethe_steps() {
     let source = encoded_app("@distinct", vec![a.clone(), b.clone()]);
     let target = encoded_not_equal(&b, &a);
     let rules = [encoded_eq_symm_rule()];
-    let certificate =
-        reconstruct(&snapshot, &source, &target, &rules, SearchStrategy::default())
-            .expect("the mixed chain should reconstruct");
+    let certificate = reconstruct(
+        &snapshot,
+        &source,
+        &target,
+        &rules,
+        SearchStrategy::default(),
+    )
+    .expect("the mixed chain should reconstruct");
     let steps = AletheElaborator::elaborate(&certificate, "t1")
         .expect("the mixed certificate should elaborate to Alethe");
     eprintln!("distinct_symm elaboration:\n{}", steps.join("\n"));
-    assert!(steps
-        .iter()
-        .any(|step| step.contains("(= (distinct a b) (not (= a b))") && step.contains(":rule distinct_elim")));
-    assert!(steps
-        .iter()
-        .any(|step| step.contains(":rule hole") && step.contains("\"eq-symm\"")));
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.contains("(= (distinct a b) (not (= a b))")
+                && step.contains(":rule distinct_elim"))
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.contains(":rule hole") && step.contains("\"eq-symm\""))
+    );
     assert!(steps.iter().any(|step| step.contains(":rule cong")));
-    assert!(steps
-        .last()
-        .is_some_and(|step| step.contains("(= (distinct a b) (not (= b a))")
-            && step.contains(":rule trans")));
+    assert!(steps.last().is_some_and(
+        |step| step.contains("(= (distinct a b) (not (= b a))") && step.contains(":rule trans")
+    ));
 
     // not(not(distinct(a,b,c))) = pairwise and: a trusted RARE step chained
     // with the native three-element distinct_elim.
@@ -661,22 +684,31 @@ fn elaborates_certificates_to_alethe_steps() {
         ],
     );
     let rules = [encoded_bool_double_not_elim_rule()];
-    let certificate =
-        reconstruct(&snapshot, &source, &target, &rules, SearchStrategy::default())
-            .expect("the interior chain should reconstruct");
+    let certificate = reconstruct(
+        &snapshot,
+        &source,
+        &target,
+        &rules,
+        SearchStrategy::default(),
+    )
+    .expect("the interior chain should reconstruct");
     let steps = AletheElaborator::elaborate(&certificate, "t2")
         .expect("the interior certificate should elaborate to Alethe");
     eprintln!("interior distinct elaboration:\n{}", steps.join("\n"));
-    assert!(steps
-        .iter()
-        .any(|step| step.contains(":rule hole") && step.contains("\"bool-double-not-elim\"")));
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.contains(":rule hole") && step.contains("\"bool-double-not-elim\""))
+    );
     assert!(steps.iter().any(|step| {
         step.contains(":rule distinct_elim")
             && step.contains("(= (distinct a b c) (and (not (= a b)) (not (= a c)) (not (= b c))")
     }));
-    assert!(steps
-        .last()
-        .is_some_and(|step| step.contains(":rule trans")));
+    assert!(
+        steps
+            .last()
+            .is_some_and(|step| step.contains(":rule trans"))
+    );
 }
 
 /// The `distinct_symm` fixture through the full production pipeline: the
@@ -817,14 +849,23 @@ fn encoded_real(numer: i64, denom: i64) -> Term {
         "Mk",
         vec![Term::new(
             "Real",
-            vec![Term::leaf(&numer.to_string()), Term::leaf(&denom.to_string())],
+            vec![
+                Term::leaf(&numer.to_string()),
+                Term::leaf(&denom.to_string()),
+            ],
         )],
     )
 }
 
 fn encoded_var(id: i64, sort: &str) -> Term {
-    let sort = Term::new("Sort", vec![Term::new("Const", vec![Term::leaf(&format!("\"{sort}\""))])]);
-    Term::new("Mk", vec![Term::new("Var", vec![Term::leaf(&id.to_string()), sort])])
+    let sort = Term::new(
+        "Sort",
+        vec![Term::new("Const", vec![Term::leaf(&format!("\"{sort}\""))])],
+    );
+    Term::new(
+        "Mk",
+        vec![Term::new("Var", vec![Term::leaf(&id.to_string()), sort])],
+    )
 }
 
 /// The checker-side normal form is a ring normal form: distribution,
@@ -835,22 +876,49 @@ fn arith_polynomials_normalize_modulo_ring_axioms() {
     let app = |op: &str, elements: Vec<Term>| encoded_app(op, elements);
 
     // (x + 1)(x - 1) = x*x - 1
-    let product = app("@*", vec![app("@+", vec![x.clone(), encoded_num(1)]), app("@-", vec![x.clone(), encoded_num(1)])]);
-    let expanded = app("@-", vec![app("@*", vec![x.clone(), x.clone()]), encoded_num(1)]);
+    let product = app(
+        "@*",
+        vec![
+            app("@+", vec![x.clone(), encoded_num(1)]),
+            app("@-", vec![x.clone(), encoded_num(1)]),
+        ],
+    );
+    let expanded = app(
+        "@-",
+        vec![app("@*", vec![x.clone(), x.clone()]), encoded_num(1)],
+    );
     assert!(poly_equal(&product, &expanded));
     // 4x + 1 = 1 + 4x, n-ary and binarized alike
-    let left = app("@+", vec![app("@*", vec![encoded_num(4), x.clone()]), encoded_num(1)]);
-    let right = app("@+", vec![encoded_num(1), app("@*", vec![encoded_num(4), x.clone()])]);
+    let left = app(
+        "@+",
+        vec![app("@*", vec![encoded_num(4), x.clone()]), encoded_num(1)],
+    );
+    let right = app(
+        "@+",
+        vec![encoded_num(1), app("@*", vec![encoded_num(4), x.clone()])],
+    );
     assert!(poly_equal(&left, &right));
     // to_real(x) / 2 = 1/2 * x
     let halved = app("@/", vec![app("@to_real", vec![x.clone()]), encoded_num(2)]);
-    assert!(poly_equal(&halved, &app("@*", vec![encoded_real(1, 2), x.clone()])));
+    assert!(poly_equal(
+        &halved,
+        &app("@*", vec![encoded_real(1, 2), x.clone()])
+    ));
     // x - x + y = y; x + y != x - y
-    assert!(poly_equal(&app("@+", vec![app("@-", vec![x.clone(), x.clone()]), y.clone()]), &y));
-    assert!(!poly_equal(&app("@+", vec![x.clone(), y.clone()]), &app("@-", vec![x.clone(), y.clone()])));
+    assert!(poly_equal(
+        &app("@+", vec![app("@-", vec![x.clone(), x.clone()]), y.clone()]),
+        &y
+    ));
+    assert!(!poly_equal(
+        &app("@+", vec![x.clone(), y.clone()]),
+        &app("@-", vec![x.clone(), y.clone()])
+    ));
     // division by a non-constant is opaque, but still a value
     let quotient = app("@/", vec![x.clone(), y.clone()]);
-    assert!(poly_equal(&app("@*", vec![encoded_num(2), quotient.clone()]), &app("@+", vec![quotient.clone(), quotient])));
+    assert!(poly_equal(
+        &app("@*", vec![encoded_num(2), quotient.clone()]),
+        &app("@+", vec![quotient.clone(), quotient])
+    ));
 }
 
 /// Relation keys identify equivalent relations across scaling, flipping,
@@ -864,23 +932,52 @@ fn arith_relation_keys_are_sound_on_fractional_strict_bounds() {
     let twice = |term: &Term| app("@*", vec![encoded_num(2), term.clone()]);
 
     // 2x <= 2y  is  y >= x
-    assert!(rel_equal(&app("@<=", vec![twice(&x), twice(&y)]), &app("@>=", vec![y.clone(), x.clone()]), &sorts));
+    assert!(rel_equal(
+        &app("@<=", vec![twice(&x), twice(&y)]),
+        &app("@>=", vec![y.clone(), x.clone()]),
+        &sorts
+    ));
     // x < y  is  not (x >= y)
-    assert!(rel_equal(&app("@<", vec![x.clone(), y.clone()]), &app("@not", vec![app("@>=", vec![x.clone(), y.clone()])]), &sorts));
+    assert!(rel_equal(
+        &app("@<", vec![x.clone(), y.clone()]),
+        &app("@not", vec![app("@>=", vec![x.clone(), y.clone()])]),
+        &sorts
+    ));
     // over the integers, x > 1  is  x >= 2
-    assert!(rel_equal(&app("@>", vec![x.clone(), encoded_num(1)]), &app("@>=", vec![x.clone(), encoded_num(2)]), &sorts));
+    assert!(rel_equal(
+        &app("@>", vec![x.clone(), encoded_num(1)]),
+        &app("@>=", vec![x.clone(), encoded_num(2)]),
+        &sorts
+    ));
     // ... but to_real(x) > 1/2 is x >= 1, never x >= 2
-    let fractional = app("@>", vec![app("@to_real", vec![x.clone()]), encoded_real(1, 2)]);
-    assert!(!rel_equal(&fractional, &app("@>=", vec![x.clone(), encoded_num(2)]), &sorts));
+    let fractional = app(
+        "@>",
+        vec![app("@to_real", vec![x.clone()]), encoded_real(1, 2)],
+    );
+    assert!(!rel_equal(
+        &fractional,
+        &app("@>=", vec![x.clone(), encoded_num(2)]),
+        &sorts
+    ));
     // equalities are keyed up to any nonzero scaling
     assert!(rel_equal(
-        &app("@=", vec![app("@+", vec![x.clone(), y.clone()]), encoded_num(0)]),
-        &app("@=", vec![app("@-", vec![encoded_num(0), y.clone()]), x.clone()]),
+        &app(
+            "@=",
+            vec![app("@+", vec![x.clone(), y.clone()]), encoded_num(0)]
+        ),
+        &app(
+            "@=",
+            vec![app("@-", vec![encoded_num(0), y.clone()]), x.clone()]
+        ),
         &sorts
     ));
     // a boolean equality is not an arithmetic one
     let (p, q) = (encoded_var(3, "Bool"), encoded_var(4, "Bool"));
-    assert!(!rel_equal(&app("@=", vec![p.clone(), q.clone()]), &app("@=", vec![q, p]), &sorts));
+    assert!(!rel_equal(
+        &app("@=", vec![p.clone(), q.clone()]),
+        &app("@=", vec![q, p]),
+        &sorts
+    ));
 }
 
 /// The `poly_norm` fixture through the full production pipeline: the step
@@ -936,7 +1033,10 @@ fn reconstructs_arith_poly_norm_from_production_egraph() {
         "{}",
         steps[0]
     );
-    eprintln!("poly_norm: saturation={:?}, steps={steps:#?}", run.saturation);
+    eprintln!(
+        "poly_norm: saturation={:?}, steps={steps:#?}",
+        run.saturation
+    );
 }
 
 /// The `poly_norm_rel` fixture: `(= (not (not (<= (* 2 x) (* 2 y)))) (>= y x))`
@@ -973,7 +1073,11 @@ fn reconstructs_arith_poly_norm_rel_mixed_with_double_not_from_production_egraph
     assert!(certificate.contains_computation(Computation::ArithPolyNormRel));
     let mut names = Vec::new();
     certificate.rule_names(&mut names);
-    assert_eq!(names.len(), 1, "one RARE step bridges the negations: {names:?}");
+    assert_eq!(
+        names.len(),
+        1,
+        "one RARE step bridges the negations: {names:?}"
+    );
     let steps = elaborate_and_check(
         &run,
         &certificate,
@@ -981,12 +1085,22 @@ fn reconstructs_arith_poly_norm_rel_mixed_with_double_not_from_production_egraph
         "tests/rare/computational_mix/poly_norm_rel.smt2",
         "tests/rare/computational_mix/mix.rare",
     );
-    assert!(steps.iter().any(|step| step.contains("rare_rewrite") && step.contains("\"bool-double-not-elim\"")), "{steps:#?}");
     assert!(
-        steps.iter().any(|step| step.contains("\"arith_poly_norm_rel\"")),
+        steps
+            .iter()
+            .any(|step| step.contains("rare_rewrite") && step.contains("\"bool-double-not-elim\"")),
         "{steps:#?}"
     );
-    eprintln!("poly_norm_rel mix: saturation={:?}, steps={steps:#?}", run.saturation);
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.contains("\"arith_poly_norm_rel\"")),
+        "{steps:#?}"
+    );
+    eprintln!(
+        "poly_norm_rel mix: saturation={:?}, steps={steps:#?}",
+        run.saturation
+    );
 }
 
 /// The `real_eval` fixture: `(= (+ 1/2 1/2) 1.0)`.  The solver rewrites
@@ -1027,8 +1141,14 @@ fn reconstructs_rational_evaluation_from_production_egraph() {
         steps.iter().any(|step| step.contains(":rule evaluate")),
         "{steps:#?}"
     );
-    assert!(!steps.iter().any(|step| step.contains(":rule hole")), "{steps:#?}");
-    eprintln!("real_eval: saturation={:?}, steps={steps:#?}", run.saturation);
+    assert!(
+        !steps.iter().any(|step| step.contains(":rule hole")),
+        "{steps:#?}"
+    );
+    eprintln!(
+        "real_eval: saturation={:?}, steps={steps:#?}",
+        run.saturation
+    );
 }
 
 /// Corpus sweep for OUR algorithm: for every hole slice where the egglog
@@ -1059,7 +1179,10 @@ fn run_benchmark_corpus() {
     let list = std::fs::read_to_string(std::env::var("BENCH_LIST").expect("set BENCH_LIST"))
         .expect("BENCH_LIST should be readable");
     let rare_path = std::env::var("BENCH_RARE").expect("set BENCH_RARE");
-    let skip: usize = std::env::var("BENCH_SKIP").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let skip: usize = std::env::var("BENCH_SKIP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let limit: usize = std::env::var("BENCH_LIMIT")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -1075,8 +1198,7 @@ fn run_benchmark_corpus() {
     let started = Instant::now();
     for (index, line) in list.lines().enumerate().skip(skip).take(limit) {
         let mut fields = line.split('\t');
-        let (Some(alethe), Some(smt2), Some(hole)) =
-            (fields.next(), fields.next(), fields.next())
+        let (Some(alethe), Some(smt2), Some(hole)) = (fields.next(), fields.next(), fields.next())
         else {
             continue;
         };
@@ -1092,10 +1214,8 @@ fn run_benchmark_corpus() {
         let (mut problem_text, mut proof_text, mut rare_text) =
             (String::new(), String::new(), String::new());
         let (_, proof, database, mut pool) = parser::parse_instance(
-            parser::Source::file(Path::new(smt2), &mut problem_text)
-                .expect("problem should exist"),
-            parser::Source::file(Path::new(alethe), &mut proof_text)
-                .expect("slice should exist"),
+            parser::Source::file(Path::new(smt2), &mut problem_text).expect("problem should exist"),
+            parser::Source::file(Path::new(alethe), &mut proof_text).expect("slice should exist"),
             Some(
                 parser::Source::file(Path::new(&rare_path), &mut rare_text)
                     .expect("RARE database should exist"),
@@ -1111,7 +1231,10 @@ fn run_benchmark_corpus() {
             &mut pool,
             (conclusion.clone(), &node),
             &database,
-            RunEgglogOptions { timeout: budget, ..RunEgglogOptions::default() },
+            RunEgglogOptions {
+                timeout: budget,
+                ..RunEgglogOptions::default()
+            },
         );
         if result.is_err() {
             oracle_failed += 1;
@@ -1290,10 +1413,7 @@ fn encoded_const(name: &str) -> Term {
 }
 
 fn encoded_not_equal(x: &Term, y: &Term) -> Term {
-    encoded_app(
-        "@not",
-        vec![encoded_app("@=", vec![x.clone(), y.clone()])],
-    )
+    encoded_app("@not", vec![encoded_app("@=", vec![x.clone(), y.clone()])])
 }
 
 /// The distinct-elimination union sits in the interior of the chain: the
@@ -1516,7 +1636,10 @@ fn inspect_distinct_elim_egraph() {
         snapshot.class_nodes.len(),
         run.saturation,
     );
-    eprintln!("same_class(lhs, rhs) = {}", snapshot.same_class(&run.lhs, &run.rhs));
+    eprintln!(
+        "same_class(lhs, rhs) = {}",
+        snapshot.same_class(&run.lhs, &run.rhs)
+    );
 
     let mut op_counts: BTreeMap<&str, usize> = BTreeMap::new();
     for node in &snapshot.nodes {
@@ -1913,7 +2036,6 @@ fn compare_real_qf_uf_raw_rules_posthoc_with_egglog_proofs() {
     );
 }
 
-
 /// Snapshot of a proof-producing (egglog 3.0) e-graph; the library only
 /// captures the production engine's, since `egglog_proofs` is a
 /// dev-dependency.
@@ -2004,4 +2126,45 @@ fn elaborates_cvc5_theory_rewrite_holes_end_to_end() {
     .expect("the elaborated proof should parse and check");
     assert_eq!(rechecked, crate::Status::Valid, "{printed}");
     eprintln!("elaborated RF-12:\n{printed}");
+}
+
+/// cvc5 #12639 renamed the printed tag of `TRUST_THEORY_REWRITE` holes to
+/// `"untranslated rewrite"`; both spellings must be elaborated.
+#[test]
+fn elaborates_holes_with_the_untranslated_rewrite_tag() {
+    use crate::elaborator::{self, ElaborationPass};
+
+    let problem_path = Path::new("tests/rare/elaborate/RF-12.smt2");
+    let rare_path = Path::new("tests/rare/big.rare");
+    let proof_text = std::fs::read_to_string("tests/rare/elaborate/RF-12.smt2.alethe")
+        .expect("proof should exist")
+        .replace("\"TRUST_THEORY_REWRITE\"", "\"untranslated rewrite\"");
+    assert!(proof_text.contains("untranslated rewrite"));
+    let parser_config = parser::Config::default()
+        .expand_lets(true)
+        .allow_int_real_subtyping(true)
+        .parse_hole_args(true);
+    let (mut problem_text, mut rare_text) = (String::new(), String::new());
+    let (_, problem, elaborated, mut pool) = crate::check_and_elaborate(
+        parser::Source::file(problem_path, &mut problem_text).expect("problem should exist"),
+        parser::Source::new(Path::new("<RF-12, new tag>"), &proof_text),
+        Some(parser::Source::file(rare_path, &mut rare_text).expect("RARE database should exist")),
+        parser_config,
+        crate::checker::Config::new(),
+        elaborator::Config::new().elaborate_hole_rewrites(true),
+        vec![ElaborationPass::Hole],
+        false,
+    )
+    .expect("the proof should check and elaborate");
+    let mut printed = Vec::new();
+    crate::ast::printer::write_proof_to_dest(
+        &mut pool,
+        &problem.prelude,
+        &elaborated,
+        &mut printed,
+        false,
+    )
+    .expect("the elaborated proof should print");
+    let printed = String::from_utf8(printed).expect("printed proof should be UTF-8");
+    assert!(!printed.contains(":rule hole"), "{printed}");
 }

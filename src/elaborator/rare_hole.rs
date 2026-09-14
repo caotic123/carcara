@@ -447,12 +447,18 @@ use crate::{
 /// built, as before.
 pub const MAX_SNAPSHOT_TUPLES: usize = 4_000_000;
 
-/// Whether `step` is a cvc5 `TRUST_THEORY_REWRITE` hole.
+/// The tags cvc5 prints on a `ProofRule::TRUST_THEORY_REWRITE` hole: the
+/// rule's own name up to April 2026, and `"untranslated rewrite"` since
+/// cvc5 #12639 renamed the printed form (same rule, same code path).
+pub const THEORY_REWRITE_TAGS: [&str; 2] = ["TRUST_THEORY_REWRITE", "untranslated rewrite"];
+
+/// Whether `step` is a cvc5 theory-rewrite hole.
 pub fn is_theory_rewrite_hole(step: &StepNode) -> bool {
     step.rule == "hole"
         && matches!(
             step.args.first().map(|arg| arg.as_ref()),
-            Some(crate::ast::Term::Const(Constant::String(tag))) if tag == "TRUST_THEORY_REWRITE"
+            Some(crate::ast::Term::Const(Constant::String(tag)))
+                if THEORY_REWRITE_TAGS.contains(&tag.as_str())
         )
 }
 

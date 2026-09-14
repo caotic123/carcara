@@ -853,3 +853,15 @@ then a `check` of the result. `gen-sets.py` takes the alethecore-eval sample
 (seed 20260816) restricted to benchmarks whose local proof has at most 600
 holes, 15 per logic. `submit-egglog-holes.sh`: quad, `-j 2 --cpus 4`,
 24 GB, 900 s wall.
+
+### cvc5 renamed the hole tag
+
+cvc5 #12639 (`11c7a24fc1`, after April 2026) changed what the Alethe printer
+emits for `ProofRule::TRUST_THEORY_REWRITE`: `:args ("TRUST_THEORY_REWRITE"
+<eq> 1 6)` became `:args ("untranslated rewrite")` — same rule, same code path
+(`src/proof/alethe/alethe_post_processor.cpp`). Builds from newer main (and
+the `aletheLagFixes` static cvc5) print the new tag, so a run keyed on the old
+one finds zero holes. `is_theory_rewrite_hole` now accepts both
+(`THEORY_REWRITE_TAGS`); the runner counts both. On a newer-cvc5 QF_UF proof
+with 43 such holes, four isolated workers at 30 s justified 40 and kept 3
+(each killed at the 30 s bound), 30 s wall, and the result re-checks.
