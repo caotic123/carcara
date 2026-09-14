@@ -673,8 +673,14 @@ pub fn reconstruct_in_child(
     let stdout = stdout.join().unwrap_or_default();
     let stderr = stderr.join().unwrap_or_default();
     let tail = || {
+        // The reason is the last thing the child said that was not egglog's
+        // routine "Query took a long time" chatter, which would otherwise
+        // crowd the real error out of a three-line tail.
         let text = String::from_utf8_lossy(&stderr);
-        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        let lines: Vec<&str> = text
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with("warn:"))
+            .collect();
         lines[lines.len().saturating_sub(3)..].join(" | ")
     };
     match status {
