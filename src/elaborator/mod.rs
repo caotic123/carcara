@@ -326,9 +326,20 @@ impl<'e> Elaborator<'e> {
         proof.mutate(|_, node, _| match node.as_ref() {
             ProofNode::Step(s) if rare_holes && rare_hole::is_theory_rewrite_hole(s) => {
                 match reconstructed.remove(&s.id) {
+                    // Isolation makes the pass best-effort for the whole hole:
+                    // a child that fails, and a reconstruction the checker
+                    // then rejects, both leave the hole as it was, so one bad
+                    // hole cannot cost the rest of the proof.
+                    Some(Ok(steps)) if self.config.hole_isolate => {
+                        match rare_hole::insert_steps(self, s, steps) {
+                            Ok(inserted) => Ok(inserted),
+                            Err(error) => {
+                                log::warn!("hole {}: kept as trusted: {error}", s.id);
+                                Ok(node.clone())
+                            }
+                        }
+                    }
                     Some(Ok(steps)) => rare_hole::insert_steps(self, s, steps).map_err(|e| e.at(s)),
-                    // An isolated hole's failure is the child's verdict on it:
-                    // the hole stays trusted and the proof goes on.
                     Some(Err(reason)) if self.config.hole_isolate => {
                         log::warn!("hole {}: kept as trusted: {reason}", s.id);
                         Ok(node.clone())
