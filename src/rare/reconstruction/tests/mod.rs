@@ -1063,6 +1063,12 @@ fn run_benchmark_corpus() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(usize::MAX);
+    // Per-case budget, so a sweep over a sample finishes in bounded time.
+    // Without it one diverging case stalls the whole run.
+    let budget: Option<Duration> = std::env::var("BENCH_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .map(Duration::from_millis);
 
     let (mut oracle_failed, mut reconstructed) = (0usize, 0usize);
     let started = Instant::now();
@@ -1099,11 +1105,12 @@ fn run_benchmark_corpus() {
         let node = node_with_root_id(proof.commands, hole).expect("slice should contain its hole");
         let conclusion = node.clause()[0].clone();
 
+        let deadline = budget.and_then(|budget| Instant::now().checked_add(budget));
         let (result, program) = run_egglog(
             &mut pool,
             (conclusion.clone(), &node),
             &database,
-            RunEgglogOptions::default(),
+            RunEgglogOptions { timeout: budget, ..RunEgglogOptions::default() },
         );
         if result.is_err() {
             oracle_failed += 1;
@@ -1122,7 +1129,22 @@ fn run_benchmark_corpus() {
             std::fs::write(&dump_path, &program).expect("BENCH_DUMP directory should be writable");
         }
 
-        let snapshot = EGraphSnapshot::capture_production(&result.unwrap());
+        // Same guard the production path applies: serializing the e-graph is
+        // one uninterruptible copy proportional to its size, so a budget
+        // already spent stops the case here instead of paying for it.
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            oracle_failed += 1;
+            eprintln!("budget-exhausted case {index}");
+            continue;
+        }
+        let egraph = result.unwrap();
+        let tuples = egraph.num_tuples();
+        if budget.is_some() && tuples > crate::elaborator::rare_hole::MAX_SNAPSHOT_TUPLES {
+            oracle_failed += 1;
+            eprintln!("egraph-too-large case {index}: {tuples} tuples");
+            continue;
+        }
+        let snapshot = EGraphSnapshot::capture_production(&egraph);
         let (lhs, rhs) = generated_goals(&program);
         let rules = rules_from_generated_program(&program);
         let sorts = ArithSorts::from_generated_program(&program);
@@ -1133,7 +1155,7 @@ fn run_benchmark_corpus() {
             &rhs,
             &rules,
             &sorts,
-            SearchStrategy::default(),
+            SearchStrategy::default().with_deadline(deadline),
         );
         let Some(certificate) = reconstruction.certificate else {
             panic!(
