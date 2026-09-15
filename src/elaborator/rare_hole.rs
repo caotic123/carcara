@@ -729,13 +729,25 @@ pub fn reconstruct_in_child(
     match status {
         None => {
             let by_proof = deadline.is_some_and(|all| own_deadline.is_none_or(|own| all < own));
+            // The phases already completed say how the budget was spent
+            // before the kill, e.g. "(after egglog=0.2)".
+            let completed = phases
+                .iter()
+                .map(|(name, secs)| format!("{name}={secs}"))
+                .collect::<Vec<_>>()
+                .join(" ");
             Err(format!(
-                "killed after {:.1}s during {}: {}",
+                "killed after {:.1}s during {}{}: {}",
                 started.elapsed().as_secs_f64(),
                 if check_only {
                     "egglog"
                 } else {
                     phase_in_progress()
+                },
+                if completed.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (after {completed})")
                 },
                 if by_proof {
                     "the proof's hole budget ran out"
