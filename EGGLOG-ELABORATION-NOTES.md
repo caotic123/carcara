@@ -1013,3 +1013,47 @@ proof budget 5. Peak memory 12.9 GB (QF_LRA), against the 24 GB job limit.
 Against the thesis' RQ1 (single holes, 600 s / 8 GB, 0.5% sample): this
 check pass, at 30 s / 5 GB with four workers, proves 96.0% of the attempted
 holes, in the same range as the thesis' 90–99% per logic.
+
+---
+
+## 15. Where elaboration loses its holes: the snapshot (2026-09-15)
+
+Per-hole analysis of `small3` (`~/exp/egglog-holes/perhole.py`), 5,389 holes
+seen by both passes:
+
+| | elaboration justified | elaboration kept |
+|---|---|---|
+| **checking proved** | 4,964 | **207** |
+| checking did not prove | 0 | 218 |
+
+The 207 holes checking proves but elaboration loses: 198 killed at the 30 s
+bound, 6 no certificate, 2 checker-rejected, 1 proof budget. Memory kills are
+63 in *both* passes — they happen in the egglog phase. Per finished hole,
+elaboration costs 1.4–1.7x checking at the median but ~10x at p90 in the
+arithmetic logics.
+
+Phase attribution (child reports each phase; `4e0458d7`), re-running the two
+proofs with the most losses locally under `small3`'s elaboration limits:
+
+| proof | egglog | **snapshot** | search | emit | killed during |
+|---|---|---|---|---|---|
+| `ring_2exp6` (QF_LIA, 200 holes) | 29.6% | **69.7%** | 0.7% | 0.0% | snapshot 54, egglog 4 |
+| `pd_not_sc_seen` (QF_LRA, 528 holes) | 38.2% | **57.8%** | 3.9% | 0.0% | egglog 42, snapshot 16 (+24 memory in egglog) |
+
+For the 27 `ring_2exp6` holes whose snapshot took over 5 s, egglog took a
+median 0.2 s and the snapshot a median 12.5 s (max 27.5 s): the equality is
+proved almost instantly, then serializing the saturated e-graph
+(`EGraphSnapshot::capture_production` → `egraph.serialize`) eats the budget.
+The certificate search is never the problem.
+
+Consequences:
+
+* The elaboration-only losses are a **Carcara** problem — the full e-graph
+  serialization — not an egglog one. The fix is to snapshot less: only the
+  e-classes reachable from the goal terms (what the search actually walks),
+  or a direct read of the e-graph without going through egglog's serializer.
+  `MAX_SNAPSHOT_TUPLES` (4M) is far too loose to prevent this.
+* An egglog 3.0 migration targets the *other* losses: the 63 memory kills per
+  pass and QF_LRA's 42 egglog-phase kills (growth inside one iteration). It
+  does not touch the snapshot cost, except indirectly by keeping e-graphs
+  smaller.
