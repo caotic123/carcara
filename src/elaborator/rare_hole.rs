@@ -547,6 +547,7 @@ pub fn reconstruct_from_input(
     rules: parser::Source<'_>,
     options: crate::checker::RunEgglogOptions,
     check_only: bool,
+    phase: &mut dyn FnMut(&str, Duration),
 ) -> Result<Vec<String>, String> {
     let boundary = format!("{HOLE_INPUT_BOUNDARY}\n");
     let (problem, proof) = input
@@ -571,7 +572,7 @@ pub fn reconstruct_from_input(
     if check_only {
         return check_hole(&mut pool, &node, &step, &database, options).map(|()| Vec::new());
     }
-    reconstruct_steps(&mut pool, &node, &step, &database, options)
+    reconstruct_steps_timed(&mut pool, &node, &step, &database, options, phase)
 }
 
 /// Reconstructs a hole in a child process that is killed outright when the
@@ -686,6 +687,31 @@ pub fn reconstruct_in_child(
     };
     let stdout = stdout.join().unwrap_or_default();
     let stderr = stderr.join().unwrap_or_default();
+    // The child reports "phase <name>=<seconds>" as each phase completes, so
+    // the phases seen say how far it got.
+    let phases: Vec<(String, String)> = String::from_utf8_lossy(&stderr)
+        .lines()
+        .filter_map(|line| line.strip_prefix("phase ")?.split_once('='))
+        .map(|(name, secs)| (name.to_owned(), secs.to_owned()))
+        .collect();
+    let phase_in_progress = || {
+        PHASES
+            .iter()
+            .find(|name| !phases.iter().any(|(seen, _)| seen == *name))
+            .copied()
+            .unwrap_or("emit")
+    };
+    if !phases.is_empty() && !check_only {
+        log::info!(
+            "hole {}: phases {}",
+            step.id,
+            phases
+                .iter()
+                .map(|(name, secs)| format!("{name}={secs}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    }
     let tail = || {
         // The reason is the last thing the child said that was not egglog's
         // routine "Query took a long time" chatter, which would otherwise
@@ -693,7 +719,10 @@ pub fn reconstruct_in_child(
         let text = String::from_utf8_lossy(&stderr);
         let lines: Vec<&str> = text
             .lines()
-            .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with("warn:"))
+            .filter(|l| {
+                let l = l.trim_start();
+                !l.is_empty() && !l.starts_with("warn:") && !l.starts_with("phase ")
+            })
             .collect();
         lines[lines.len().saturating_sub(3)..].join(" | ")
     };
@@ -701,8 +730,13 @@ pub fn reconstruct_in_child(
         None => {
             let by_proof = deadline.is_some_and(|all| own_deadline.is_none_or(|own| all < own));
             Err(format!(
-                "killed after {:.1}s: {}",
+                "killed after {:.1}s during {}: {}",
                 started.elapsed().as_secs_f64(),
+                if check_only {
+                    "egglog"
+                } else {
+                    phase_in_progress()
+                },
                 if by_proof {
                     "the proof's hole budget ran out"
                 } else {
@@ -761,6 +795,24 @@ pub fn reconstruct_steps(
     rules: &Rules,
     options: crate::checker::RunEgglogOptions,
 ) -> Result<Vec<String>, String> {
+    reconstruct_steps_timed(pool, node, step, rules, options, &mut |_, _| {})
+}
+
+/// The phases of one hole's reconstruction, in order.  A worker reports each
+/// as it completes, so a hole cut short can be attributed to the phase it was
+/// in.
+pub const PHASES: [&str; 4] = ["egglog", "snapshot", "search", "emit"];
+
+/// [`reconstruct_steps`], calling `phase` with each phase's name and duration
+/// as it completes.
+pub fn reconstruct_steps_timed(
+    pool: &mut dyn TermPool,
+    node: &crate::ast::Rc<ProofNode>,
+    step: &StepNode,
+    rules: &Rules,
+    options: crate::checker::RunEgglogOptions,
+    phase: &mut dyn FnMut(&str, Duration),
+) -> Result<Vec<String>, String> {
     let stage = |stage: &str, detail: String| format!("{stage}: {detail}");
     let [conclusion] = step.clause.as_slice() else {
         return Err(stage(
@@ -778,7 +830,9 @@ pub fn reconstruct_steps(
     let deadline = options
         .timeout
         .and_then(|timeout| Instant::now().checked_add(timeout));
+    let clock = Instant::now();
     let (result, program) = run_egglog(pool, (conclusion.clone(), node), rules, options);
+    phase("egglog", clock.elapsed());
     let egraph = result.map_err(|error| stage("egglog check", error))?;
     // Serializing the saturated e-graph is proportional to its size and cannot
     // be interrupted once begun, so a budget already spent stops the hole here
@@ -799,7 +853,10 @@ pub fn reconstruct_steps(
             format!("e-graph too large to capture: {tuples} tuples"),
         ));
     }
+    let clock = Instant::now();
     let snapshot = EGraphSnapshot::capture_production(&egraph);
+    phase("snapshot", clock.elapsed());
+    let clock = Instant::now();
     let (lhs, rhs) = generated_goals(&program);
     let rewrites = rules_from_generated_program(&program);
     let sorts = ArithSorts::from_generated_program(&program);
@@ -811,20 +868,25 @@ pub fn reconstruct_steps(
         &sorts,
         SearchStrategy::default().with_deadline(deadline),
     );
+    phase("search", clock.elapsed());
     let certificate = reconstruction.certificate.ok_or_else(|| {
         stage(
             "reconstruction",
             format!("no certificate found; stats: {:?}", reconstruction.stats),
         )
     })?;
+    let clock = Instant::now();
     let names = goal_variable_names(&lhs, &rhs, conclusion);
     let index = rare_arguments(&rules.rules);
-    AletheElaborator::elaborate_in(&certificate, &step.id, names, index, sorts).ok_or_else(|| {
-        stage(
-            "alethe elaboration",
-            "a certificate term failed to decode".to_owned(),
-        )
-    })
+    let steps = AletheElaborator::elaborate_in(&certificate, &step.id, names, index, sorts)
+        .ok_or_else(|| {
+            stage(
+                "alethe elaboration",
+                "a certificate term failed to decode".to_owned(),
+            )
+        });
+    phase("emit", clock.elapsed());
+    steps
 }
 
 /// Elaborates a `TRUST_THEORY_REWRITE` hole through the post-hoc pipeline:

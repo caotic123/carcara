@@ -392,13 +392,15 @@ impl<'e> Elaborator<'e> {
                     // checker then rejects, both leave the hole as it was, so
                     // one bad hole cannot cost the rest of the proof.
                     Some((Ok(steps), elapsed)) if final_results => {
+                        let checking = Instant::now();
                         match rare_hole::insert_steps(self, s, steps) {
                             Ok(inserted) => {
                                 done += 1;
                                 log::info!(
-                                    "hole {}: justified in {:.3}s",
+                                    "hole {}: justified in {:.3}s (check {:.3}s)",
                                     s.id,
-                                    elapsed.as_secs_f64()
+                                    elapsed.as_secs_f64(),
+                                    checking.elapsed().as_secs_f64()
                                 );
                                 Ok(inserted)
                             }

@@ -455,6 +455,9 @@ fn reconstruct_hole_command(options: ReconstructHoleOptions) -> CliResult<()> {
         rules,
         egglog_options,
         options.check_only,
+        // Reported as each phase completes and flushed at once, so the parent
+        // learns how far a child got even when it kills it.
+        &mut |name, elapsed| eprintln!("phase {name}={:.3}", elapsed.as_secs_f64()),
     ) {
         Ok(steps) => {
             let mut out = io::stdout().lock();
