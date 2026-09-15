@@ -813,7 +813,7 @@ pub fn reconstruct_steps(
 /// The phases of one hole's reconstruction, in order.  A worker reports each
 /// as it completes, so a hole cut short can be attributed to the phase it was
 /// in.
-pub const PHASES: [&str; 4] = ["egglog", "snapshot", "search", "emit"];
+pub const PHASES: [&str; 5] = ["egglog", "serialize", "index", "search", "emit"];
 
 /// [`reconstruct_steps`], calling `phase` with each phase's name and duration
 /// as it completes.
@@ -865,9 +865,14 @@ pub fn reconstruct_steps_timed(
             format!("e-graph too large to capture: {tuples} tuples"),
         ));
     }
+    // The snapshot's two halves are timed apart: egglog's serialization of
+    // the e-graph, then the indexing of what it produced.
     let clock = Instant::now();
-    let snapshot = EGraphSnapshot::capture_production(&egraph);
-    phase("snapshot", clock.elapsed());
+    let raw = EGraphSnapshot::serialize_production(&egraph);
+    phase("serialize", clock.elapsed());
+    let clock = Instant::now();
+    let snapshot = EGraphSnapshot::from_raw_nodes(raw);
+    phase("index", clock.elapsed());
     let clock = Instant::now();
     let (lhs, rhs) = generated_goals(&program);
     let rewrites = rules_from_generated_program(&program);

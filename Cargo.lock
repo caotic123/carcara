@@ -382,8 +382,6 @@ dependencies = [
 [[package]]
 name = "egglog"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3906e8f27e882ae5483f47715bd1702423ad4eb90dd4f790009754e180718eb"
 dependencies = [
  "chrono",
  "clap",

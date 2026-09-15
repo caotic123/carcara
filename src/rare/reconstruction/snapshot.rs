@@ -1,7 +1,7 @@
 //! Provenance-free snapshot of a saturated e-graph, with e-matching.
-use std::collections::HashMap;
-use egglog::{EGraph as ProductionEGraph, SerializeConfig as ProductionSerializeConfig};
 use super::*;
+use egglog::{EGraph as ProductionEGraph, SerializeConfig as ProductionSerializeConfig};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub struct SnapshotNode {
@@ -77,28 +77,32 @@ impl EGraphSnapshot {
         snapshot
     }
 
-
     pub fn capture_production(egraph: &ProductionEGraph) -> Self {
+        Self::from_raw_nodes(Self::serialize_production(egraph))
+    }
+
+    /// The first half of [`capture_production`]: egglog's own serialization of
+    /// the whole e-graph, reduced to `(op, child classes, class)` per node.
+    /// Kept separate from the indexing so each half can be timed.
+    pub fn serialize_production(egraph: &ProductionEGraph) -> Vec<(String, Vec<String>, String)> {
         // egglog 0.4 does not return explicit truncation metadata.  Its default
         // configuration has no function/call limits, so this is a complete
         // provenance-free snapshot of Carcara's production e-graph.
         let serialized = egraph.serialize(ProductionSerializeConfig::default());
-        Self::from_raw_nodes(
-            serialized
-                .nodes
-                .values()
-                .map(|node| {
-                    (
-                        node.op.clone(),
-                        node.children
-                            .iter()
-                            .map(|child| serialized.nodes[child].eclass.to_string())
-                            .collect(),
-                        node.eclass.to_string(),
-                    )
-                })
-                .collect(),
-        )
+        serialized
+            .nodes
+            .values()
+            .map(|node| {
+                (
+                    node.op.clone(),
+                    node.children
+                        .iter()
+                        .map(|child| serialized.nodes[child].eclass.to_string())
+                        .collect(),
+                    node.eclass.to_string(),
+                )
+            })
+            .collect()
     }
 
     pub fn class_of(&self, term: &Term, cache: &mut HashMap<Term, u32>) -> Option<u32> {

@@ -58,3 +58,8 @@ inherits = "release"
 debug = 0
 incremental = false
 lto = true
+
+# egglog 0.4.0 with its e-graph serializer fixed (one extractor per call
+# instead of one per primitive value); see third-party/egglog-0.4.0/CARCARA-PATCHES.md.
+[patch.crates-io]
+egglog = { path = "third-party/egglog-0.4.0" }

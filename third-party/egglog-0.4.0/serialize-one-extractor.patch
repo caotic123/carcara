@@ -1,0 +1,88 @@
+--- /home/hbarbosa/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egglog-0.4.0/src/serialize.rs	2006-07-23 22:21:28.000000000 -0300
++++ third-party/egglog-0.4.0/src/serialize.rs	2026-09-15 20:14:59.599924832 -0300
+@@ -55,6 +55,24 @@
+     }
+ }
+ 
++
++/// One extractor per `serialize` call.  Printing a primitive value goes
++/// through an `Extractor`, whose construction computes costs over the whole
++/// e-graph; upstream built a fresh one for every primitive node, which made
++/// serialization quadratic in the size of the e-graph.
++struct SerializeExtractor<'a> {
++    extractor: Extractor<'a>,
++    termdag: TermDag,
++}
++
++impl<'a> SerializeExtractor<'a> {
++    fn new(egraph: &'a EGraph) -> Self {
++        let mut termdag = TermDag::default();
++        let extractor = Extractor::new(egraph, &mut termdag);
++        SerializeExtractor { extractor, termdag }
++    }
++}
++
+ impl EGraph {
+     /// Serialize the egraph into a format that can be read by the egraph-serialize crate.
+     ///
+@@ -137,10 +155,12 @@
+         );
+ 
+         let mut egraph = egraph_serialize::EGraph::default();
++        let mut extractor: Option<SerializeExtractor<'_>> = None;
+         for (func, input, output, class_id, node_id) in all_calls {
+             self.serialize_value(
+                 &mut egraph,
+                 &mut node_ids,
++                &mut extractor,
+                 &func.schema.output,
+                 &output.value,
+                 &class_id,
+@@ -154,6 +174,7 @@
+                     self.serialize_value(
+                         &mut egraph,
+                         &mut node_ids,
++                        &mut extractor,
+                         sort,
+                         v,
+                         &self.value_to_class_id(sort, v),
+@@ -262,10 +283,11 @@
+     /// If this is a primitive value, we will add the node to the data, but if it is an eclass, we will not
+     /// When this is called on the output of a node, we only use the e-class to know which e-class its a part of
+     /// When this is called on an input of a node, we only use the node ID to know which node to point to.
+-    fn serialize_value(
+-        &self,
++    fn serialize_value<'a>(
++        &'a self,
+         egraph: &mut egraph_serialize::EGraph,
+         node_ids: &mut NodeIDs,
++        extractor: &mut Option<SerializeExtractor<'a>>,
+         sort: &ArcSort,
+         value: &Value,
+         class_id: &egraph_serialize::ClassId,
+@@ -301,6 +323,7 @@
+                         self.serialize_value(
+                             egraph,
+                             node_ids,
++                            extractor,
+                             &s,
+                             &v,
+                             &self.value_to_class_id(&s, &v),
+@@ -311,13 +334,12 @@
+                 let op = if sort.is_container_sort() {
+                     sort.serialized_name(value).to_string()
+                 } else {
+-                    let mut termdag = TermDag::default();
+-                    let extractor = Extractor::new(self, &mut termdag);
++                    let ctx = extractor.get_or_insert_with(|| SerializeExtractor::new(self));
+                     let (_, term) = sort
+-                            .extract_term(self, *value, &extractor, &mut termdag)
+-                            .expect("Extraction should be successful since extractor has been fully initialized");
++                        .extract_term(self, *value, &ctx.extractor, &mut ctx.termdag)
++                        .expect("Extraction should be successful since extractor has been fully initialized");
+ 
+-                    termdag.term_to_expr(&term, Span::Panic).to_string()
++                    ctx.termdag.term_to_expr(&term, Span::Panic).to_string()
+                 };
+                 egraph.nodes.insert(
+                     node_id.clone(),

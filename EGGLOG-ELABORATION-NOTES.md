@@ -1057,3 +1057,56 @@ Consequences:
   pass and QF_LRA's 42 egglog-phase kills (growth inside one iteration). It
   does not touch the snapshot cost, except indirectly by keeping e-graphs
   smaller.
+
+## 16. The snapshot cost was egglog's serializer; fixed by vendoring 0.4.0 (2026-09-15)
+
+§15 blamed the losses on "Carcara's full e-graph serialization". Splitting the
+snapshot phase into egglog's `serialize()` and Carcara's indexing of its
+output (`serialize` / `index` phases, `EGraphSnapshot::serialize_production`)
+put the whole cost in egglog: indexing is ~0, and the serialized graphs are
+small (a 1,452-node graph took 0.72 s, a 5,493-node one 10.8 s — ~2 ms per
+node and super-linear). Instrumenting a vendored copy of egglog 0.4.0
+(`EGGLOG_SERIALIZE_STATS`) showed the time entirely inside the per-node loop,
+with no stale-row problem (`offsets ≈ live`, 175 tables, 28.5k live rows).
+
+The cause, in `src/serialize.rs::serialize_value`: to print a *primitive*
+value (an `i64`, a big rational, a string) egglog constructs a fresh
+`Extractor` — whose `new` runs `find_costs`, a fixpoint cost computation over
+**every row of every function in the e-graph** — for every primitive node it
+emits, then calls the sort's `extract_term`, which for primitives never looks
+at the extractor. Polynomial e-graphs are full of coefficient primitives, so
+serialization was (#primitive nodes) × (#rows): quadratic. (3.0 serializes
+through a different path but exposes no row iteration publicly either, so
+migrating would not have been the shorter route — see the 20:02 status.)
+
+**Fix:** `third-party/egglog-0.4.0/` is the released crate with one change
+(`serialize-one-extractor.patch`): one `Extractor` built lazily per
+`serialize` call, shared by all primitive nodes; `Cargo.toml` selects it via
+`[patch.crates-io]`. The crate's tests/benches are left out
+(`CARCARA-PATCHES.md`). Serializing a 1,452-node graph went from 0.72 s to
+0.002 s; a 70k-node graph takes 0.22 s.
+
+**Validation on `ring_2exp6`** (QF_LIA, 200 holes; local, `small3`'s
+elaboration limits: 4 isolated workers, 30 s / 5 GB per hole, 600 s per
+proof; `~/exp/egglog-holes/local/fix-ring.sh`, output `*.fix.err`):
+
+| | before (§15) | after |
+|---|---|---|
+| justified / kept | 142 / 58 | **197 / 3** |
+| pass time | 566 s | **91 s** |
+| killed during | snapshot 54, egglog 4 | egglog 3 |
+| phase share: egglog / serialize / index / search | 29.6 / 69.7 (snapshot) / – / 0.7 % | 89.9 / 6.6 / 1.2 / 2.3 % |
+| serialize p50 / p90 / max | 0.48 / 10.9 / 27.5 s | 0.006 / 0.145 / 3.2 s |
+
+The elaborated proof (4 holes left, 172 `poly_simp`, 20 `rare_rewrite`,
+12 `evaluate` steps) re-checks `holey`. The three remaining kills are the
+egglog phase itself (saturation past 30 s), the same holes checking loses.
+Elaboration now costs what checking costs plus a few percent, so the
+"proved & kept" column of §15's 2×2 (207 holes, 198 of them 30 s kills)
+should mostly vanish on the next cluster run (`small4`, same parameters as
+`small3`); what remains for both passes is the egglog-phase losses (memory,
+saturation blow-up), which are the egglog 3.0 question.
+
+The `reconstruction` tests pass against the vendored crate. `cargo build`
+prints four `hiding a lifetime` warnings from the vendored `gj.rs`; they are
+upstream's, untouched.
