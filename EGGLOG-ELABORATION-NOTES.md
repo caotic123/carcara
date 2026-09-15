@@ -880,10 +880,18 @@ granularity (60 s) → `carcara c7cc24a4 elaborate --hole-threads 4
 
 | logic | proofs | ok | holes | justified | kept | elab p50 | elab max | peak mem |
 |---|---|---|---|---|---|---|---|---|
-| QF_LIA | 15 | 14 | 347 | 344 (99.1%) | 3 | 2.1 s | 600 s (timeout) | 3.5 GB |
-| QF_LRA | 15 | 12 | 1,343 | 1,293 (96.3%) | 70 | 13.4 s | 379 s | 12.6 GB |
-| QF_UF | 15 | 13 | 4,689 | 4,400 (93.8%) | 146 | 112 s | 272 s | 11.2 GB |
-| **all** | **45** | **39** | **6,379** | **6,037 (94.6%)** | **219** | | | |
+| QF_LIA | 15 | 14 | 347 | 145 | 3 | 2.1 s | 600 s (timeout) | 3.5 GB |
+| QF_LRA | 15 | 12 | 1,343 | 521 | 70 | 13.4 s | 379 s | 12.6 GB |
+| QF_UF | 15 | 13 | 4,689 | 3,413 | 146 | 112 s | 272 s | 11.2 GB |
+| **all** | **45** | **39** | **6,379** | **4,079 (63.9%)** | **219** | | | |
+
+**Correction (2026-09-15):** the first version of this table claimed 6,037
+justified (94.6%); the analysis script had counted the holes of proofs that
+errored or timed out as justified. `justified` here is strict: holes of
+proofs that finished elaboration and are no longer any trusted step in the
+output (so it also excludes the elaborator's own residual trusted steps,
+which `kept` does not count). The six proofs that produced nothing hold
+1,958 of the 6,379 holes — the strongest argument for keeping partial results.
 
 `ok` = the elaborated proof re-checks (valid or holey). Every `ok` proof's
 reconstructed steps passed the checker; the holes that remain are exactly the
@@ -919,3 +927,43 @@ The six non-`ok` benchmarks are not hole failures:
 
 Time per hole is dominated by the kills: QF_UF's 117 killed holes alone are
 58 CPU-minutes of the run.
+
+---
+
+## 13. Runs `small2` and the partial-result design (2026-09-15)
+
+`small2` = `small` with carcara `a6bf0d00` (a reconstruction the checker
+rejects keeps its hole) and `holes.rare`:
+
+| run | justified | ok | what changed |
+|---|---|---|---|
+| small | 4,079 / 6,379 (63.9%) | 39/45 | |
+| small2 | **4,404 / 6,379 (69.0%)** | **41/45** | `no_op_accs` and `pd_no_op_accs` now `ok`; `pd_not_sc_seen` gets past the up-front check but hits the 600 s cap; `iso_icl850/941` unchanged (cvc5 resolution defect) |
+
+The remaining non-`ok` proofs are exactly the lost-partial-work cases and the
+cvc5 defect, which motivated the next changes (`3ba399fe`):
+
+**`--hole-total-budget MS`** — a per-proof budget for all holes together.
+Workers start no new hole past it, isolated children still running are
+killed at it, and the proof is printed with whatever was justified in time;
+holes never started are logged as `skipped`, holes cut short as `kept`. On the
+43-hole QF_UF proof an 8 s budget returns in 8.1 s with 17 justified, 4 kept,
+22 skipped, and the output re-checks.
+
+**`--hole-check-only`** — the same workers and limits, but each child only
+asks egglog whether the equality holds; nothing is reconstructed or spliced.
+This separates *checking* (the thesis' RQ1 notion) from *elaboration*, which
+is dearer and can fail where checking succeeds: on the 43-hole proof checking
+proves 41, elaboration justifies 40 — the difference is a hole egglog proves
+but the search finds no certificate for.
+
+Per-hole verdicts and timings are logged at `info` (`hole t3: proved in
+0.194s`, `hole t7: justified in 1.2s`, kept/skipped likewise) with a closing
+`hole summary: total= proved|justified= kept= skipped= time=` line; the runner
+reads that line. In every budgeted, isolated or check-only run a prepass
+result is final for its hole — nothing is retried in-process.
+
+`run-holes.sh` now does both passes per proof (check-only, then elaboration),
+each under a 240 s hole budget and a 300 s safety net, cvc5 90 s, final check
+120 s; new keys `upfront`, `chk_*`, `holes_skipped`, `elab_holes_time`.
+Run `small3` is prepared with it.
