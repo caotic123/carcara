@@ -546,6 +546,7 @@ pub fn reconstruct_from_input(
     input: &str,
     rules: parser::Source<'_>,
     options: crate::checker::RunEgglogOptions,
+    check_only: bool,
 ) -> Result<Vec<String>, String> {
     let boundary = format!("{HOLE_INPUT_BOUNDARY}\n");
     let (problem, proof) = input
@@ -567,6 +568,9 @@ pub fn reconstruct_from_input(
         .into_iter()
         .next()
         .ok_or_else(|| "hole input contains no TRUST_THEORY_REWRITE hole".to_owned())?;
+    if check_only {
+        return check_hole(&mut pool, &node, &step, &database, options).map(|()| Vec::new());
+    }
     reconstruct_steps(&mut pool, &node, &step, &database, options)
 }
 
@@ -585,6 +589,8 @@ pub fn reconstruct_in_child(
     rare_file: &Path,
     options: crate::checker::RunEgglogOptions,
     memory_limit_mb: Option<usize>,
+    check_only: bool,
+    deadline: Option<Instant>,
 ) -> Result<Vec<String>, String> {
     let input = hole_input(pool, prelude, node, step)
         .ok_or_else(|| "expected a single-literal clause".to_owned())?;
@@ -600,6 +606,9 @@ pub fn reconstruct_in_child(
     }
     if options.continuous_saturation {
         arguments.push("--continuous-saturation".into());
+    }
+    if check_only {
+        arguments.push("--check-only".into());
     }
     let mut command = match memory_limit_mb {
         // `exec` keeps the child's pid on carcara itself, so killing the pid
@@ -621,6 +630,14 @@ pub fn reconstruct_in_child(
         }
     };
     let started = Instant::now();
+    // The child dies at the earlier of its own budget and the proof's.
+    let own_deadline = options
+        .timeout
+        .and_then(|timeout| started.checked_add(timeout));
+    let kill_at = match (own_deadline, deadline) {
+        (Some(own), Some(all)) => Some(own.min(all)),
+        (own, all) => own.or(all),
+    };
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -660,10 +677,7 @@ pub fn reconstruct_in_child(
         {
             break Some(status);
         }
-        if options
-            .timeout
-            .is_some_and(|timeout| started.elapsed() >= timeout)
-        {
+        if kill_at.is_some_and(|kill_at| Instant::now() >= kill_at) {
             let _ = child.kill();
             let _ = child.wait();
             break None;
@@ -684,10 +698,18 @@ pub fn reconstruct_in_child(
         lines[lines.len().saturating_sub(3)..].join(" | ")
     };
     match status {
-        None => Err(format!(
-            "killed after {:.1}s: hard budget exhausted",
-            started.elapsed().as_secs_f64()
-        )),
+        None => {
+            let by_proof = deadline.is_some_and(|all| own_deadline.is_none_or(|own| all < own));
+            Err(format!(
+                "killed after {:.1}s: {}",
+                started.elapsed().as_secs_f64(),
+                if by_proof {
+                    "the proof's hole budget ran out"
+                } else {
+                    "hard budget exhausted"
+                }
+            ))
+        }
         Some(status) if status.success() => Ok(String::from_utf8_lossy(&stdout)
             .lines()
             .filter(|line| !line.trim().is_empty())
@@ -702,6 +724,28 @@ pub fn reconstruct_in_child(
             )),
         },
     }
+}
+
+/// The egglog phase alone: whether the engine proves the hole's equality
+/// within the budget.  This is the checking half of the evaluation, run under
+/// the same workers and limits as reconstruction so the two are comparable.
+pub fn check_hole(
+    pool: &mut dyn TermPool,
+    node: &crate::ast::Rc<ProofNode>,
+    step: &StepNode,
+    rules: &Rules,
+    options: crate::checker::RunEgglogOptions,
+) -> Result<(), String> {
+    let [conclusion] = step.clause.as_slice() else {
+        return Err(format!(
+            "setup: expected a single-literal clause, found {} literals",
+            step.clause.len()
+        ));
+    };
+    let (result, _) = run_egglog(pool, (conclusion.clone(), node), rules, options);
+    result
+        .map(|_| ())
+        .map_err(|error| format!("egglog check: {error}"))
 }
 
 /// The Alethe steps justifying one `TRUST_THEORY_REWRITE` hole.

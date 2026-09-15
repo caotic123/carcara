@@ -209,6 +209,11 @@ fn elaborate_command(
     let hole_isolate = options.elaboration.hole_isolate;
     let hole_memory_limit = options.elaboration.hole_memory_limit;
     let hole_rare_file = options.input.rare_file.clone().map(PathBuf::from);
+    let hole_total_budget = options
+        .elaboration
+        .hole_total_budget
+        .map(std::time::Duration::from_millis);
+    let hole_check_only = options.elaboration.hole_check_only;
 
     let checker_config = (options.checking, options.tools.clone()).into_config();
     let (elab_config, pipeline) = (options.elaboration, options.tools).into_config();
@@ -218,6 +223,8 @@ fn elaborate_command(
         .hole_isolate(hole_isolate)
         .hole_memory_limit_mb(hole_memory_limit)
         .hole_rare_file(hole_rare_file)
+        .hole_total_budget(hole_total_budget)
+        .hole_check_only(hole_check_only)
         .hole_rewrite_options(hole_rewrite_options);
 
     check_and_elaborate(
@@ -443,7 +450,12 @@ fn reconstruct_hole_command(options: ReconstructHoleOptions) -> CliResult<()> {
         ..carcara::RunEgglogOptions::default()
     };
     let rules = parser::Source::new(std::path::Path::new(&options.rare_file), &rare_text);
-    match carcara::elaborator::rare_hole::reconstruct_from_input(&input, rules, egglog_options) {
+    match carcara::elaborator::rare_hole::reconstruct_from_input(
+        &input,
+        rules,
+        egglog_options,
+        options.check_only,
+    ) {
         Ok(steps) => {
             let mut out = io::stdout().lock();
             for step in steps {

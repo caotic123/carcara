@@ -79,6 +79,9 @@ pub struct ReconstructHoleOptions {
 
     #[clap(long = "continuous-saturation")]
     pub continuous_saturation: bool,
+
+    #[clap(long)]
+    pub check_only: bool,
 }
 
 #[derive(Args)]
@@ -283,6 +286,19 @@ pub struct ElaborationOptions {
     /// roughly 700 MB kill every child before it starts.
     #[clap(long, value_name = "MEGABYTES", requires = "hole_isolate")]
     pub hole_memory_limit: Option<usize>,
+
+    /// Wall-clock budget, in milliseconds, for all of a proof's holes together.
+    ///
+    /// When it runs out, holes not yet started are kept as they were and
+    /// isolated workers still running are killed, and the proof is printed with
+    /// whatever was justified in time.
+    #[clap(long, value_name = "MILLISECONDS")]
+    pub hole_total_budget: Option<u64>,
+
+    /// Only check each hole with egglog, without reconstructing or changing
+    /// anything: the per-hole verdicts and a summary go to the log at `info`.
+    #[clap(long)]
+    pub hole_check_only: bool,
 
     /// The pipeline of elaboration passes to use.
     #[clap(

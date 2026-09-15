@@ -72,6 +72,17 @@ pub struct Config {
     /// The RARE file's path, which a child process needs to load the rules.
     hole_rare_file: Option<PathBuf>,
 
+    /// Wall-clock budget for all of a proof's holes together.  Holes not
+    /// started when it runs out are kept as they were and isolated children
+    /// still running are killed, so the proof is always finished with
+    /// whatever was justified in time rather than lost to an outer timeout.
+    hole_total_budget: Option<Duration>,
+
+    /// Only ask egglog whether each hole's equality holds, reconstructing and
+    /// splicing nothing: the checking half of the evaluation, under the same
+    /// workers and limits as elaboration so the two compare.
+    hole_check_only: bool,
+
     /// Options for the egglog runs behind `elaborate_hole_rewrites`.
     hole_rewrite_options: RunEgglogOptions,
 }
@@ -249,7 +260,7 @@ impl<'e> Elaborator<'e> {
     fn reconstruct_holes_in_parallel(
         &mut self,
         proof: &ProofNodeForest,
-    ) -> HashMap<String, Result<Vec<String>, String>> {
+    ) -> HashMap<String, (Result<Vec<String>, String>, Duration)> {
         let holes = rare_hole::theory_rewrite_holes(proof);
         if holes.is_empty() {
             return HashMap::new();
@@ -259,6 +270,11 @@ impl<'e> Elaborator<'e> {
         };
         let options = self.config.hole_rewrite_options;
         let isolate = self.config.hole_isolate;
+        let check_only = self.config.hole_check_only;
+        let deadline = self
+            .config
+            .hole_total_budget
+            .and_then(|budget| Instant::now().checked_add(budget));
         let memory_limit = self.config.hole_memory_limit_mb;
         let rare_file = self.config.hole_rare_file.clone();
         let prelude = &self.problem.prelude;
@@ -271,10 +287,16 @@ impl<'e> Elaborator<'e> {
                 scope.spawn(|| {
                     let mut pool = crate::ast::pool::PrimitivePool::new();
                     loop {
+                        // Past the proof's budget no further hole is started;
+                        // the ones never started are recorded as skipped below.
+                        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                            return;
+                        }
                         let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let Some((node, step)) = holes.get(index) else {
                             return;
                         };
+                        let started = Instant::now();
                         let result = if isolate {
                             match rare_file.as_deref() {
                                 Some(path) => rare_hole::reconstruct_in_child(
@@ -285,20 +307,37 @@ impl<'e> Elaborator<'e> {
                                     path,
                                     options,
                                     memory_limit,
+                                    check_only,
+                                    deadline,
                                 ),
                                 None => {
                                     Err("isolating holes needs the RARE file's path".to_owned())
                                 }
                             }
+                        } else if check_only {
+                            rare_hole::check_hole(&mut pool, node, step, rules, options)
+                                .map(|()| Vec::new())
                         } else {
                             rare_hole::reconstruct_steps(&mut pool, node, step, rules, options)
                         };
-                        results.lock().unwrap().insert(step.id.clone(), result);
+                        results
+                            .lock()
+                            .unwrap()
+                            .insert(step.id.clone(), (result, started.elapsed()));
                     }
                 });
             }
         });
-        results.into_inner().unwrap()
+        let mut results = results.into_inner().unwrap();
+        for (_, step) in &holes {
+            results.entry(step.id.clone()).or_insert_with(|| {
+                (
+                    Err("skipped: the proof's hole budget ran out".to_owned()),
+                    Duration::ZERO,
+                )
+            });
+        }
+        results
     }
 
     fn elaborate_hole(
@@ -313,38 +352,79 @@ impl<'e> Elaborator<'e> {
 
         // Reconstructing a hole is the whole cost and shares nothing, so the
         // holes are done together up front and `mutate` below only splices the
-        // finished text in.  A hole missing from the map (its worker failed)
-        // falls through to the sequential path, which reports the error at the
-        // right step.
-        let mut reconstructed =
-            if rare_holes && (self.config.hole_threads > 1 || self.config.hole_isolate) {
-                self.reconstruct_holes_in_parallel(&proof)
-            } else {
-                HashMap::new()
-            };
+        // finished text in.
+        let prepass = rare_holes
+            && (self.config.hole_threads > 1
+                || self.config.hole_isolate
+                || self.config.hole_check_only
+                || self.config.hole_total_budget.is_some());
+        let prepass_started = Instant::now();
+        let mut reconstructed = if prepass {
+            self.reconstruct_holes_in_parallel(&proof)
+        } else {
+            HashMap::new()
+        };
+        let prepass_time = prepass_started.elapsed();
+        // A prepass result is final for its hole in every mode but the plain
+        // multi-threaded one: nothing is retried in-process, since that would
+        // re-run exactly the work the budget or the child gave up on.  In the
+        // plain mode a hole missing from the map falls through to the
+        // sequential path, which reports the error at the right step.
+        let final_results = self.config.hole_isolate
+            || self.config.hole_check_only
+            || self.config.hole_total_budget.is_some();
+        let check_only = self.config.hole_check_only;
+        let (mut total, mut done, mut kept, mut skipped) = (0usize, 0usize, 0usize, 0usize);
 
-        proof.mutate(|_, node, _| match node.as_ref() {
+        let result = proof.mutate(|_, node, _| match node.as_ref() {
             ProofNode::Step(s) if rare_holes && rare_hole::is_theory_rewrite_hole(s) => {
+                total += 1;
                 match reconstructed.remove(&s.id) {
-                    // Isolation makes the pass best-effort for the whole hole:
-                    // a child that fails, and a reconstruction the checker
-                    // then rejects, both leave the hole as it was, so one bad
-                    // hole cannot cost the rest of the proof.
-                    Some(Ok(steps)) if self.config.hole_isolate => {
+                    // Checking only: egglog's verdict is recorded and the hole
+                    // stays as it was.
+                    Some((Ok(_), elapsed)) if check_only => {
+                        done += 1;
+                        log::info!("hole {}: proved in {:.3}s", s.id, elapsed.as_secs_f64());
+                        Ok(node.clone())
+                    }
+                    // Final results make the pass best-effort for the whole
+                    // hole: a child that fails, and a reconstruction the
+                    // checker then rejects, both leave the hole as it was, so
+                    // one bad hole cannot cost the rest of the proof.
+                    Some((Ok(steps), elapsed)) if final_results => {
                         match rare_hole::insert_steps(self, s, steps) {
-                            Ok(inserted) => Ok(inserted),
+                            Ok(inserted) => {
+                                done += 1;
+                                log::info!(
+                                    "hole {}: justified in {:.3}s",
+                                    s.id,
+                                    elapsed.as_secs_f64()
+                                );
+                                Ok(inserted)
+                            }
                             Err(error) => {
+                                kept += 1;
                                 log::warn!("hole {}: kept as trusted: {error}", s.id);
                                 Ok(node.clone())
                             }
                         }
                     }
-                    Some(Ok(steps)) => rare_hole::insert_steps(self, s, steps).map_err(|e| e.at(s)),
-                    Some(Err(reason)) if self.config.hole_isolate => {
-                        log::warn!("hole {}: kept as trusted: {reason}", s.id);
+                    Some((Ok(steps), _)) => {
+                        rare_hole::insert_steps(self, s, steps).map_err(|e| e.at(s))
+                    }
+                    Some((Err(reason), _)) if final_results => {
+                        if reason.starts_with("skipped") {
+                            skipped += 1;
+                            log::info!("hole {}: {reason}", s.id);
+                        } else {
+                            kept += 1;
+                            log::warn!("hole {}: kept as trusted: {reason}", s.id);
+                        }
                         Ok(node.clone())
                     }
-                    Some(Err(_)) | None => rare_hole::elaborate(self, node, s).map_err(|e| e.at(s)),
+                    Some((Err(_), _)) | None => {
+                        rare_hole::elaborate(self, node, s).map_err(|e| e.at(s))
+                    }
                 }
             }
             ProofNode::Step(s)
@@ -357,7 +437,15 @@ impl<'e> Elaborator<'e> {
                 hole::lia_generic(self, s).map_err(|e| e.at(s))
             }
             _ => Ok(node.clone()),
-        })
+        });
+        if prepass {
+            log::info!(
+                "hole summary: total={total} {}={done} kept={kept} skipped={skipped} time={:.3}s",
+                if check_only { "proved" } else { "justified" },
+                prepass_time.as_secs_f64()
+            );
+        }
+        result
     }
 
     fn elaborate_local(
