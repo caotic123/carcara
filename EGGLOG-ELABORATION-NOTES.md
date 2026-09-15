@@ -967,3 +967,49 @@ result is final for its hole — nothing is retried in-process.
 each under a 240 s hole budget and a 300 s safety net, cvc5 90 s, final check
 120 s; new keys `upfront`, `chk_*`, `holes_skipped`, `elab_holes_time`.
 Run `small3` is prepared with it.
+
+---
+
+## 14. Run `small3`: checking vs elaboration, partial results (2026-09-15)
+
+Same 45 benchmarks; cvc5 60 s; two passes per proof with carcara `3ba399fe`,
+four isolated workers, 30 s / 5 GB per hole, **600 s hole budget per pass**;
+final `check` of the elaborated proof. Whole run ~30 minutes wall (the two
+600 s proofs bound it). Results in `~/exp/results/egglog-holes/small3/`.
+
+Two QF_UF proofs (`iso_icl850`, `iso_icl941`, 987 holes) still fail the
+up-front check on cvc5-main's resolution defect; "attempted" below excludes
+them. Every other proof is `ok` (43/45) — the two that lost everything to the
+600 s cap in `small2` (`ring_2exp6`, `pd_not_sc_seen`) now return partial
+results.
+
+| logic | proofs ok | holes attempted | **checking: proved** | c-kept | **elaboration: justified** | kept | elab p50 |
+|---|---|---|---|---|---|---|---|
+| QF_LIA | 15/15 | 347 | 341 (98.3%) | 6 | 276 (79.5%) | 71 | 1.0 s |
+| QF_LRA | 15/15 | 1,343 | 1,199 (89.3%) | 144 | 1,133 (84.4%) | 208 | 30 s |
+| QF_UF | 13/15 | 3,702 | 3,634 (98.2%) | 68 | 3,413 (92.2%) | 146 | 111 s |
+| **all** | **43/45** | **5,392** | **5,174 (96.0%)** | **218** | **4,822 (89.4%)** | **425** | |
+
+`justified` is strict (no trusted step left for the hole); over all 6,379
+holes it is 75.6%, up from 69.0% in `small2`. `skipped` is 0 everywhere: with
+four workers the 600 s budget was never reached before every hole had been
+started; the holes cut short at the budget are the 5 "proof's hole budget ran
+out" kills (3 QF_LIA, 2 QF_LRA).
+
+**What separating the passes shows.** Checking proves 352 more holes than
+elaboration justifies (5,174 vs 4,822, 6.8% of the proved). The gap is almost
+entirely time, not logic: reconstruction adds the e-graph snapshot and the
+certificate search on top of egglog's run, and pushes holes that egglog alone
+proves inside 30 s past the same bound. The clearest case is
+`ring_2exp6_6vars` (QF_LIA, 199 holes): checking proves 195 in 108 s total;
+elaboration justifies 131 in the full 600 s, 65 of its holes killed at 30 s.
+The logic-level part of the gap is small: 6 "no certificate found" (egglog
+proved it, no replayable chain), 2 reconstructions the checker rejected.
+
+Kept-hole reasons across both passes: killed at the 30 s bound 480, memory
+limit 126, egglog could not prove 24, no certificate 6, checker rejected 2,
+proof budget 5. Peak memory 12.9 GB (QF_LRA), against the 24 GB job limit.
+
+Against the thesis' RQ1 (single holes, 600 s / 8 GB, 0.5% sample): this
+check pass, at 30 s / 5 GB with four workers, proves 96.0% of the attempted
+holes, in the same range as the thesis' 90–99% per logic.
