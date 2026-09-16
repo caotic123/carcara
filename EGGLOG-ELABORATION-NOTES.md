@@ -1321,3 +1321,34 @@ Worker errors, all reproducible offline:
    checking too.
 4. The 24 GB job limit was hit by 5 tasks before cvc5 finished; either
    raise it or accept those as cvc5 failures.
+
+### 19.1 Two corrections found while writing the report (2026-09-16)
+
+**"Justified" overstates.** `QF_UF_h_b05_ab_reg_max` (2018-Goel-hwbench):
+25 holes, summary says 22 justified, 3 kept, but the elaborated proof has
+4 `hole` steps. Hole t133, `(= (and X true) X)`, is emitted as a subproof
+whose only step is `:rule hole :args ("TRUST_THEORY_REWRITE" "gen-14")`:
+the certificate used one of the unconditional egglog rewrites of the
+generated program that is not a named RARE rule (the n-ary `and`/`or`
+normalisations; `rules_from_generated_program` names them `gen-N`), and
+the emitter has no Alethe step for it, so it emits a hole. Counting the
+hole steps left in the emitted proofs minus kept minus skipped gives the
+residual: QF_UF 71,009 (3.1% of the closed holes), QF_LIA 1,992, QF_LRA
+4,457. The honest elaboration rate over attempted holes is therefore
+95.5% / 98.3% / 93.9% (checking: 98.6 / 98.6 / 95.0). The report and
+`make-report.py` count these as "closed with a gen hole".
+
+**Time/memory kills are largely unreachable goals.** The three kept holes
+of the same proof are `(= (or X true) true)`, `(= (and true true true X) X)`
+and `(= (= false X) (not X))`; two died at the memory limit. Both
+identities, run as isolated holes, blow 3 GB in ~10 s. `holes.rare` has 27
+`bool-*` rules and no `bool-or-true`, `bool-and-true` or flattening, so
+the goal is unreachable, and an unreachable goal triggers the quadratic
+pair-equality growth described for the beta-reduction holes. So the 70k
+kills per pass are not evidence of hard holes; a to-be-measured share are
+rule-coverage gaps. Two cheap checks: add the missing Boolean rules and
+re-run the kept holes of a sample; make an unreachable goal fail fast
+(bound the pair seeding or check the goal before the open ruleset).
+
+Report: `~/exp/egglog-holes/report/report.pdf` (`make-report.py` renders
+every table and plot from `results.json.gz`).
