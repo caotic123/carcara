@@ -1477,3 +1477,55 @@ and the shared e-graph turns every unreachable goal into a dead batch.
 The same losses are attacked directly by making an unreachable goal fail
 fast (§19.1) and by adding the missing Boolean rules; after that, overlap
 batching may be worth re-measuring as a pure hash-consing gain.
+
+### Fail-fast attempt 1: seed conditional rules' premises from the goal only (commit `29e4f7f3`)
+
+`--rare-seed-from-goal` (`--seed-from-goal` for the hole worker): the
+premise instances of conditional RARE rules (`create_avaliable_premise`,
+e.g. `((Avaliable i1) (Avaliable j1)) → (Mk (@= i1 j1))` for
+`array-read-over-write2`'s premise) range over an `Origin` relation that
+holds the goal's sides, the proof premises and their subterms, asserted
+per goal and never propagated, instead of over every available term.
+Check-only pass on the ten sample proofs (`scratchpad batch/seed/`):
+
+| proof | per hole (s) | seed-from-goal (s) | verdicts |
+|---|---|---|---|
+| c_inference | 131 | 101 | same |
+| RwMutex RF-09 | 471 | 459 | same |
+| bofill ex4880 | 437 | 377 | same |
+| MULTIPLIER_3 | 460 | 518 | same |
+| FISCHER9 | 193 | 125 | same |
+| cut_lemma_01_008 | 704 | 712 | same |
+| ring_2exp10 | 269 | 299 | same |
+| vpm2-0 | 246 | 240 | same |
+| clocksynchro_3clocks | 480 | 426 | 6 fewer proved |
+| tgc_io-safe-6 | 373 | 307 | 3 fewer proved |
+
+5% less time overall, up to 35% on the proofs with many equalities in
+their goals, but 9 provable holes lost: linear normalizations such as
+`(<= t 0) = (>= (- t) 0)`, proved in 0.6 s by the baseline through a
+conditional rule whose premise is instantiated over a term the
+polynomial normalizer produces; with the seeds restricted that path is
+cut, the goal is unreachable, and it then dies at the memory limit.  Not
+verdict-preserving, so not for the next run as it stands.
+
+**The blow-up's real driver is sort-blind rule application.**  With the
+seeds bounded, the debug trace of `(or x true) = true` still shows
+`arith-eq-elim` firing 12k times on a goal whose only equality is over an
+uninterpreted sort, `bool-not-eq-elim` turning `(not (= x y))` into new
+equalities `(= x (not y))`, and the arithmetic normalizers rewriting the
+resulting nonsense `>=` terms, round after round.  The encoding has one
+untyped `Term` sort; the Int/Real/Bool parameter sorts of the RARE rules
+are never checked.  With the arith/bv/str/array/set/seq rules removed
+from the file (68 rules left) both Boolean goals fail in 0.19 s.  The
+fail-fast to build is therefore **sort guards**: a sort relation on
+classes, seeded from Carcara's sorts for the goal's subterms and
+propagated by operator heads and declared function result sorts
+(`application_result_sort`), with a guard premise on every rule parameter
+declared Int, Real or Bool (`TypeParameter::sort`).  About a day; it also
+removes the ill-sorted terms from every reachable goal's saturation.
+
+The 8 GB shared-batch run was stopped after its first result
+(c_inference, batches of 10, 300 s budget: 146 s against 131 s) with
+FISCHER9 at 146 good and 36 dead batches; more memory only lets a doomed
+batch take longer to die.
