@@ -332,6 +332,18 @@ pub struct ElaborationOptions {
     #[clap(long, requires = "hole_batch")]
     pub hole_batch_sequential: bool,
 
+    /// With `--hole-batch`, group holes by the compound subterms they share
+    /// instead of by proof order: a hole joins the open batch it overlaps
+    /// most, and a batch closes at the batch size or at
+    /// `--hole-batch-terms` distinct subterms.
+    #[clap(long, requires = "hole_batch")]
+    pub hole_batch_by_overlap: bool,
+
+    /// With `--hole-batch-by-overlap`, the most distinct compound subterms a
+    /// batch may hold.
+    #[clap(long, value_name = "TERMS", requires = "hole_batch_by_overlap")]
+    pub hole_batch_terms: Option<usize>,
+
     /// The pipeline of elaboration passes to use.
     #[clap(
         value_enum,

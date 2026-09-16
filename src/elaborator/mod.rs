@@ -99,6 +99,16 @@ pub struct Config {
     /// rule database, each in its own e-graph, instead of all in one.
     hole_batch_sequential: bool,
 
+    /// Group holes into batches by the subterms they share rather than by
+    /// proof order: a hole joins the open batch it overlaps most, and a
+    /// batch closes at `hole_batch` holes or at `hole_batch_term_cap`
+    /// distinct subterms.
+    hole_batch_overlap: bool,
+
+    /// With `hole_batch_overlap`, the most distinct compound subterms a
+    /// batch may hold (0: no cap).
+    hole_batch_term_cap: usize,
+
     /// Options for the egglog runs behind `elaborate_hole_rewrites`.
     hole_rewrite_options: RunEgglogOptions,
 }
@@ -137,6 +147,124 @@ pub enum ElaborationPass {
     Reordering,
     /// Elaborates `sat_refutation` steps using an external SAT solver.
     SatRefutation,
+}
+
+/// Groups holes into batches, as lists of indices into `holes`.  Only holes
+/// under the same assumptions share a batch, so a batch has one premise
+/// context.  In proof order, a batch is the next `batch_size` such holes.
+/// By overlap, each hole joins the open batch of its context that shares
+/// the most compound subterms with it (none: a new batch), and a batch
+/// closes at `batch_size` holes or when adding a hole would exceed
+/// `term_cap` distinct compound subterms (0: no cap).  Terms are pooled,
+/// so pointer identity is structural identity.
+fn group_holes_into_batches(
+    holes: &[(Rc<ProofNode>, StepNode)],
+    batch_size: usize,
+    by_overlap: bool,
+    term_cap: usize,
+) -> Vec<Vec<usize>> {
+    use std::collections::HashSet;
+    /// Open batches kept per context; the oldest is closed past this.
+    const OPEN_PER_CONTEXT: usize = 16;
+
+    let context_of = |node: &Rc<ProofNode>| {
+        let mut key: Vec<usize> = node
+            .get_assumptions()
+            .iter()
+            .map(|assumption| Rc::as_ptr(assumption) as *const () as usize)
+            .collect();
+        key.sort_unstable();
+        key
+    };
+    let mut batches: Vec<Vec<usize>> = Vec::new();
+
+    if !by_overlap {
+        let mut open: HashMap<Vec<usize>, Vec<usize>> = HashMap::new();
+        for (index, (node, _)) in holes.iter().enumerate() {
+            let batch = open.entry(context_of(node)).or_default();
+            batch.push(index);
+            if batch.len() >= batch_size {
+                batches.push(std::mem::take(batch));
+            }
+        }
+        batches.extend(open.into_values().filter(|batch| !batch.is_empty()));
+        return batches;
+    }
+
+    let subterms_of = |step: &StepNode| -> HashSet<usize> {
+        step.clause
+            .iter()
+            .flat_map(crate::rare::util::collect_subterms)
+            .filter(|term| !matches!(term.as_ref(), Term::Var(..) | Term::Const(_)))
+            .map(|term| Rc::as_ptr(&term) as *const () as usize)
+            .collect()
+    };
+    struct Open {
+        members: Vec<usize>,
+        terms: HashSet<usize>,
+    }
+    let mut open: HashMap<Vec<usize>, Vec<Open>> = HashMap::new();
+    let (mut sum_terms, mut sum_holes) = (0usize, 0usize);
+    let mut close = |batch: Open, batches: &mut Vec<Vec<usize>>| {
+        sum_terms += batch.terms.len();
+        sum_holes += batch.members.len();
+        batches.push(batch.members);
+    };
+    for (index, (node, step)) in holes.iter().enumerate() {
+        let terms = subterms_of(step);
+        let candidates = open.entry(context_of(node)).or_default();
+        let best = candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, batch)| {
+                batch.members.len() < batch_size
+                    && (term_cap == 0 || batch.terms.union(&terms).count() <= term_cap)
+            })
+            .map(|(i, batch)| (batch.terms.intersection(&terms).count(), i))
+            .filter(|(shared, _)| *shared > 0)
+            .max_by_key(|(shared, i)| (*shared, std::cmp::Reverse(*i)));
+        match best {
+            Some((_, i)) => {
+                let batch = &mut candidates[i];
+                batch.members.push(index);
+                batch.terms.extend(terms);
+                if batch.members.len() >= batch_size
+                    || (term_cap > 0 && batch.terms.len() >= term_cap)
+                {
+                    let batch = candidates.remove(i);
+                    close(batch, &mut batches);
+                }
+            }
+            None => {
+                if candidates.len() >= OPEN_PER_CONTEXT {
+                    let oldest = candidates.remove(0);
+                    close(oldest, &mut batches);
+                }
+                candidates.push(Open { members: vec![index], terms });
+            }
+        }
+    }
+    for candidates in open.into_values() {
+        for batch in candidates {
+            if !batch.members.is_empty() {
+                close(batch, &mut batches);
+            }
+        }
+    }
+    let single: usize = holes
+        .iter()
+        .map(|(_, step)| subterms_of(step).len())
+        .sum();
+    log::info!(
+        "batches by overlap: {} batches for {} holes, {} distinct compound subterms in the batches against {} summed over the holes (sharing {:.2}), mean {:.1} per batch",
+        batches.len(),
+        sum_holes,
+        sum_terms,
+        single,
+        if single > 0 { sum_terms as f64 / single as f64 } else { 1.0 },
+        if batches.is_empty() { 0.0 } else { sum_terms as f64 / batches.len() as f64 }
+    );
+    batches
 }
 
 /// A proof elaborator for Alethe.
@@ -367,6 +495,17 @@ impl<'e> Elaborator<'e> {
         results
     }
 
+    /// See [`group_holes_into_batches`].
+    #[cfg(test)]
+    pub(crate) fn batches_for_test(
+        holes: &[(Rc<ProofNode>, StepNode)],
+        batch_size: usize,
+        by_overlap: bool,
+        term_cap: usize,
+    ) -> Vec<Vec<usize>> {
+        group_holes_into_batches(holes, batch_size, by_overlap, term_cap)
+    }
+
     /// The batched checking pass: holes are grouped, in proof order, into
     /// batches of `hole_batch` that share their assumptions, and each batch
     /// is saturated in one e-graph (one child with `hole_isolate`).  A batch
@@ -413,24 +552,12 @@ impl<'e> Elaborator<'e> {
             }
         };
 
-        // Batches: holes in proof order, split by their assumption set so a
-        // batch shares one premise context, cut at the batch size.
-        let mut open: HashMap<Vec<usize>, Vec<usize>> = HashMap::new();
-        let mut batches: Vec<Vec<usize>> = Vec::new();
-        for (index, (node, _)) in holes.iter().enumerate() {
-            let mut key: Vec<usize> = node
-                .get_assumptions()
-                .iter()
-                .map(|assumption| Rc::as_ptr(assumption) as *const () as usize)
-                .collect();
-            key.sort_unstable();
-            let batch = open.entry(key).or_default();
-            batch.push(index);
-            if batch.len() >= batch_size {
-                batches.push(std::mem::take(batch));
-            }
-        }
-        batches.extend(open.into_values().filter(|batch| !batch.is_empty()));
+        let batches = group_holes_into_batches(
+            holes,
+            batch_size,
+            self.config.hole_batch_overlap,
+            self.config.hole_batch_term_cap,
+        );
         let workers = self.config.hole_threads.min(batches.len()).max(1);
         let next = std::sync::atomic::AtomicUsize::new(0);
 
