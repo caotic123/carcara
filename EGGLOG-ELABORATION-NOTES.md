@@ -1110,3 +1110,43 @@ saturation blow-up), which are the egglog 3.0 question.
 The `reconstruction` tests pass against the vendored crate. `cargo build`
 prints four `hiding a lifetime` warnings from the vendored `gj.rs`; they are
 upstream's, untouched.
+
+## 17. Run `small4`: the serializer fix on the cluster (2026-09-15)
+
+Same sample, parameters and runner as `small3` (§14); carcara `e7f7b048`
+(vendored egglog 0.4.0 with the one-extractor serializer, §16). Results in
+`~/exp/results/egglog-holes/small4`; 16 min wall for the whole run. Checking
+is unchanged by the fix and reproduced exactly (5,174 proved, same kept
+reasons); elaboration:
+
+| logic | holes | proved | justified small3 → **small4** | kept small3 → small4 | elab max / proof small3 → small4 |
+|---|---|---|---|---|---|
+| QF_LIA | 347 | 341 | 276 → **341** | 71 → 6 | 600 s → 115 s |
+| QF_LRA | 1,343 | 1,199 | 1,133 → **1,190** | 208 → 151 | 600 s → 469 s |
+| QF_UF | 4,689 | 3,634 | 3,413 → **3,489** | 146 → 70 | 271 s → 162 s |
+| all | 6,379 | 5,174 | 4,822 → **5,020** | 425 → 227 | |
+
+Of the 5,392 holes the passes attempted (two QF_UF proofs still fail upfront,
+987 holes, as before): checking proves 96.0%, elaboration now justifies
+**93.1%** (was 89.4%); 43/45 proofs `ok`. No proof hit the 600 s budget in
+either pass (`skipped=0`, no proof-budget kills).
+
+Per hole (§15's 2×2), 5,389 holes seen by both passes:
+
+| | elaboration justified | elaboration kept |
+|---|---|---|
+| **checking proved** | 5,162 (was 4,964) | **9** (was 207) |
+| checking did not prove | 0 | 218 |
+
+The 9: 6 no certificate, 2 checker-rejected, 1 killed at 30 s (QF_UF, in
+the search). The 198 snapshot-time losses are gone. Elaboration now costs
+1.15–1.33x checking at the median and ≤1.45x at p90 (was ~10x at p90 in the
+arithmetic logics); per finished hole the phases are egglog 74–90%,
+serialize 5–11%, search 4–12%, index ≤2.4%.
+
+What remains is the same in both passes and is all the egglog phase:
+killed at 30 s 140/144 (chk/elab), memory limit 66/63, egglog could not
+prove 12, i.e. saturation that blows up inside one egglog iteration
+(QF_LRA: 99 of its 144 egglog-phase kills). That is the egglog 3.0 question
+(§9, §15): a scheduler-bounded saturation and smaller e-graphs, not anything
+on the reconstruction side.
