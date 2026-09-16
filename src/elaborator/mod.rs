@@ -72,11 +72,13 @@ pub struct Config {
     /// The RARE file's path, which a child process needs to load the rules.
     hole_rare_file: Option<PathBuf>,
 
-    /// Wall-clock budget for all of a proof's holes together.  Holes not
-    /// started when it runs out are kept as they were and isolated children
-    /// still running are killed, so the proof is always finished with
-    /// whatever was justified in time rather than lost to an outer timeout.
-    hole_total_budget: Option<Duration>,
+    /// Wall-clock deadline for the proof's holes, set by the caller from
+    /// whatever budget it counts (the CLI counts from its start, parsing and
+    /// checking included).  Holes not started when it passes are kept as
+    /// they were and isolated children still running are killed, so the
+    /// proof is always finished with whatever was justified in time rather
+    /// than lost to an outer timeout.
+    hole_deadline: Option<Instant>,
 
     /// Only ask egglog whether each hole's equality holds, reconstructing and
     /// splicing nothing: the checking half of the evaluation, under the same
@@ -271,10 +273,7 @@ impl<'e> Elaborator<'e> {
         let options = self.config.hole_rewrite_options;
         let isolate = self.config.hole_isolate;
         let check_only = self.config.hole_check_only;
-        let deadline = self
-            .config
-            .hole_total_budget
-            .and_then(|budget| Instant::now().checked_add(budget));
+        let deadline = self.config.hole_deadline;
         let memory_limit = self.config.hole_memory_limit_mb;
         let rare_file = self.config.hole_rare_file.clone();
         let prelude = &self.problem.prelude;
@@ -357,7 +356,7 @@ impl<'e> Elaborator<'e> {
             && (self.config.hole_threads > 1
                 || self.config.hole_isolate
                 || self.config.hole_check_only
-                || self.config.hole_total_budget.is_some());
+                || self.config.hole_deadline.is_some());
         let prepass_started = Instant::now();
         let mut reconstructed = if prepass {
             self.reconstruct_holes_in_parallel(&proof)
@@ -372,7 +371,7 @@ impl<'e> Elaborator<'e> {
         // sequential path, which reports the error at the right step.
         let final_results = self.config.hole_isolate
             || self.config.hole_check_only
-            || self.config.hole_total_budget.is_some();
+            || self.config.hole_deadline.is_some();
         let check_only = self.config.hole_check_only;
         let (mut total, mut done, mut kept, mut skipped) = (0usize, 0usize, 0usize, 0usize);
 

@@ -287,7 +287,9 @@ pub struct ElaborationOptions {
     #[clap(long, value_name = "MEGABYTES", requires = "hole_isolate")]
     pub hole_memory_limit: Option<usize>,
 
-    /// Wall-clock budget, in milliseconds, for all of a proof's holes together.
+    /// Wall-clock budget, in milliseconds, for the whole run: it counts from
+    /// the start, so parsing and checking the proof's other steps come out
+    /// of it too.
     ///
     /// When it runs out, holes not yet started are kept as they were and
     /// isolated workers still running are killed, and the proof is printed with

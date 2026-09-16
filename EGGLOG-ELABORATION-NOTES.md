@@ -1150,3 +1150,36 @@ prove 12, i.e. saturation that blows up inside one egglog iteration
 (QF_LRA: 99 of its 144 egglog-phase kills). That is the egglog 3.0 question
 (§9, §15): a scheduler-bounded saturation and smaller e-graphs, not anything
 on the reconstruction side.
+
+## 18. The full run: design (2026-09-15)
+
+Every unsat-status benchmark of QF_UF, QF_LIA and QF_LRA — the alethe-core
+sets (`benchmark_set_unsat_<LOGIC>`, SMT-LIB 2025 catalog): 4,361 + 4,748 +
+703 = **9,812 benchmarks**, copied to `~/exp/egglog-holes/sets/` from the
+alethe-core task list. Runner `run-holes.sh` (per-pass parameters), submit
+script run `full`:
+
+| stage | limit |
+|---|---|
+| cvc5 solve + Alethe proof (theory-rewrite granularity) | `--tlimit` 60 s, external kill 75 s |
+| counts as unsat only if the proof is complete | exit 0, last step `(cl)`, closing `)` printed (`proof_complete`) |
+| checking pass (4 isolated workers) | **600 s for the whole pass**, 30 s and 5 GB per hole |
+| elaboration pass (4 isolated workers) | **900 s for the whole pass**, 45 s and 5 GB per hole |
+| re-check of the elaborated proof | 180 s |
+| SLURM: quad, `-j 2`, 4 cpus, 24,000 MB, wall | 2,000 s |
+
+"For the whole pass" is now literal: `--hole-total-budget` is a deadline
+counted from the CLI's start (`elaborate_command` takes the clock before
+parsing), so parsing and checking the non-hole steps come out of the same
+budget; a 5 s budget on `ring_2exp6` ends the run at 5.02 s wall with
+25 proved, 4 kept, 171 skipped. The external `timeout` per pass (660 s /
+990 s) is only a safety net.
+
+Expected yield, from the alethe-core cvc5 run (120 s `tlimit`, dsl-rewrite
+granularity) restricted to proofs delivered within 60 s: QF_UF 4,245,
+QF_LIA 2,526, QF_LRA 499 — about **7,270 proofs** (74%), the rest
+sat/unknown/timeouts costing ≤ 75 s each. Proof sizes are much larger than
+the small samples' (QF_UF p50 18.6k steps, p90 136k), so the pass budgets
+will bind often. Wall-time estimate on 48 slots (24 nodes × 2): 11 h at a
+250 s mean per proof task, 26 h at 600 s, hard cap 84 h if every proof task
+ran to its 2,000 s limit.

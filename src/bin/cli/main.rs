@@ -192,6 +192,9 @@ fn elaborate_command(
     ast::Proof,
     ast::pool::PrimitivePool,
 )> {
+    // A hole budget counts from here: parsing and checking the proof's other
+    // steps come out of it, so the whole run stays within the budget.
+    let started = std::time::Instant::now();
     let instance = get_instance(&options.input)?;
 
     // The RARE hole elaboration reuses the checking options' egglog settings.
@@ -209,10 +212,10 @@ fn elaborate_command(
     let hole_isolate = options.elaboration.hole_isolate;
     let hole_memory_limit = options.elaboration.hole_memory_limit;
     let hole_rare_file = options.input.rare_file.clone().map(PathBuf::from);
-    let hole_total_budget = options
+    let hole_deadline = options
         .elaboration
         .hole_total_budget
-        .map(std::time::Duration::from_millis);
+        .map(|millis| started + std::time::Duration::from_millis(millis));
     let hole_check_only = options.elaboration.hole_check_only;
 
     let checker_config = (options.checking, options.tools.clone()).into_config();
@@ -223,7 +226,7 @@ fn elaborate_command(
         .hole_isolate(hole_isolate)
         .hole_memory_limit_mb(hole_memory_limit)
         .hole_rare_file(hole_rare_file)
-        .hole_total_budget(hole_total_budget)
+        .hole_deadline(hole_deadline)
         .hole_check_only(hole_check_only)
         .hole_rewrite_options(hole_rewrite_options);
 
