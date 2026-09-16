@@ -93,6 +93,13 @@ pub struct RunEgglogOptions {
 
     /// Print the generated egglog program for each checked proof step.
     pub print_egglog: bool,
+
+    /// Instantiate the premises of conditional RARE rules only over the
+    /// subterms of the goal and of the proof's premises, not over every
+    /// term the rewrites produce.  Bounds the premise instances by the
+    /// goal's size, so an unreachable goal fails fast instead of growing the
+    /// e-graph quadratically until the budget kills it.
+    pub seed_from_goal: bool,
 }
 
 impl Default for RunEgglogOptions {
@@ -102,6 +109,7 @@ impl Default for RunEgglogOptions {
             continuous_saturation: false,
             timeout: None,
             print_egglog: false,
+            seed_from_goal: false,
         }
     }
 }

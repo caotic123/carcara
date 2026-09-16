@@ -93,6 +93,10 @@ pub struct ReconstructHoleOptions {
     /// reached.
     #[clap(long, requires = "batch")]
     pub batch_sequential: bool,
+
+    /// See `--rare-seed-from-goal`.
+    #[clap(long)]
+    pub seed_from_goal: bool,
 }
 
 #[derive(Args)]
@@ -244,6 +248,12 @@ pub struct CheckingOptions {
     /// Keep running RARE egglog schedules until goals are saturated.
     #[clap(long = "continuous-saturation")]
     pub continuous_saturation: bool,
+
+    /// Instantiate the premises of conditional RARE rules only over the
+    /// goal's and the proof premises' subterms, so an unreachable goal fails
+    /// fast instead of growing the e-graph until the budget kills it.
+    #[clap(long)]
+    pub rare_seed_from_goal: bool,
 
     /// Cooperative time budget in milliseconds for each RARE hole rewrite.
     #[clap(long, value_name = "MILLISECONDS")]
@@ -609,6 +619,7 @@ impl IntoConfig for (CheckingOptions, ToolOptions) {
                 continuous_saturation: c.continuous_saturation,
                 timeout: c.rare_check_timeout.map(Duration::from_millis),
                 print_egglog: c.print_egglog,
+                seed_from_goal: c.rare_seed_from_goal,
                 ..RunEgglogOptions::default()
             })
     }

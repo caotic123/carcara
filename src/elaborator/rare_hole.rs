@@ -1008,6 +1008,9 @@ fn run_hole_worker_inner(
     if options.continuous_saturation {
         arguments.push("--continuous-saturation".into());
     }
+    if options.seed_from_goal {
+        arguments.push("--seed-from-goal".into());
+    }
     if check_only {
         arguments.push("--check-only".into());
     }

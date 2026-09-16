@@ -62,9 +62,12 @@ impl<'a> RareCtx<'a> {
         Self { database, baseline: OnceCell::new() }
     }
 
-    fn baseline(&self) -> Result<&RareDatabaseBaseline, String> {
+    /// The prepared database, built on first use with the given seeding
+    /// (see `RunEgglogOptions::seed_from_goal`); one context serves one
+    /// setting.
+    fn baseline(&self, seed_from_goal: bool) -> Result<&RareDatabaseBaseline, String> {
         self.baseline
-            .get_or_init(|| prepare_database_safely(self.database))
+            .get_or_init(|| prepare_database_safely(self.database, seed_from_goal))
             .as_ref()
             .map_err(Clone::clone)
     }
@@ -279,6 +282,13 @@ pub fn create_headers() -> EggLanguage {
             "Avaliable".to_owned(),
             vec![ConstType::ConstrType("Term".to_owned())],
         ),
+        // The goal's and the proof premises' own subterms, asserted per goal
+        // and never propagated: what conditional rules' premise instances
+        // range over under `seed_from_goal`.
+        EggStatement::Relation(
+            ORIGIN_RELATION.to_owned(),
+            vec![ConstType::ConstrType("Term".to_owned())],
+        ),
         EggStatement::Rule {
             ruleset: None,
             body: vec![EggExpr::Call(
@@ -477,6 +487,7 @@ fn create_avaliable_premise(
     func_cache: &mut EggFunctions,
     var_map: &mut HashMap<String, u64>,
     recognize_vars: bool,
+    seed: &str,
     context: &str,
 ) -> Result<Option<EggStatement>, String> {
     if term.is_var() {
@@ -494,7 +505,7 @@ fn create_avaliable_premise(
     for (name, _sort) in &vars {
         let egg_expr = EggExpr::Literal(name.clone());
         sorted_vars.insert(name, (egg_expr.clone(), AttributeParameters::List));
-        premises.push(EggExpr::Call("Avaliable".to_owned(), vec![egg_expr]));
+        premises.push(EggExpr::Call(seed.to_owned(), vec![egg_expr]));
     }
 
     let head = translate_term(term, &sorted_vars, func_cache, var_map, false, context)?;
@@ -877,6 +888,7 @@ fn construct_premises(
                 func_cache,
                 var_map,
                 false,
+                "Avaliable",
                 "translating a proof premise",
             )? {
                 grounds_terms.insert(ground);
@@ -891,7 +903,11 @@ fn construct_rules(
     database: &[RuleDefinition],
     func_cache: &mut EggFunctions,
     var_map: &mut HashMap<String, u64>,
+    seed_from_goal: bool,
 ) -> Result<IndexSet<EggStatement>, String> {
+    // The relation a conditional rule's premise instances range over: every
+    // available term, or only the goal's and the proof premises' subterms.
+    let seed = if seed_from_goal { ORIGIN_RELATION } else { "Avaliable" };
     let mut rules = IndexSet::new();
     for definition in database {
         let mut premises = vec![];
@@ -939,7 +955,7 @@ fn construct_rules(
             match op {
                 Operator::Equals => {
                     if let Some(lhs) =
-                        create_avaliable_premise(lhs, func_cache, var_map, true, &context)?
+                        create_avaliable_premise(lhs, func_cache, var_map, true, seed, &context)?
                     {
                         rules.insert(lhs);
                     }
@@ -954,7 +970,7 @@ fn construct_rules(
                     )?);
 
                     if let Some(rhs) =
-                        create_avaliable_premise(rhs, func_cache, var_map, true, &context)?
+                        create_avaliable_premise(rhs, func_cache, var_map, true, seed, &context)?
                     {
                         rules.insert(rhs);
                     }
@@ -972,7 +988,7 @@ fn construct_rules(
 
                 Operator::Distinct => {
                     if let Some(lhs) =
-                        create_avaliable_premise(lhs, func_cache, var_map, true, &context)?
+                        create_avaliable_premise(lhs, func_cache, var_map, true, seed, &context)?
                     {
                         rules.insert(lhs);
                     }
@@ -987,7 +1003,7 @@ fn construct_rules(
                     )?);
 
                     if let Some(rhs) =
-                        create_avaliable_premise(rhs, func_cache, var_map, true, &context)?
+                        create_avaliable_premise(rhs, func_cache, var_map, true, seed, &context)?
                     {
                         rules.insert(rhs);
                     }
@@ -1141,6 +1157,7 @@ fn construct_rules(
     Ok(rules)
 }
 
+const ORIGIN_RELATION: &str = "Origin";
 const GOAL_LHS_NAME: &str = "goal_lhs";
 const GOAL_RHS_NAME: &str = "goal_rhs";
 
@@ -1180,6 +1197,33 @@ fn available_subterm_premises(
         )?;
         premises.push(EggStatement::Premise(
             "Avaliable".to_owned(),
+            Box::new(expr),
+        ));
+    }
+    Ok(premises)
+}
+
+/// `Origin` facts for a goal-side or premise term and every subterm of it,
+/// variables included: the seeds of conditional rules' premise instances
+/// under `seed_from_goal`.
+fn origin_premises(
+    term: &Rc<Term>,
+    func_cache: &mut EggFunctions,
+    var_map: &mut HashMap<String, u64>,
+) -> Result<Vec<EggStatement>, String> {
+    let subs = IndexMap::new();
+    let mut premises = Vec::new();
+    for subterm in collect_subterms(term) {
+        let expr = translate_term(
+            &subterm,
+            &subs,
+            func_cache,
+            var_map,
+            false,
+            "translating a goal subterm",
+        )?;
+        premises.push(EggStatement::Premise(
+            ORIGIN_RELATION.to_owned(),
             Box::new(expr),
         ));
     }
@@ -1663,11 +1707,11 @@ fn register_ineq_primitive(egraph: &mut EGraph) {
     });
 }
 
-fn prepare_database(database: &Rules) -> Result<RareDatabaseBaseline, String> {
+fn prepare_database(database: &Rules, seed_from_goal: bool) -> Result<RareDatabaseBaseline, String> {
     let mut functions = EggFunctions::default();
     let mut var_map = HashMap::new();
     let definitions: Vec<_> = database.rules.values().cloned().collect();
-    let rules = construct_rules(&definitions, &mut functions, &mut var_map)?;
+    let rules = construct_rules(&definitions, &mut functions, &mut var_map, seed_from_goal)?;
     let has_distinct = functions.names.contains_key("distinct");
 
     // Logic operators and all database-derived rules belong to the immutable
@@ -1701,8 +1745,11 @@ fn prepare_database(database: &Rules) -> Result<RareDatabaseBaseline, String> {
     })
 }
 
-fn prepare_database_safely(database: &Rules) -> Result<RareDatabaseBaseline, String> {
-    catch_unwind(AssertUnwindSafe(|| prepare_database(database))).map_err(|panic| {
+fn prepare_database_safely(
+    database: &Rules,
+    seed_from_goal: bool,
+) -> Result<RareDatabaseBaseline, String> {
+    catch_unwind(AssertUnwindSafe(|| prepare_database(database, seed_from_goal))).map_err(|panic| {
         format!(
             "preparing the RARE database panicked: {}",
             panic_message(panic)
@@ -1736,7 +1783,7 @@ fn run_egglog_with_premises_inner(
         return (Err(error), String::new());
     }
 
-    let baseline = match context.baseline() {
+    let baseline = match context.baseline(options.seed_from_goal) {
         Ok(baseline) => baseline,
         Err(error) => return (Err(error), String::new()),
     };
@@ -1802,6 +1849,24 @@ fn run_egglog_with_premises_inner(
         Err(error) => return (Err(error), code_str),
     };
     goals_ast.extend(rhs_subterms);
+    if options.seed_from_goal {
+        let mut origins = Vec::new();
+        for term in [lhs, rhs] {
+            match origin_premises(term, &mut goal_functions, &mut var_map) {
+                Ok(premises) => origins.extend(premises),
+                Err(error) => return (Err(error), code_str),
+            }
+        }
+        for clause in premise_clauses {
+            if let Some(clause) = clauses_to_or(pool, clause) {
+                match origin_premises(&clause, &mut goal_functions, &mut var_map) {
+                    Ok(premises) => origins.extend(premises),
+                    Err(error) => return (Err(error), code_str),
+                }
+            }
+        }
+        goals_ast.extend(origins);
+    }
 
     let (raw_lhs, raw_rhs) = equal_terms();
     let mut goal = GoalCheckTarget {
@@ -1949,7 +2014,7 @@ fn check_hole_rewrites_batched_inner(
         },
         None => None,
     };
-    let baseline = match context.baseline() {
+    let baseline = match context.baseline(options.seed_from_goal) {
         Ok(baseline) => baseline,
         Err(error) => {
             fill(&mut results, error);
@@ -2021,6 +2086,20 @@ fn check_hole_rewrites_batched_inner(
                 &mut goal_functions,
                 &mut var_map,
             )?);
+            if options.seed_from_goal {
+                for term in [lhs, rhs] {
+                    goals_ast.extend(origin_premises(term, &mut goal_functions, &mut var_map)?);
+                }
+                for clause in &clauses {
+                    if let Some(clause) = clauses_to_or(pool, clause) {
+                        goals_ast.extend(origin_premises(
+                            &clause,
+                            &mut goal_functions,
+                            &mut var_map,
+                        )?);
+                    }
+                }
+            }
             Ok((EggExpr::Literal(lhs_name), EggExpr::Literal(rhs_name)))
         };
         match setup() {

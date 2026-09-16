@@ -205,6 +205,7 @@ fn elaborate_command(
             .rare_check_timeout
             .map(std::time::Duration::from_millis),
         print_egglog: options.checking.print_egglog,
+        seed_from_goal: options.checking.rare_seed_from_goal,
         ..carcara::RunEgglogOptions::default()
     };
     let elaborate_hole_rewrites = options.elaboration.elaborate_hole_rewrites;
@@ -463,6 +464,7 @@ fn reconstruct_hole_command(options: ReconstructHoleOptions) -> CliResult<()> {
             .rare_check_timeout
             .map(std::time::Duration::from_millis),
         continuous_saturation: options.continuous_saturation,
+        seed_from_goal: options.seed_from_goal,
         ..carcara::RunEgglogOptions::default()
     };
     let rules = parser::Source::new(std::path::Path::new(&options.rare_file), &rare_text);
