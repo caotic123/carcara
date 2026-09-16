@@ -1,0 +1,7 @@
+(assume a0 (forall ((x Int)) (< x 0)))
+(assume a1 (not (forall ((x Int)) (not (>= x 0)))))
+(anchor :step t1 :args ((x Int) (:= (x Int) x)))
+(step t1.t1 (cl (= (< x 0) (not (>= x 0)))) :rule hole :args ("TRUST_THEORY_REWRITE"))
+(step t1 (cl (= (forall ((x Int)) (< x 0)) (forall ((x Int)) (not (>= x 0))))) :rule bind)
+(step t2 (cl (not (= (forall ((x Int)) (< x 0)) (forall ((x Int)) (not (>= x 0))))) (not (forall ((x Int)) (< x 0))) (forall ((x Int)) (not (>= x 0)))) :rule equiv_pos2)
+(step t3 (cl) :rule resolution :premises (t1 t2 a0 a1))

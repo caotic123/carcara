@@ -504,6 +504,46 @@ pub const HOLE_INPUT_BOUNDARY: &str = ";; --- hole ---";
 /// itself citing them as premises.  That is exactly what `run_egglog` reads
 /// off the in-process node, which collects the depth-0 assumptions beneath it,
 /// so the child works from the same inputs the in-process worker would.
+/// The problem's text for a hole's terms: the prelude and `assertions`, plus
+/// a constant declaration for every variable in `terms` the problem never
+/// declares.  A hole inside a subproof may mention variables the enclosing
+/// anchors bind (`:args ((x Int) ...)`), and the hole's text must stand on
+/// its own.
+fn hole_problem_string<'a>(
+    pool: &mut PrimitivePool,
+    prelude: &ProblemPrelude,
+    terms: impl IntoIterator<Item = &'a crate::ast::Rc<crate::ast::Term>>,
+    assertions: impl IntoIterator<Item = &'a crate::ast::Rc<crate::ast::Term>>,
+) -> String {
+    let mut declared: std::collections::HashSet<String> = prelude
+        .function_declarations
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect();
+    let mut declarations = String::new();
+    for term in terms {
+        let free_vars = TermPool::free_vars(pool, term).into_owned();
+        for var in free_vars {
+            if let crate::ast::Term::Var(name, sort) = var.as_ref() {
+                if declared.insert(name.clone()) {
+                    let _ = writeln!(declarations, "(declare-const {var} {sort})");
+                }
+            }
+        }
+    }
+    // The same shape as `external::get_problem_string`, with the extra
+    // declarations before the assertions that may use them.
+    let mut text = String::new();
+    let _ = writeln!(text, "(set-option :produce-proofs true)");
+    let _ = write!(text, "{prelude}{declarations}");
+    let mut asserts = Vec::new();
+    if crate::ast::printer::write_asserts(pool, prelude, &mut asserts, assertions, false).is_ok() {
+        text.push_str(&String::from_utf8_lossy(&asserts));
+    }
+    let _ = writeln!(text, "(check-sat)\n(get-proof)\n(exit)");
+    text
+}
+
 pub fn hole_input(
     pool: &mut PrimitivePool,
     prelude: &ProblemPrelude,
@@ -513,14 +553,24 @@ pub fn hole_input(
     let [conclusion] = step.clause.as_slice() else {
         return None;
     };
-    let mut text = external::get_problem_string(pool, prelude, []);
+    let assumptions: Vec<crate::ast::Rc<crate::ast::Term>> = node
+        .get_assumptions()
+        .iter()
+        .filter_map(|assumption| match assumption.as_ref() {
+            ProofNode::Assume { term, .. } => Some(term.clone()),
+            _ => None,
+        })
+        .collect();
+    let mut text = hole_problem_string(
+        pool,
+        prelude,
+        assumptions.iter().chain(std::iter::once(conclusion)),
+        [],
+    );
     text.push_str(HOLE_INPUT_BOUNDARY);
     text.push('\n');
     let mut ids = Vec::new();
-    for (index, assumption) in node.get_assumptions().iter().enumerate() {
-        let ProofNode::Assume { term, .. } = assumption.as_ref() else {
-            continue;
-        };
+    for (index, term) in assumptions.iter().enumerate() {
         let id = format!("h{index}");
         // `{:#}` prints without term sharing, so the text stands on its own.
         writeln!(text, "(assume {id} {term:#})").ok()?;
@@ -956,8 +1006,12 @@ pub fn insert_steps(
         crate::ast::Operator::Not,
         vec![conclusion.clone()],
     ));
-    let problem =
-        external::get_problem_string(elaborator.pool, &elaborator.problem.prelude, [&negated]);
+    let problem = hole_problem_string(
+        elaborator.pool,
+        &elaborator.problem.prelude,
+        [conclusion],
+        [&negated],
+    );
     let assumption = format!("{}.h", step.id);
     let last = format!("{}.{}", step.id, steps.len());
     let proof = format!(

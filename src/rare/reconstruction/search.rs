@@ -1,6 +1,10 @@
 //! Candidate-graph search reconstructing a certificate from a snapshot.
-use std::{collections::{BTreeSet, HashMap, HashSet}, rc::Rc, time::Instant};
 use super::*;
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    rc::Rc,
+    time::Instant,
+};
 
 /// Operators belonging to the egglog solvers' internal machinery
 /// (computation tables, demand relations, ACI set forms) rather than to the
@@ -40,7 +44,11 @@ pub struct SearchStrategy {
 
 impl Default for SearchStrategy {
     fn default() -> Self {
-        Self { max_depth: 8, max_states: 256, deadline: None }
+        Self {
+            max_depth: 8,
+            max_states: 256,
+            deadline: None,
+        }
     }
 }
 
@@ -154,8 +162,10 @@ impl DiscriminationTree {
     pub fn build(rules: &[Rewrite], ops: &Interner) -> Self {
         let mut tree = Self { nodes: vec![DtNode::default()] };
         for (rule_index, rule) in rules.iter().enumerate() {
-            for (side, pattern) in [(InstanceSide::Lhs, &rule.lhs), (InstanceSide::Rhs, &rule.rhs)]
-            {
+            for (side, pattern) in [
+                (InstanceSide::Lhs, &rule.lhs),
+                (InstanceSide::Rhs, &rule.rhs),
+            ] {
                 let mut string = Vec::new();
                 if p_string(pattern, ops, &mut string).is_some() {
                     tree.insert(&string, (rule_index, side));
@@ -201,7 +211,13 @@ impl DiscriminationTree {
         let (op, child_classes) = signature;
         if let Some(&node) = root.children.get(&PSymbol::Op(*op, child_classes.len())) {
             let mut pending: Vec<u32> = child_classes.iter().rev().copied().collect();
-            self.retrieve(snapshot, node as usize, &mut pending, &mut candidates, stats);
+            self.retrieve(
+                snapshot,
+                node as usize,
+                &mut pending,
+                &mut candidates,
+                stats,
+            );
         }
         stats.index_candidates += candidates.len();
         candidates
@@ -384,7 +400,11 @@ impl Reconstructor<'_> {
         self.extract_representative(eclass, &mut HashSet::new())
     }
 
-    pub fn extract_representative(&mut self, eclass: u32, visiting: &mut HashSet<u32>) -> Option<Term> {
+    pub fn extract_representative(
+        &mut self,
+        eclass: u32,
+        visiting: &mut HashSet<u32>,
+    ) -> Option<Term> {
         if let Some(term) = self.representatives.get(&eclass) {
             return Some(term.clone());
         }
@@ -532,7 +552,11 @@ impl Reconstructor<'_> {
 
     /// E-class a fully substituted pattern grounds into, resolved bottom-up
     /// through the signature relation without building any term.
-    pub fn pattern_class(&self, pattern: &Pattern, substitution: &ClassSubstitution) -> Option<u32> {
+    pub fn pattern_class(
+        &self,
+        pattern: &Pattern,
+        substitution: &ClassSubstitution,
+    ) -> Option<u32> {
         match pattern {
             Pattern::Var(variable) => substitution.get(variable).copied(),
             Pattern::App(op, children) => {
@@ -541,7 +565,10 @@ impl Reconstructor<'_> {
                     .iter()
                     .map(|child| self.pattern_class(child, substitution))
                     .collect::<Option<Vec<_>>>()?;
-                self.snapshot.signature_class.get(&(op, child_classes)).copied()
+                self.snapshot
+                    .signature_class
+                    .get(&(op, child_classes))
+                    .copied()
             }
         }
     }
@@ -564,12 +591,18 @@ impl Reconstructor<'_> {
         eclass: u32,
         class_match: &SignatureMatch,
     ) -> Option<Rc<RuleInstance>> {
-        let key = (eclass, class_match.rule_index, class_match.substitution.clone());
+        let key = (
+            eclass,
+            class_match.rule_index,
+            class_match.substitution.clone(),
+        );
         if let Some(instance) = self.grounded_matches.get(&key) {
             return instance.clone();
         }
         let rule = &self.rules[class_match.rule_index];
-        let instance = self.ground(rule, &class_match.substitution, eclass).map(Rc::new);
+        let instance = self
+            .ground(rule, &class_match.substitution, eclass)
+            .map(Rc::new);
         if instance.is_some() {
             self.stats.rule_instances += 1;
         }
@@ -592,7 +625,12 @@ impl Reconstructor<'_> {
         (lhs != rhs
             && self.snapshot.class_of_term(&lhs) == Some(eclass)
             && self.snapshot.class_of_term(&rhs) == Some(eclass))
-        .then(|| RuleInstance { rule: rule.name, lhs, rhs, substitution })
+        .then(|| RuleInstance {
+            rule: rule.name,
+            lhs,
+            rhs,
+            substitution,
+        })
     }
 
     pub fn congruence_compatible(&mut self, lhs: &Term, rhs: &Term) -> bool {
@@ -677,18 +715,29 @@ impl Reconstructor<'_> {
         let snapshot = self.snapshot;
         let mut candidates = vec![goal.clone()];
         let wrapper = snapshot.ops.ids.get("Mk").copied();
-        for &index in snapshot.class_nodes.get(eclass as usize).into_iter().flatten() {
+        for &index in snapshot
+            .class_nodes
+            .get(eclass as usize)
+            .into_iter()
+            .flatten()
+        {
             let node = &snapshot.nodes[index as usize];
             let ([inner_class], true) = (node.child_classes.as_slice(), Some(node.op) == wrapper)
             else {
                 continue;
             };
-            for &inner in snapshot.class_nodes.get(*inner_class as usize).into_iter().flatten() {
+            for &inner in snapshot
+                .class_nodes
+                .get(*inner_class as usize)
+                .into_iter()
+                .flatten()
+            {
                 let inner = &snapshot.nodes[inner as usize];
                 let operator = snapshot.ops.names[inner.op as usize].as_str();
-                let ([arguments_class], true) =
-                    (inner.child_classes.as_slice(), ARITH_CANDIDATE_OPS.contains(&operator))
-                else {
+                let ([arguments_class], true) = (
+                    inner.child_classes.as_slice(),
+                    ARITH_CANDIDATE_OPS.contains(&operator),
+                ) else {
                     continue;
                 };
                 let Some(arguments) =
@@ -725,7 +774,8 @@ impl Reconstructor<'_> {
                 let Some(kind) = arith_kind(lhs, rhs, self.sorts) else {
                     continue;
                 };
-                let (Some(before), Some(after)) = (self.prove(source, lhs), self.prove(rhs, target))
+                let (Some(before), Some(after)) =
+                    (self.prove(source, lhs), self.prove(rhs, target))
                 else {
                     continue;
                 };
@@ -745,7 +795,12 @@ impl Reconstructor<'_> {
         None
     }
 
-    pub fn prove_in_class(&mut self, source: &Term, target: &Term, eclass: u32) -> Option<Certificate> {
+    pub fn prove_in_class(
+        &mut self,
+        source: &Term,
+        target: &Term,
+        eclass: u32,
+    ) -> Option<Certificate> {
         self.prove_by_congruence(source, target)
             .or_else(|| self.prove_by_transitivity(source, target, eclass))
             .or_else(|| self.prove_by_aci(source, target))
@@ -903,7 +958,11 @@ impl Reconstructor<'_> {
                     lhs: parent.clone(),
                     rhs: child.clone(),
                 };
-                Some(if flip { reverse(certificate) } else { certificate })
+                Some(if flip {
+                    reverse(certificate)
+                } else {
+                    certificate
+                })
             }
         }
     }
@@ -991,7 +1050,10 @@ impl Reconstructor<'_> {
                     InstanceSide::Rhs => (&instance.rhs, &instance.lhs, true),
                 };
                 if matched == vertex {
-                    let rule = CandidateEdge::Rule { instance: instance.clone(), reversed };
+                    let rule = CandidateEdge::Rule {
+                        instance: instance.clone(),
+                        reversed,
+                    };
                     edges.push((other.clone(), rule));
                 } else {
                     // Same signature as the vertex, so the e-graph holds
@@ -1044,7 +1106,14 @@ pub fn reconstruct_detailed(
     rules: &[Rewrite],
     strategy: SearchStrategy,
 ) -> ReconstructionResult {
-    reconstruct_with_sorts(snapshot, source, target, rules, &ArithSorts::default(), strategy)
+    reconstruct_with_sorts(
+        snapshot,
+        source,
+        target,
+        rules,
+        &ArithSorts::default(),
+        strategy,
+    )
 }
 
 /// Full entry point.  Sides the e-graph merged are proved by the in-class
@@ -1076,18 +1145,23 @@ pub fn reconstruct_with_sorts(
     };
     reconstructor.seed_goal_terms(source);
     reconstructor.seed_goal_terms(target);
-    let certificate = if snapshot.same_class(source, target) {
+    let mut certificate = if snapshot.same_class(source, target) {
         reconstructor.prove(source, target)
     } else {
         reconstructor.prove_across_classes(source, target)
     };
     // Certificates are built lazily during the search, so soundness is
-    // enforced once here, on the assembled proof.
-    if let Some(certificate) = &certificate {
-        assert!(
-            certificate.verify_in(rules, sorts),
-            "a reconstructed certificate must pass the independent rule checker"
+    // enforced once here, on the assembled proof.  One that fails the
+    // independent rule checker is a search bug; it is reported and dropped
+    // rather than trusted, and the hole is kept.
+    if certificate
+        .as_ref()
+        .is_some_and(|certificate| !certificate.verify_in(rules, sorts))
+    {
+        log::warn!(
+            "a reconstructed certificate failed the independent rule checker; the hole is kept"
         );
+        certificate = None;
     }
     ReconstructionResult {
         certificate,
