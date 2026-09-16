@@ -1414,3 +1414,66 @@ saturation costs more than the sum of its holes and blows up where none
 of them would.  At 500 and 1000 every batch dies within a minute or two
 and the run is the baseline plus that.  Batching holes in one e-graph is
 therefore out, at least while the seeding is what it is.
+
+### Sequential batches: the amortizable cost is small
+
+Sequential batches of 10 on all ten proofs (`results/*.b10s.err`, final
+binary with the watchdog and the death attribution):
+
+| proof | holes | per hole (s) | sequential 10 (s) |
+|---|---|---|---|
+| c_inference | 2,143 | 131 | 114 |
+| RwMutex RF-09 | 4,343 | 471 | 449 |
+| bofill ex4880 | 2,517 | 437 | 435 |
+| MULTIPLIER_3 | 3,374 | 460 | 486 |
+| FISCHER9 | 2,116 | 193 | 200 |
+| cut_lemma_01_008 | 1,944 | 704 | 722 |
+| ring_2exp10 | 3,818 | 269 | 230 |
+| vpm2-0 | 3,491 | 246 | 280 |
+| clocksynchro_3clocks | 1,663 | 480 | 551 |
+
+Gains of 5–16% where the holes are cheap (c_inference, ring), nothing
+outside this machine's ±10% noise elsewhere.  A micro-test says why: 20
+copies of `(< a i) = (not (>= a i))` cost 1.4 s sequentially against
+0.21 s each alone, but 20 copies of an arithmetic normalization goal cost
+10.0 s against 0.51 s each: nothing amortized.  A trivial goal's program
+has 397 rules and 3 schedule runs; an arithmetic goal's has 681 rules, 183
+functions and 63 schedule runs, 58 of them iterations of the polynomial
+normalizer, all declared and run per goal (`declare_goal_eliminations`,
+`declare_opaque_arith_poly_rules`, the `arith_poly` fallbacks).  The
+sequential mode removes the 0.14 s database cost and nothing else.
+
+### Overlap grouping (commit `90334e2e`)
+
+`--hole-batch-by-overlap [--hole-batch-terms CAP]`: a hole joins the open
+batch of its context sharing the most compound subterms (16 open batches
+per context), closed at the hole count or the distinct-subterm cap.
+Measured potential first (`overlap.py` over the proof texts): distinct
+subterms over summed subterm occurrences is 0.10–0.33 per proof, but
+0.71–0.82 in proof-order batches of 10, and adjacent holes share nothing
+at the median on three of five proofs.  Results on the subset (7,750
+holes, `results-overlap/`):
+
+| configuration | wall s | failed batches | sharing achieved |
+|---|---|---|---|
+| per hole | 571 | 0 | – |
+| proof order, 10 | 1,351 | 59 | 0.74–0.82 |
+| overlap, up to 10 | 992 | 42 | 0.59–0.77 |
+| overlap, up to 50 / 100 / 500 / 1000 | 1,237 / 1,246 / 1,086 / 1,126 | 40–42 | 0.39–0.75 |
+| overlap, cap 30 / 60 / 120 subterms | 928 / 1,291 / 1,071 | 54 / 54 / 42 | 0.74–0.80 / 0.58–0.76 / 0.40–0.75 |
+
+Only c_inference gains (109 s at up to 10, 92 s at cap 30, against 131 s);
+FISCHER9 (56 hopeless holes) and vpm2 lose everywhere.  The greedy pass
+makes batches of 3–4 holes and 10–17 distinct subterms and reaches
+sharing 0.4–0.8, far from the proof's 0.1–0.3; and a batch inherits its
+worst hole: every batch with one of FISCHER9's hopeless holes dies at the
+memory limit after 20–30 s and is retried.
+
+### Conclusion
+
+No batching for the next run.  The costs a batch could amortize are
+small (the database) or not shared (the per-goal arithmetic machinery),
+and the shared e-graph turns every unreachable goal into a dead batch.
+The same losses are attacked directly by making an unreachable goal fail
+fast (§19.1) and by adding the missing Boolean rules; after that, overlap
+batching may be worth re-measuring as a pure hash-consing gain.
