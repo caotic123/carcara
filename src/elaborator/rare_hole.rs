@@ -590,6 +590,137 @@ pub fn hole_input(
     Some(text)
 }
 
+/// The input of a batch of holes for the child process: the problem text
+/// with every hole's assumptions and conclusion declared, the boundary, then
+/// each hole's assumptions and its `hole` step.
+pub fn holes_input(
+    pool: &mut PrimitivePool,
+    prelude: &ProblemPrelude,
+    holes: &[(&Rc<ProofNode>, &StepNode)],
+) -> Option<String> {
+    let mut per_hole = Vec::with_capacity(holes.len());
+    for (node, step) in holes {
+        let [conclusion] = step.clause.as_slice() else {
+            return None;
+        };
+        let assumptions: Vec<crate::ast::Rc<crate::ast::Term>> = node
+            .get_assumptions()
+            .iter()
+            .filter_map(|assumption| match assumption.as_ref() {
+                ProofNode::Assume { term, .. } => Some(term.clone()),
+                _ => None,
+            })
+            .collect();
+        per_hole.push((step.id.clone(), assumptions, conclusion.clone()));
+    }
+    let terms: Vec<&crate::ast::Rc<crate::ast::Term>> = per_hole
+        .iter()
+        .flat_map(|(_, assumptions, conclusion)| {
+            assumptions.iter().chain(std::iter::once(conclusion))
+        })
+        .collect();
+    let mut text = hole_problem_string(pool, prelude, terms, []);
+    text.push_str(HOLE_INPUT_BOUNDARY);
+    text.push('\n');
+    for (hole_index, (id, assumptions, conclusion)) in per_hole.iter().enumerate() {
+        let mut ids = Vec::new();
+        for (index, term) in assumptions.iter().enumerate() {
+            let assume_id = format!("h{hole_index}_{index}");
+            writeln!(text, "(assume {assume_id} {term:#})").ok()?;
+            ids.push(assume_id);
+        }
+        let premises = if ids.is_empty() {
+            String::new()
+        } else {
+            format!(" :premises ({})", ids.join(" "))
+        };
+        writeln!(
+            text,
+            "(step {id} (cl {conclusion:#}) :rule hole{premises} :args (\"TRUST_THEORY_REWRITE\"))"
+        )
+        .ok()?;
+    }
+    Some(text)
+}
+
+/// The child's half of [`check_batch_in_child`]: parse the input produced by
+/// [`holes_input`] and check every hole in it in one e-graph, returning each
+/// hole's id with its verdict.
+pub fn check_batch_from_input(
+    input: &str,
+    rules: parser::Source<'_>,
+    options: crate::checker::RunEgglogOptions,
+) -> Result<Vec<(String, Result<(), String>)>, String> {
+    let boundary = format!("{HOLE_INPUT_BOUNDARY}\n");
+    let (problem, proof) = input
+        .split_once(&boundary)
+        .ok_or_else(|| "hole input has no boundary line".to_owned())?;
+    let config = parser::Config::new()
+        .expand_lets(true)
+        .allow_int_real_subtyping(true)
+        .parse_hole_args(true);
+    let (_, proof, database, mut pool) = parser::parse_instance(
+        parser::Source::new(Path::new("<hole problem>"), problem),
+        parser::Source::new(Path::new("<hole>"), proof),
+        Some(rules),
+        config,
+    )
+    .map_err(|error| format!("parsing the hole input: {error}"))?;
+    let forest = ProofNodeForest::from_commands(proof.commands);
+    let holes = theory_rewrite_holes(&forest);
+    if holes.is_empty() {
+        return Err("hole input contains no TRUST_THEORY_REWRITE hole".to_owned());
+    }
+    let refs: Vec<(&Rc<ProofNode>, &StepNode)> =
+        holes.iter().map(|(node, step)| (node, step)).collect();
+    let verdicts = check_holes_batched(&mut pool, &refs, &database, options);
+    Ok(refs
+        .iter()
+        .zip(verdicts)
+        .map(|((_, step), verdict)| (step.id.clone(), verdict))
+        .collect())
+}
+
+/// Checks several holes in one e-graph, in this process.  See
+/// [`crate::rare::engine::check_hole_rewrites_batched`].
+pub fn check_holes_batched(
+    pool: &mut dyn TermPool,
+    holes: &[(&Rc<ProofNode>, &StepNode)],
+    rules: &Rules,
+    options: crate::checker::RunEgglogOptions,
+) -> Vec<Result<(), String>> {
+    let mut goals = Vec::with_capacity(holes.len());
+    for (node, step) in holes {
+        let [conclusion] = step.clause.as_slice() else {
+            // Keep the positions aligned: an ill-formed hole gets a goal that
+            // fails translation with a clear message.
+            goals.push(crate::rare::engine::BatchGoal {
+                label: step.id.clone(),
+                conclusion: step.clause.first().cloned().unwrap_or_else(|| {
+                    pool.add(crate::ast::Term::Op(crate::ast::Operator::False, vec![]))
+                }),
+                premise_clauses: Vec::new(),
+            });
+            continue;
+        };
+        let premise_clauses = node
+            .get_assumptions()
+            .iter()
+            .map(|premise| premise.clause().to_vec())
+            .collect();
+        goals.push(crate::rare::engine::BatchGoal {
+            label: step.id.clone(),
+            conclusion: conclusion.clone(),
+            premise_clauses,
+        });
+    }
+    let context = crate::rare::engine::RareCtx::new(rules);
+    crate::rare::engine::check_hole_rewrites_batched(pool, &goals, &context, options)
+        .into_iter()
+        .map(|verdict| verdict.map_err(|error| format!("egglog check: {error}")))
+        .collect()
+}
+
 /// The child's half of [`reconstruct_in_child`]: parse the input produced by
 /// [`hole_input`], find the hole, reconstruct it.
 pub fn reconstruct_from_input(
@@ -645,6 +776,78 @@ pub fn reconstruct_in_child(
 ) -> Result<Vec<String>, String> {
     let input = hole_input(pool, prelude, node, step)
         .ok_or_else(|| "expected a single-literal clause".to_owned())?;
+    run_hole_worker(
+        &step.id,
+        input,
+        rare_file,
+        options,
+        memory_limit_mb,
+        check_only,
+        false,
+        deadline,
+    )
+}
+
+/// Checks a batch of holes in one child process (`reconstruct-hole
+/// --check-only --batch`), which saturates them in one e-graph and reports
+/// one verdict per hole.  `Ok` maps each hole's id to its verdict; `Err` is
+/// the batch as a whole failing (killed at its budget or the proof's, out of
+/// memory, or a worker error), in which case the caller may retry the holes
+/// one by one.  `options.timeout` is the batch's own budget.
+#[allow(clippy::too_many_arguments)]
+pub fn check_batch_in_child(
+    pool: &mut PrimitivePool,
+    prelude: &ProblemPrelude,
+    holes: &[(&Rc<ProofNode>, &StepNode)],
+    rare_file: &Path,
+    options: crate::checker::RunEgglogOptions,
+    memory_limit_mb: Option<usize>,
+    deadline: Option<Instant>,
+) -> Result<HashMap<String, Result<(), String>>, String> {
+    let input = holes_input(pool, prelude, holes)
+        .ok_or_else(|| "expected single-literal clauses".to_owned())?;
+    let label = format!("batch of {} holes", holes.len());
+    let lines = run_hole_worker(
+        &label,
+        input,
+        rare_file,
+        options,
+        memory_limit_mb,
+        true,
+        true,
+        deadline,
+    )?;
+    let mut verdicts = HashMap::new();
+    for line in lines {
+        let Some(rest) = line.strip_prefix("hole ") else {
+            continue;
+        };
+        let Some((id, verdict)) = rest.split_once(' ') else {
+            continue;
+        };
+        let verdict = match verdict.strip_prefix("failed: ") {
+            Some(reason) => Err(reason.to_owned()),
+            None => Ok(()),
+        };
+        verdicts.insert(id.to_owned(), verdict);
+    }
+    Ok(verdicts)
+}
+
+/// Runs this binary's `reconstruct-hole` subcommand on `input`, killed at
+/// the earlier of `options.timeout` and `deadline`, and returns its stdout
+/// lines.
+#[allow(clippy::too_many_arguments)]
+fn run_hole_worker(
+    label: &str,
+    input: String,
+    rare_file: &Path,
+    options: crate::checker::RunEgglogOptions,
+    memory_limit_mb: Option<usize>,
+    check_only: bool,
+    batch: bool,
+    deadline: Option<Instant>,
+) -> Result<Vec<String>, String> {
     let exe = std::env::current_exe().map_err(|error| format!("locating carcara: {error}"))?;
     let mut arguments: Vec<std::ffi::OsString> = vec![
         "reconstruct-hole".into(),
@@ -660,6 +863,9 @@ pub fn reconstruct_in_child(
     }
     if check_only {
         arguments.push("--check-only".into());
+    }
+    if batch {
+        arguments.push("--batch".into());
     }
     let mut command = match memory_limit_mb {
         // `exec` keeps the child's pid on carcara itself, so killing the pid
@@ -754,7 +960,7 @@ pub fn reconstruct_in_child(
     if !phases.is_empty() && !check_only {
         log::info!(
             "hole {}: phases {}",
-            step.id,
+            label,
             phases
                 .iter()
                 .map(|(name, secs)| format!("{name}={secs}"))

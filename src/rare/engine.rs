@@ -1598,11 +1598,21 @@ fn declare_functions(functions: &EggFunctions) -> Vec<EggStatement> {
 }
 
 fn get_fallback_plans(enable_arith_poly: bool) -> Vec<GoalFallbackPlan> {
+    let (goal_lhs, goal_rhs) = equal_terms();
+    get_fallback_plans_for(enable_arith_poly, goal_lhs, goal_rhs)
+}
+
+/// The fallback plans for a goal bound to the given names, so that several
+/// goals can live in one e-graph.
+fn get_fallback_plans_for(
+    enable_arith_poly: bool,
+    goal_lhs: EggExpr,
+    goal_rhs: EggExpr,
+) -> Vec<GoalFallbackPlan> {
     if !enable_arith_poly {
         return Vec::new();
     }
 
-    let (goal_lhs, goal_rhs) = equal_terms();
     vec![
         GoalFallbackPlan::new(
             "arithPolyNfOf",
@@ -1874,6 +1884,245 @@ fn run_egglog_with_premises(
             String::new(),
         ),
     }
+}
+
+/// One hole of a batch: a label for the log, the equality to prove, and the
+/// premise clauses in scope for it.
+pub struct BatchGoal {
+    pub label: String,
+    pub conclusion: Rc<Term>,
+    pub premise_clauses: Vec<Vec<Rc<Term>>>,
+}
+
+/// Checks several holes in one e-graph: one baseline clone, one program, one
+/// saturation, then every goal checked against the shared saturated state.
+/// The result is one verdict per goal, in the order given.  The batch shares
+/// its premises, so the caller must only batch holes whose premises agree
+/// (in practice: holes under the same assumptions).  `options.timeout` is
+/// the budget of the whole batch.
+pub fn check_hole_rewrites_batched(
+    pool: &mut dyn TermPool,
+    goals: &[BatchGoal],
+    context: &RareCtx<'_>,
+    options: RunEgglogOptions,
+) -> Vec<Result<(), String>> {
+    match catch_unwind(AssertUnwindSafe(|| {
+        check_hole_rewrites_batched_inner(pool, goals, context, options)
+    })) {
+        Ok(results) => results,
+        Err(panic) => {
+            let message = format!("RARE/egglog checking panicked: {}", panic_message(panic));
+            goals.iter().map(|_| Err(message.clone())).collect()
+        }
+    }
+}
+
+fn check_hole_rewrites_batched_inner(
+    pool: &mut dyn TermPool,
+    goals: &[BatchGoal],
+    context: &RareCtx<'_>,
+    options: RunEgglogOptions,
+) -> Vec<Result<(), String>> {
+    let label = format!("batch of {} holes", goals.len());
+    let mut results: Vec<Option<Result<(), String>>> = goals.iter().map(|_| None).collect();
+    let fill = |results: &mut Vec<Option<Result<(), String>>>, error: String| {
+        for slot in results.iter_mut() {
+            if slot.is_none() {
+                *slot = Some(Err(error.clone()));
+            }
+        }
+    };
+    let finish = |results: Vec<Option<Result<(), String>>>| -> Vec<Result<(), String>> {
+        results
+            .into_iter()
+            .map(|slot| slot.unwrap_or_else(|| Err("batch: no verdict".to_owned())))
+            .collect()
+    };
+
+    let deadline = match options.timeout {
+        Some(timeout) => match Instant::now().checked_add(timeout) {
+            Some(deadline) => Some(deadline),
+            None => {
+                fill(&mut results, format!("egglog check for {label} has an invalid timeout"));
+                return finish(results);
+            }
+        },
+        None => None,
+    };
+    let baseline = match context.baseline() {
+        Ok(baseline) => baseline,
+        Err(error) => {
+            fill(&mut results, error);
+            return finish(results);
+        }
+    };
+    let mut code_str = baseline.code.clone();
+    let mut egraph = baseline.egraph.clone();
+    let mut var_map = baseline.var_map.clone();
+    let mut goal_functions = EggFunctions::default();
+
+    // Per goal: its premises, its two bound names, and its subterm
+    // availability, all in the one program.
+    let mut premises_ast = Vec::new();
+    let mut goals_ast = Vec::new();
+    let mut targets: Vec<Option<(EggExpr, EggExpr)>> = Vec::with_capacity(goals.len());
+    for (index, goal) in goals.iter().enumerate() {
+        let mut setup = || -> Result<(EggExpr, EggExpr), String> {
+            let clauses: Vec<&[Rc<Term>]> =
+                goal.premise_clauses.iter().map(Vec::as_slice).collect();
+            premises_ast.extend(construct_premises(
+                pool,
+                &clauses,
+                &mut var_map,
+                &mut goal_functions,
+            )?);
+            let Some((Operator::Equals, lhs, rhs)) = get_equational_terms(&goal.conclusion)
+            else {
+                return Err(format!(
+                    "egglog check for {} requires a binary equality goal",
+                    goal.label
+                ));
+            };
+            let lhs_expr = translate_term(
+                lhs,
+                &IndexMap::new(),
+                &mut goal_functions,
+                &mut var_map,
+                false,
+                "translating the goal's left-hand side",
+            )?;
+            let rhs_expr = translate_term(
+                rhs,
+                &IndexMap::new(),
+                &mut goal_functions,
+                &mut var_map,
+                false,
+                "translating the goal's right-hand side",
+            )?;
+            let lhs_name = format!("{GOAL_LHS_NAME}_{index}");
+            let rhs_name = format!("{GOAL_RHS_NAME}_{index}");
+            goals_ast.push(EggStatement::Let(lhs_name.clone(), Box::new(lhs_expr)));
+            goals_ast.push(EggStatement::Let(rhs_name.clone(), Box::new(rhs_expr)));
+            goals_ast.push(EggStatement::Premise(
+                "Avaliable".to_owned(),
+                Box::new(EggExpr::Literal(lhs_name.clone())),
+            ));
+            goals_ast.push(EggStatement::Premise(
+                "Avaliable".to_owned(),
+                Box::new(EggExpr::Literal(rhs_name.clone())),
+            ));
+            goals_ast.extend(available_subterm_premises(
+                lhs,
+                &mut goal_functions,
+                &mut var_map,
+            )?);
+            goals_ast.extend(available_subterm_premises(
+                rhs,
+                &mut goal_functions,
+                &mut var_map,
+            )?);
+            Ok((EggExpr::Literal(lhs_name), EggExpr::Literal(rhs_name)))
+        };
+        match setup() {
+            Ok(target) => targets.push(Some(target)),
+            Err(error) => {
+                results[index] = Some(Err(error));
+                targets.push(None);
+            }
+        }
+    }
+
+    let enable_arith_poly = arith_poly_norm::uses_arith_machinery(&goal_functions);
+    let mut new_functions = goal_functions.clone();
+    new_functions
+        .names
+        .retain(|name, _| !baseline.functions.names.contains_key(name));
+    let mut declarations = declare_functions(&new_functions);
+    declare_goal_eliminations(
+        &mut declarations,
+        &goal_functions,
+        enable_arith_poly,
+        baseline.has_distinct,
+    );
+    if enable_arith_poly {
+        declarations.extend(arith_poly_norm::declare_opaque_arith_poly_rules(
+            &goal_functions,
+        ));
+    }
+    let mut ast = declarations;
+    ast.extend(premises_ast);
+    ast.extend(goals_ast);
+    let (mut egglog, _) = compile_program(ast);
+    egglog.retain(|command| {
+        !should_deduplicate_command(command) || !baseline.commands.contains(&command.to_string())
+    });
+    let local_code = render_program(&egglog);
+    append_generated_code(&mut code_str, &local_code);
+    if enable_arith_poly {
+        arith_poly_norm::register_arith_poly_primitives(&mut egraph);
+    }
+    if let Err(error) = check_timeout(deadline, &label).and_then(|_| run_program(&mut egraph, egglog))
+    {
+        fill(&mut results, error);
+        return finish(results);
+    }
+
+    // The same rounds as a single goal, but every round checks all the goals
+    // still open, and the batch stops as soon as none is.
+    let mut round = 0;
+    loop {
+        let pending: Vec<usize> = (0..goals.len())
+            .filter(|&index| results[index].is_none())
+            .collect();
+        if pending.is_empty() {
+            break;
+        }
+        if let Err(error) = check_timeout(deadline, &label) {
+            fill(&mut results, error);
+            break;
+        }
+        if !options.continuous_saturation && round >= options.normalized_max_goal_schedule_rounds()
+        {
+            fill(
+                &mut results,
+                format!("egglog check for {label} failed: goal not reached after {round} rounds"),
+            );
+            break;
+        }
+        round += 1;
+        let iterations = if options.continuous_saturation {
+            1
+        } else {
+            round as i16
+        };
+        if let Err(error) =
+            run_goal_schedule_round(&mut egraph, &mut code_str, iterations, deadline, &label)
+        {
+            fill(&mut results, error);
+            break;
+        }
+        for index in pending {
+            let Some((lhs, rhs)) = targets[index].clone() else {
+                continue;
+            };
+            let plans = get_fallback_plans_for(enable_arith_poly, lhs.clone(), rhs.clone());
+            match check_goal_against_current_state(
+                &mut egraph,
+                &mut code_str,
+                &lhs,
+                &rhs,
+                &plans,
+                deadline,
+                &goals[index].label,
+            ) {
+                Ok(()) => results[index] = Some(Ok(())),
+                // Not yet: the next round may get there.  A timeout is caught
+                // at the top of the loop.
+                Err(_) => {}
+            }
+        }
+    }
+    finish(results)
 }
 
 pub fn check_hole_rewrite_with_context(

@@ -85,6 +85,15 @@ pub struct Config {
     /// workers and limits as elaboration so the two compare.
     hole_check_only: bool,
 
+    /// With `hole_check_only`, check holes in batches of this many (0 or 1:
+    /// one at a time): a batch is saturated in one e-graph, and one that
+    /// fails as a whole is retried hole by hole.  Only holes under the same
+    /// assumptions share a batch.
+    hole_batch: usize,
+
+    /// The budget of one batch; `None` means four times the per-hole budget.
+    hole_batch_timeout: Option<Duration>,
+
     /// Options for the egglog runs behind `elaborate_hole_rewrites`.
     hole_rewrite_options: RunEgglogOptions,
 }
@@ -281,6 +290,20 @@ impl<'e> Elaborator<'e> {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let results = std::sync::Mutex::new(HashMap::new());
 
+        if check_only && self.config.hole_batch > 1 {
+            self.check_holes_in_batches(&holes, &results);
+            let mut results = results.into_inner().unwrap();
+            for (_, step) in &holes {
+                results.entry(step.id.clone()).or_insert_with(|| {
+                    (
+                        Err("skipped: the proof's hole budget ran out".to_owned()),
+                        Duration::ZERO,
+                    )
+                });
+            }
+            return results;
+        }
+
         std::thread::scope(|scope| {
             for _ in 0..workers {
                 scope.spawn(|| {
@@ -337,6 +360,170 @@ impl<'e> Elaborator<'e> {
             });
         }
         results
+    }
+
+    /// The batched checking pass: holes are grouped, in proof order, into
+    /// batches of `hole_batch` that share their assumptions, and each batch
+    /// is saturated in one e-graph (one child with `hole_isolate`).  A batch
+    /// that fails as a whole is retried hole by hole, so batching can only
+    /// lose time, never verdicts.  Records one result per hole in `results`,
+    /// with the batch's time split evenly over its holes.
+    fn check_holes_in_batches(
+        &self,
+        holes: &[(Rc<ProofNode>, StepNode)],
+        results: &std::sync::Mutex<HashMap<String, (Result<Vec<String>, String>, Duration)>>,
+    ) {
+        let Some(rules) = self.rare_rules else {
+            return;
+        };
+        let options = self.config.hole_rewrite_options;
+        let isolate = self.config.hole_isolate;
+        let deadline = self.config.hole_deadline;
+        let memory_limit = self.config.hole_memory_limit_mb;
+        let rare_file = self.config.hole_rare_file.clone();
+        let prelude = &self.problem.prelude;
+        let batch_size = self.config.hole_batch;
+        let batch_options = RunEgglogOptions {
+            timeout: self
+                .config
+                .hole_batch_timeout
+                .or_else(|| options.timeout.map(|timeout| timeout * 4)),
+            ..options
+        };
+
+        // Batches: holes in proof order, split by their assumption set so a
+        // batch shares one premise context, cut at the batch size.
+        let mut open: HashMap<Vec<usize>, Vec<usize>> = HashMap::new();
+        let mut batches: Vec<Vec<usize>> = Vec::new();
+        for (index, (node, _)) in holes.iter().enumerate() {
+            let mut key: Vec<usize> = node
+                .get_assumptions()
+                .iter()
+                .map(|assumption| Rc::as_ptr(assumption) as *const () as usize)
+                .collect();
+            key.sort_unstable();
+            let batch = open.entry(key).or_default();
+            batch.push(index);
+            if batch.len() >= batch_size {
+                batches.push(std::mem::take(batch));
+            }
+        }
+        batches.extend(open.into_values().filter(|batch| !batch.is_empty()));
+        let workers = self.config.hole_threads.min(batches.len()).max(1);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    let mut pool = crate::ast::pool::PrimitivePool::new();
+                    loop {
+                        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                            return;
+                        }
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(batch) = batches.get(index) else {
+                            return;
+                        };
+                        let members: Vec<(&Rc<ProofNode>, &StepNode)> = batch
+                            .iter()
+                            .map(|&i| (&holes[i].0, &holes[i].1))
+                            .collect();
+                        let started = Instant::now();
+                        let outcome: Result<HashMap<String, Result<(), String>>, String> =
+                            if isolate {
+                                match rare_file.as_deref() {
+                                    Some(path) => rare_hole::check_batch_in_child(
+                                        &mut pool,
+                                        prelude,
+                                        &members,
+                                        path,
+                                        batch_options,
+                                        memory_limit,
+                                        deadline,
+                                    ),
+                                    None => Err(
+                                        "isolating holes needs the RARE file's path".to_owned()
+                                    ),
+                                }
+                            } else {
+                                let verdicts = rare_hole::check_holes_batched(
+                                    &mut pool,
+                                    &members,
+                                    rules,
+                                    batch_options,
+                                );
+                                Ok(members
+                                    .iter()
+                                    .zip(verdicts)
+                                    .map(|((_, step), verdict)| (step.id.clone(), verdict))
+                                    .collect())
+                            };
+                        let elapsed = started.elapsed();
+                        match outcome {
+                            Ok(verdicts) => {
+                                let proved = verdicts.values().filter(|v| v.is_ok()).count();
+                                log::info!(
+                                    "batch {index}: {} holes, proved {proved}, {:.3}s",
+                                    members.len(),
+                                    elapsed.as_secs_f64()
+                                );
+                                let share = elapsed / members.len().max(1) as u32;
+                                let mut results = results.lock().unwrap();
+                                for (_, step) in &members {
+                                    let verdict = verdicts
+                                        .get(&step.id)
+                                        .cloned()
+                                        .unwrap_or_else(|| Err("batch: no verdict".to_owned()));
+                                    results.insert(
+                                        step.id.clone(),
+                                        (verdict.map(|()| Vec::new()), share),
+                                    );
+                                }
+                            }
+                            Err(reason) => {
+                                log::warn!(
+                                    "batch {index}: {} holes failed after {:.3}s ({reason}); retrying one by one",
+                                    members.len(),
+                                    elapsed.as_secs_f64()
+                                );
+                                for (node, step) in &members {
+                                    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                                        return;
+                                    }
+                                    let started = Instant::now();
+                                    let result = if isolate {
+                                        match rare_file.as_deref() {
+                                            Some(path) => rare_hole::reconstruct_in_child(
+                                                &mut pool,
+                                                prelude,
+                                                node,
+                                                step,
+                                                path,
+                                                options,
+                                                memory_limit,
+                                                true,
+                                                deadline,
+                                            ),
+                                            None => Err(
+                                                "isolating holes needs the RARE file's path"
+                                                    .to_owned(),
+                                            ),
+                                        }
+                                    } else {
+                                        rare_hole::check_hole(&mut pool, node, step, rules, options)
+                                            .map(|()| Vec::new())
+                                    };
+                                    results
+                                        .lock()
+                                        .unwrap()
+                                        .insert(step.id.clone(), (result, started.elapsed()));
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
     }
 
     fn elaborate_hole(

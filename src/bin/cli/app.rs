@@ -82,6 +82,11 @@ pub struct ReconstructHoleOptions {
 
     #[clap(long)]
     pub check_only: bool,
+
+    /// The input holds several holes: check them all in one e-graph and
+    /// print one verdict line per hole.
+    #[clap(long, requires = "check_only")]
+    pub batch: bool,
 }
 
 #[derive(Args)]
@@ -301,6 +306,18 @@ pub struct ElaborationOptions {
     /// anything: the per-hole verdicts and a summary go to the log at `info`.
     #[clap(long)]
     pub hole_check_only: bool,
+
+    /// Check holes in batches of this many: each batch is saturated in one
+    /// e-graph (one child process with `--hole-isolate`), and a batch that
+    /// fails as a whole is retried hole by hole.  Only holes under the same
+    /// assumptions share a batch.  Needs `--hole-check-only`.
+    #[clap(long, value_name = "HOLES", requires = "hole_check_only")]
+    pub hole_batch: Option<usize>,
+
+    /// Budget in milliseconds for one batch.  Defaults to four times the
+    /// per-hole budget.
+    #[clap(long, value_name = "MILLISECONDS", requires = "hole_batch")]
+    pub hole_batch_timeout: Option<u64>,
 
     /// The pipeline of elaboration passes to use.
     #[clap(

@@ -217,6 +217,11 @@ fn elaborate_command(
         .hole_total_budget
         .map(|millis| started + std::time::Duration::from_millis(millis));
     let hole_check_only = options.elaboration.hole_check_only;
+    let hole_batch = options.elaboration.hole_batch.unwrap_or(1);
+    let hole_batch_timeout = options
+        .elaboration
+        .hole_batch_timeout
+        .map(std::time::Duration::from_millis);
 
     let checker_config = (options.checking, options.tools.clone()).into_config();
     let (elab_config, pipeline) = (options.elaboration, options.tools).into_config();
@@ -228,6 +233,8 @@ fn elaborate_command(
         .hole_rare_file(hole_rare_file)
         .hole_deadline(hole_deadline)
         .hole_check_only(hole_check_only)
+        .hole_batch(hole_batch)
+        .hole_batch_timeout(hole_batch_timeout)
         .hole_rewrite_options(hole_rewrite_options);
 
     check_and_elaborate(
@@ -453,6 +460,32 @@ fn reconstruct_hole_command(options: ReconstructHoleOptions) -> CliResult<()> {
         ..carcara::RunEgglogOptions::default()
     };
     let rules = parser::Source::new(std::path::Path::new(&options.rare_file), &rare_text);
+    if options.batch {
+        return match carcara::elaborator::rare_hole::check_batch_from_input(
+            &input,
+            rules,
+            egglog_options,
+        ) {
+            Ok(verdicts) => {
+                let mut out = io::stdout().lock();
+                for (id, verdict) in verdicts {
+                    let line = match verdict {
+                        Ok(()) => format!("hole {id} ok"),
+                        Err(reason) => {
+                            format!("hole {id} failed: {}", reason.replace('\n', " | "))
+                        }
+                    };
+                    writeln!(out, "{line}")
+                        .map_err(|e| carcara::Error::Io { inner: e, file: "<stdout>".into() })?;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        };
+    }
     match carcara::elaborator::rare_hole::reconstruct_from_input(
         &input,
         rules,
