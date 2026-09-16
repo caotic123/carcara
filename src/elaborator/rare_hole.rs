@@ -680,7 +680,36 @@ pub fn check_batch_from_input(
         // reported as it is reached, so a kill loses only the rest.
         let context = crate::rare::engine::RareCtx::new(&database);
         let mut verdicts = Vec::with_capacity(refs.len());
+        // The per-hole budget in `options` is only cooperative, and egglog
+        // cannot be interrupted inside an iteration; alone, a hole is killed
+        // with its child.  Here a watchdog does the same: past the budget it
+        // reports the hole as killed, in the line format the parent parses,
+        // and exits, so the parent retries only the holes after it.
+        let current: std::sync::Arc<std::sync::Mutex<Option<(String, Instant)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        if let Some(timeout) = options.timeout {
+            let current = std::sync::Arc::clone(&current);
+            let grace = Duration::from_millis(500);
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_millis(50));
+                let guard = current.lock().unwrap();
+                if let Some((id, started)) = guard.as_ref() {
+                    let elapsed = started.elapsed();
+                    if elapsed > timeout + grace {
+                        let mut out = std::io::stdout().lock();
+                        let _ = writeln!(
+                            out,
+                            "hole {id} failed: killed after {:.1}s during egglog: hard budget exhausted",
+                            elapsed.as_secs_f64()
+                        );
+                        let _ = out.flush();
+                        std::process::exit(3);
+                    }
+                }
+            });
+        }
         for (node, step) in &refs {
+            *current.lock().unwrap() = Some((step.id.clone(), Instant::now()));
             let verdict = match step.clause.as_slice() {
                 [conclusion] => {
                     let assumptions = node.get_assumptions();
@@ -703,6 +732,7 @@ pub fn check_batch_from_input(
                     clause.len()
                 )),
             };
+            *current.lock().unwrap() = None;
             report(&step.id, &verdict);
             verdicts.push((step.id.clone(), verdict));
         }
