@@ -650,6 +650,8 @@ pub fn check_batch_from_input(
     input: &str,
     rules: parser::Source<'_>,
     options: crate::checker::RunEgglogOptions,
+    sequential: bool,
+    report: &mut dyn FnMut(&str, &Result<(), String>),
 ) -> Result<Vec<(String, Result<(), String>)>, String> {
     let boundary = format!("{HOLE_INPUT_BOUNDARY}\n");
     let (problem, proof) = input
@@ -673,12 +675,49 @@ pub fn check_batch_from_input(
     }
     let refs: Vec<(&Rc<ProofNode>, &StepNode)> =
         holes.iter().map(|(node, step)| (node, step)).collect();
+    if sequential {
+        // One prepared rule database, one e-graph per hole: each verdict is
+        // reported as it is reached, so a kill loses only the rest.
+        let context = crate::rare::engine::RareCtx::new(&database);
+        let mut verdicts = Vec::with_capacity(refs.len());
+        for (node, step) in &refs {
+            let verdict = match step.clause.as_slice() {
+                [conclusion] => {
+                    let assumptions = node.get_assumptions();
+                    let premise_clauses: Vec<&[crate::ast::Rc<crate::ast::Term>]> =
+                        assumptions.iter().map(|premise| premise.clause()).collect();
+                    let (result, _) = crate::rare::engine::check_hole_rewrite_with_context(
+                        &mut pool,
+                        &step.id,
+                        conclusion.clone(),
+                        &premise_clauses,
+                        &context,
+                        options,
+                    );
+                    result
+                        .map(|_| ())
+                        .map_err(|error| format!("egglog check: {error}"))
+                }
+                clause => Err(format!(
+                    "setup: expected a single-literal clause, found {} literals",
+                    clause.len()
+                )),
+            };
+            report(&step.id, &verdict);
+            verdicts.push((step.id.clone(), verdict));
+        }
+        return Ok(verdicts);
+    }
     let verdicts = check_holes_batched(&mut pool, &refs, &database, options);
-    Ok(refs
+    let verdicts: Vec<(String, Result<(), String>)> = refs
         .iter()
         .zip(verdicts)
         .map(|((_, step), verdict)| (step.id.clone(), verdict))
-        .collect())
+        .collect();
+    for (id, verdict) in &verdicts {
+        report(id, verdict);
+    }
+    Ok(verdicts)
 }
 
 /// Checks several holes in one e-graph, in this process.  See
@@ -781,11 +820,13 @@ pub fn reconstruct_in_child(
         input,
         rare_file,
         options,
+        None,
         memory_limit_mb,
         check_only,
-        false,
+        WorkerMode::Single,
         deadline,
     )
+    .map_err(|(reason, _)| reason)
 }
 
 /// Checks a batch of holes in one child process (`reconstruct-hole
@@ -801,54 +842,107 @@ pub fn check_batch_in_child(
     holes: &[(&Rc<ProofNode>, &StepNode)],
     rare_file: &Path,
     options: crate::checker::RunEgglogOptions,
+    kill_after: Option<Duration>,
     memory_limit_mb: Option<usize>,
+    sequential: bool,
     deadline: Option<Instant>,
-) -> Result<HashMap<String, Result<(), String>>, String> {
+) -> Result<HashMap<String, Result<(), String>>, (String, HashMap<String, Result<(), String>>)> {
     let input = holes_input(pool, prelude, holes)
-        .ok_or_else(|| "expected single-literal clauses".to_owned())?;
+        .ok_or_else(|| ("expected single-literal clauses".to_owned(), HashMap::new()))?;
     let label = format!("batch of {} holes", holes.len());
-    let lines = run_hole_worker(
+    let parse = |lines: Vec<String>| {
+        let mut verdicts = HashMap::new();
+        for line in lines {
+            let Some(rest) = line.strip_prefix("hole ") else {
+                continue;
+            };
+            let Some((id, verdict)) = rest.split_once(' ') else {
+                continue;
+            };
+            let verdict = match verdict.strip_prefix("failed: ") {
+                Some(reason) => Err(reason.to_owned()),
+                None => Ok(()),
+            };
+            verdicts.insert(id.to_owned(), verdict);
+        }
+        verdicts
+    };
+    match run_hole_worker(
         &label,
         input,
         rare_file,
         options,
+        kill_after,
         memory_limit_mb,
         true,
-        true,
+        if sequential { WorkerMode::BatchSequential } else { WorkerMode::Batch },
         deadline,
-    )?;
-    let mut verdicts = HashMap::new();
-    for line in lines {
-        let Some(rest) = line.strip_prefix("hole ") else {
-            continue;
-        };
-        let Some((id, verdict)) = rest.split_once(' ') else {
-            continue;
-        };
-        let verdict = match verdict.strip_prefix("failed: ") {
-            Some(reason) => Err(reason.to_owned()),
-            None => Ok(()),
-        };
-        verdicts.insert(id.to_owned(), verdict);
+    ) {
+        Ok(lines) => Ok(parse(lines)),
+        // A killed child may have reported some verdicts before dying.
+        Err((reason, lines)) => Err((reason, parse(lines))),
     }
-    Ok(verdicts)
+}
+
+/// What the child checks: one hole, a batch in one e-graph, or a batch one
+/// hole at a time over a shared rule database.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WorkerMode {
+    Single,
+    Batch,
+    BatchSequential,
 }
 
 /// Runs this binary's `reconstruct-hole` subcommand on `input`, killed at
 /// the earlier of `options.timeout` and `deadline`, and returns its stdout
-/// lines.
+/// lines; on failure, the reason together with whatever stdout lines the
+/// child produced before it died.
 #[allow(clippy::too_many_arguments)]
 fn run_hole_worker(
     label: &str,
     input: String,
     rare_file: &Path,
     options: crate::checker::RunEgglogOptions,
+    kill_after: Option<Duration>,
+    memory_limit_mb: Option<usize>,
+    check_only: bool,
+    mode: WorkerMode,
+    deadline: Option<Instant>,
+) -> Result<Vec<String>, (String, Vec<String>)> {
+    let batch = mode != WorkerMode::Single;
+    run_hole_worker_inner(
+        label,
+        input,
+        rare_file,
+        options,
+        kill_after,
+        memory_limit_mb,
+        check_only,
+        batch,
+        mode == WorkerMode::BatchSequential,
+        deadline,
+    )
+}
+
+/// `kill_after` is the child's hard budget when it differs from the
+/// cooperative one in `options` (a sequential batch: the per-hole budget
+/// inside, the batch's outside).
+#[allow(clippy::too_many_arguments)]
+fn run_hole_worker_inner(
+    label: &str,
+    input: String,
+    rare_file: &Path,
+    options: crate::checker::RunEgglogOptions,
+    kill_after: Option<Duration>,
     memory_limit_mb: Option<usize>,
     check_only: bool,
     batch: bool,
+    sequential: bool,
     deadline: Option<Instant>,
-) -> Result<Vec<String>, String> {
-    let exe = std::env::current_exe().map_err(|error| format!("locating carcara: {error}"))?;
+) -> Result<Vec<String>, (String, Vec<String>)> {
+    let fail = |reason: String| (reason, Vec::new());
+    let exe = std::env::current_exe()
+        .map_err(|error| fail(format!("locating carcara: {error}")))?;
     let mut arguments: Vec<std::ffi::OsString> = vec![
         "reconstruct-hole".into(),
         "--rare-file".into(),
@@ -866,6 +960,9 @@ fn run_hole_worker(
     }
     if batch {
         arguments.push("--batch".into());
+    }
+    if sequential {
+        arguments.push("--batch-sequential".into());
     }
     let mut command = match memory_limit_mb {
         // `exec` keeps the child's pid on carcara itself, so killing the pid
@@ -888,8 +985,8 @@ fn run_hole_worker(
     };
     let started = Instant::now();
     // The child dies at the earlier of its own budget and the proof's.
-    let own_deadline = options
-        .timeout
+    let own_deadline = kill_after
+        .or(options.timeout)
         .and_then(|timeout| started.checked_add(timeout));
     let kill_at = match (own_deadline, deadline) {
         (Some(own), Some(all)) => Some(own.min(all)),
@@ -900,7 +997,7 @@ fn run_hole_worker(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("spawning the hole worker: {error}"))?;
+        .map_err(|error| fail(format!("spawning the hole worker: {error}")))?;
     // A child that dies early closes the pipe; the write then fails with
     // EPIPE (Rust ignores SIGPIPE), which the exit status below explains.
     if let Some(mut stdin) = child.stdin.take() {
@@ -930,7 +1027,7 @@ fn run_hole_worker(
     let status = loop {
         if let Some(status) = child
             .try_wait()
-            .map_err(|error| format!("waiting for the hole worker: {error}"))?
+            .map_err(|error| fail(format!("waiting for the hole worker: {error}")))?
         {
             break Some(status);
         }
@@ -968,6 +1065,13 @@ fn run_hole_worker(
                 .join(" ")
         );
     }
+    let lines = || -> Vec<String> {
+        String::from_utf8_lossy(&stdout)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
     let tail = || {
         // The reason is the last thing the child said that was not egglog's
         // routine "Query took a long time" chatter, which would otherwise
@@ -992,7 +1096,7 @@ fn run_hole_worker(
                 .map(|(name, secs)| format!("{name}={secs}"))
                 .collect::<Vec<_>>()
                 .join(" ");
-            Err(format!(
+            Err((format!(
                 "killed after {:.1}s during {}{}: {}",
                 started.elapsed().as_secs_f64(),
                 if check_only {
@@ -1010,19 +1114,21 @@ fn run_hole_worker(
                 } else {
                     "hard budget exhausted"
                 }
-            ))
+            ), lines()))
         }
-        Some(status) if status.success() => Ok(String::from_utf8_lossy(&stdout)
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(str::to_owned)
-            .collect()),
+        Some(status) if status.success() => Ok(lines()),
         Some(status) => match status.signal() {
-            Some(signal) => Err(format!("worker killed by signal {signal}: {}", tail())),
-            None => Err(format!(
-                "worker exited with status {}: {}",
-                status.code().unwrap_or(-1),
-                tail()
+            Some(signal) => Err((
+                format!("worker killed by signal {signal}: {}", tail()),
+                lines(),
+            )),
+            None => Err((
+                format!(
+                    "worker exited with status {}: {}",
+                    status.code().unwrap_or(-1),
+                    tail()
+                ),
+                lines(),
             )),
         },
     }
@@ -1045,6 +1151,37 @@ pub fn check_hole(
         ));
     };
     let (result, _) = run_egglog(pool, (conclusion.clone(), node), rules, options);
+    result
+        .map(|_| ())
+        .map_err(|error| format!("egglog check: {error}"))
+}
+
+/// [`check_hole`] over an already prepared rule database, so that a run of
+/// holes pays for the database once.
+pub fn check_hole_with_context(
+    pool: &mut dyn TermPool,
+    node: &crate::ast::Rc<ProofNode>,
+    step: &StepNode,
+    context: &crate::rare::engine::RareCtx<'_>,
+    options: crate::checker::RunEgglogOptions,
+) -> Result<(), String> {
+    let [conclusion] = step.clause.as_slice() else {
+        return Err(format!(
+            "setup: expected a single-literal clause, found {} literals",
+            step.clause.len()
+        ));
+    };
+    let assumptions = node.get_assumptions();
+    let premise_clauses: Vec<&[crate::ast::Rc<crate::ast::Term>]> =
+        assumptions.iter().map(|premise| premise.clause()).collect();
+    let (result, _) = crate::rare::engine::check_hole_rewrite_with_context(
+        pool,
+        &step.id,
+        conclusion.clone(),
+        &premise_clauses,
+        context,
+        options,
+    );
     result
         .map(|_| ())
         .map_err(|error| format!("egglog check: {error}"))

@@ -222,6 +222,7 @@ fn elaborate_command(
         .elaboration
         .hole_batch_timeout
         .map(std::time::Duration::from_millis);
+    let hole_batch_sequential = options.elaboration.hole_batch_sequential;
 
     let checker_config = (options.checking, options.tools.clone()).into_config();
     let (elab_config, pipeline) = (options.elaboration, options.tools).into_config();
@@ -235,6 +236,7 @@ fn elaborate_command(
         .hole_check_only(hole_check_only)
         .hole_batch(hole_batch)
         .hole_batch_timeout(hole_batch_timeout)
+        .hole_batch_sequential(hole_batch_sequential)
         .hole_rewrite_options(hole_rewrite_options);
 
     check_and_elaborate(
@@ -461,25 +463,25 @@ fn reconstruct_hole_command(options: ReconstructHoleOptions) -> CliResult<()> {
     };
     let rules = parser::Source::new(std::path::Path::new(&options.rare_file), &rare_text);
     if options.batch {
+        // Each verdict is printed and flushed as it is reached, so a parent
+        // that kills this child still learns the verdicts before the kill.
+        let mut report = |id: &str, verdict: &Result<(), String>| {
+            let line = match verdict {
+                Ok(()) => format!("hole {id} ok"),
+                Err(reason) => format!("hole {id} failed: {}", reason.replace('\n', " | ")),
+            };
+            let mut out = io::stdout().lock();
+            let _ = writeln!(out, "{line}");
+            let _ = out.flush();
+        };
         return match carcara::elaborator::rare_hole::check_batch_from_input(
             &input,
             rules,
             egglog_options,
+            options.batch_sequential,
+            &mut report,
         ) {
-            Ok(verdicts) => {
-                let mut out = io::stdout().lock();
-                for (id, verdict) in verdicts {
-                    let line = match verdict {
-                        Ok(()) => format!("hole {id} ok"),
-                        Err(reason) => {
-                            format!("hole {id} failed: {}", reason.replace('\n', " | "))
-                        }
-                    };
-                    writeln!(out, "{line}")
-                        .map_err(|e| carcara::Error::Io { inner: e, file: "<stdout>".into() })?;
-                }
-                Ok(())
-            }
+            Ok(_) => Ok(()),
             Err(error) => {
                 eprintln!("{error}");
                 std::process::exit(1);

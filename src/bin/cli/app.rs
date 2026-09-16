@@ -87,6 +87,12 @@ pub struct ReconstructHoleOptions {
     /// print one verdict line per hole.
     #[clap(long, requires = "check_only")]
     pub batch: bool,
+
+    /// With `--batch`, check the holes one at a time over one prepared rule
+    /// database instead of in one e-graph, reporting each verdict as it is
+    /// reached.
+    #[clap(long, requires = "batch")]
+    pub batch_sequential: bool,
 }
 
 #[derive(Args)]
@@ -318,6 +324,13 @@ pub struct ElaborationOptions {
     /// per-hole budget.
     #[clap(long, value_name = "MILLISECONDS", requires = "hole_batch")]
     pub hole_batch_timeout: Option<u64>,
+
+    /// With `--hole-batch`, a batch's child checks its holes one at a time,
+    /// each in its own e-graph, sharing only the prepared rule database; the
+    /// batch budget then defaults to the per-hole budget times the batch
+    /// size.
+    #[clap(long, requires = "hole_batch")]
+    pub hole_batch_sequential: bool,
 
     /// The pipeline of elaboration passes to use.
     #[clap(

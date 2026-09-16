@@ -91,8 +91,13 @@ pub struct Config {
     /// assumptions share a batch.
     hole_batch: usize,
 
-    /// The budget of one batch; `None` means four times the per-hole budget.
+    /// The budget of one batch; `None` means four times the per-hole budget
+    /// (the per-hole budget times the batch size when sequential).
     hole_batch_timeout: Option<Duration>,
+
+    /// A batch's child checks its holes one at a time over one prepared
+    /// rule database, each in its own e-graph, instead of all in one.
+    hole_batch_sequential: bool,
 
     /// Options for the egglog runs behind `elaborate_hole_rewrites`.
     hole_rewrite_options: RunEgglogOptions,
@@ -383,12 +388,29 @@ impl<'e> Elaborator<'e> {
         let rare_file = self.config.hole_rare_file.clone();
         let prelude = &self.problem.prelude;
         let batch_size = self.config.hole_batch;
-        let batch_options = RunEgglogOptions {
-            timeout: self
-                .config
-                .hole_batch_timeout
-                .or_else(|| options.timeout.map(|timeout| timeout * 4)),
-            ..options
+        let sequential = self.config.hole_batch_sequential;
+        // The child's cooperative budget: for a shared e-graph the whole
+        // batch's, for sequential checking each hole's own.  The kill of the
+        // child is at the batch budget below.
+        let child_options = if sequential {
+            options
+        } else {
+            RunEgglogOptions {
+                timeout: self
+                    .config
+                    .hole_batch_timeout
+                    .or_else(|| options.timeout.map(|timeout| timeout * 4)),
+                ..options
+            }
+        };
+        let batch_kill_after = |holes: usize| {
+            if sequential {
+                self.config
+                    .hole_batch_timeout
+                    .or_else(|| options.timeout.map(|timeout| timeout * holes as u32))
+            } else {
+                child_options.timeout
+            }
         };
 
         // Batches: holes in proof order, split by their assumption set so a
@@ -429,64 +451,89 @@ impl<'e> Elaborator<'e> {
                             .map(|&i| (&holes[i].0, &holes[i].1))
                             .collect();
                         let started = Instant::now();
-                        let outcome: Result<HashMap<String, Result<(), String>>, String> =
-                            if isolate {
-                                match rare_file.as_deref() {
-                                    Some(path) => rare_hole::check_batch_in_child(
-                                        &mut pool,
-                                        prelude,
-                                        &members,
-                                        path,
-                                        batch_options,
-                                        memory_limit,
-                                        deadline,
-                                    ),
-                                    None => Err(
-                                        "isolating holes needs the RARE file's path".to_owned()
-                                    ),
-                                }
-                            } else {
-                                let verdicts = rare_hole::check_holes_batched(
+                        type Verdicts = HashMap<String, Result<(), String>>;
+                        let outcome: Result<Verdicts, (String, Verdicts)> = if isolate {
+                            match rare_file.as_deref() {
+                                Some(path) => rare_hole::check_batch_in_child(
                                     &mut pool,
+                                    prelude,
                                     &members,
-                                    rules,
-                                    batch_options,
-                                );
-                                Ok(members
-                                    .iter()
-                                    .zip(verdicts)
-                                    .map(|((_, step), verdict)| (step.id.clone(), verdict))
-                                    .collect())
-                            };
-                        let elapsed = started.elapsed();
-                        match outcome {
-                            Ok(verdicts) => {
-                                let proved = verdicts.values().filter(|v| v.is_ok()).count();
-                                log::info!(
-                                    "batch {index}: {} holes, proved {proved}, {:.3}s",
-                                    members.len(),
-                                    elapsed.as_secs_f64()
-                                );
-                                let share = elapsed / members.len().max(1) as u32;
-                                let mut results = results.lock().unwrap();
-                                for (_, step) in &members {
-                                    let verdict = verdicts
-                                        .get(&step.id)
-                                        .cloned()
-                                        .unwrap_or_else(|| Err("batch: no verdict".to_owned()));
-                                    results.insert(
-                                        step.id.clone(),
-                                        (verdict.map(|()| Vec::new()), share),
-                                    );
-                                }
+                                    path,
+                                    child_options,
+                                    batch_kill_after(members.len()),
+                                    memory_limit,
+                                    sequential,
+                                    deadline,
+                                ),
+                                None => Err((
+                                    "isolating holes needs the RARE file's path".to_owned(),
+                                    HashMap::new(),
+                                )),
                             }
-                            Err(reason) => {
-                                log::warn!(
-                                    "batch {index}: {} holes failed after {:.3}s ({reason}); retrying one by one",
-                                    members.len(),
-                                    elapsed.as_secs_f64()
+                        } else if sequential {
+                            let context = crate::rare::engine::RareCtx::new(rules);
+                            Ok(members
+                                .iter()
+                                .map(|(node, step)| {
+                                    let verdict = rare_hole::check_hole_with_context(
+                                        &mut pool, node, step, &context, options,
+                                    );
+                                    (step.id.clone(), verdict)
+                                })
+                                .collect())
+                        } else {
+                            let verdicts = rare_hole::check_holes_batched(
+                                &mut pool,
+                                &members,
+                                rules,
+                                child_options,
+                            );
+                            Ok(members
+                                .iter()
+                                .zip(verdicts)
+                                .map(|((_, step), verdict)| (step.id.clone(), verdict))
+                                .collect())
+                        };
+                        let elapsed = started.elapsed();
+                        let (verdicts, failure) = match outcome {
+                            Ok(verdicts) => (verdicts, None),
+                            Err((reason, partial)) => (partial, Some(reason)),
+                        };
+                        let proved = verdicts.values().filter(|v| v.is_ok()).count();
+                        // The batch's time is split over the holes it gave a
+                        // verdict to; a retried hole gets its own time below.
+                        let share = elapsed / verdicts.len().max(1) as u32;
+                        {
+                            let mut results = results.lock().unwrap();
+                            for (id, verdict) in &verdicts {
+                                results.insert(
+                                    id.clone(),
+                                    (verdict.clone().map(|()| Vec::new()), share),
                                 );
-                                for (node, step) in &members {
+                            }
+                        }
+                        let Some(reason) = failure else {
+                            log::info!(
+                                "batch {index}: {} holes, proved {proved}, {:.3}s",
+                                members.len(),
+                                elapsed.as_secs_f64()
+                            );
+                            continue;
+                        };
+                        let missing: Vec<&(&Rc<ProofNode>, &StepNode)> = members
+                            .iter()
+                            .filter(|(_, step)| !verdicts.contains_key(&step.id))
+                            .collect();
+                        log::warn!(
+                            "batch {index}: {} holes failed after {:.3}s with {} verdicts ({reason}); retrying the {} without one",
+                            members.len(),
+                            elapsed.as_secs_f64(),
+                            verdicts.len(),
+                            missing.len()
+                        );
+                        {
+                            let members = missing;
+                                for (node, step) in members {
                                     if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                                         return;
                                     }
@@ -520,7 +567,6 @@ impl<'e> Elaborator<'e> {
                                 }
                             }
                         }
-                    }
                 });
             }
         });
