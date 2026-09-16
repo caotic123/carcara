@@ -709,6 +709,13 @@ pub fn check_batch_from_input(
             });
         }
         for (node, step) in &refs {
+            // Announced before the check so that a parent whose child dies
+            // without a verdict knows which hole took it down.
+            {
+                let mut out = std::io::stdout().lock();
+                let _ = writeln!(out, "hole {} started", step.id);
+                let _ = out.flush();
+            }
             *current.lock().unwrap() = Some((step.id.clone(), Instant::now()));
             let verdict = match step.clause.as_slice() {
                 [conclusion] => {
@@ -880,8 +887,12 @@ pub fn check_batch_in_child(
     let input = holes_input(pool, prelude, holes)
         .ok_or_else(|| ("expected single-literal clauses".to_owned(), HashMap::new()))?;
     let label = format!("batch of {} holes", holes.len());
-    let parse = |lines: Vec<String>| {
+    // Verdict lines, plus the hole the child had started when it died: that
+    // one is charged with the death rather than retried, since alone it
+    // would die the same way.
+    let parse = |lines: Vec<String>, death: Option<&str>| {
         let mut verdicts = HashMap::new();
+        let mut started: Option<String> = None;
         for line in lines {
             let Some(rest) = line.strip_prefix("hole ") else {
                 continue;
@@ -889,11 +900,20 @@ pub fn check_batch_in_child(
             let Some((id, verdict)) = rest.split_once(' ') else {
                 continue;
             };
+            if verdict == "started" {
+                started = Some(id.to_owned());
+                continue;
+            }
             let verdict = match verdict.strip_prefix("failed: ") {
                 Some(reason) => Err(reason.to_owned()),
                 None => Ok(()),
             };
             verdicts.insert(id.to_owned(), verdict);
+        }
+        if let (Some(id), Some(reason)) = (started, death) {
+            verdicts
+                .entry(id)
+                .or_insert_with(|| Err(reason.to_owned()));
         }
         verdicts
     };
@@ -908,9 +928,12 @@ pub fn check_batch_in_child(
         if sequential { WorkerMode::BatchSequential } else { WorkerMode::Batch },
         deadline,
     ) {
-        Ok(lines) => Ok(parse(lines)),
+        Ok(lines) => Ok(parse(lines, None)),
         // A killed child may have reported some verdicts before dying.
-        Err((reason, lines)) => Err((reason, parse(lines))),
+        Err((reason, lines)) => {
+            let partial = parse(lines, Some(&reason));
+            Err((reason, partial))
+        }
     }
 }
 
