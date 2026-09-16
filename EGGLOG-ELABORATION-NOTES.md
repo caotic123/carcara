@@ -1352,3 +1352,65 @@ re-run the kept holes of a sample; make an unreachable goal fail fast
 
 Report: `~/exp/egglog-holes/report/report.pdf` (`make-report.py` renders
 every table and plot from `results.json.gz`).
+
+## 20. Batching hole justifications (2026-09-16)
+
+Question: does batching holes the way the skeletons paper batches theory
+lemmas (one query for a disjunction of k lemmas, batch size 50) help the
+hole engine attempt more holes within a budget?  Two designs were built
+behind `--hole-batch N` (checking pass only), both grouping holes that
+share their assumptions into batches of N in proof order, one child per
+batch, and retrying a batch's holes one by one when the batch dies:
+
+* **Shared e-graph** (commit `c91fd8ec`): the batch's goals go into one
+  e-graph, saturated once, every open goal checked after each round.
+  Budget `--hole-batch-timeout`, default 4× the per-hole one.
+* **Sequential** (`--hole-batch-sequential`, commits `b05cea24`,
+  `2d8e846a`): the child prepares the rule database once and checks its
+  holes one at a time, each in its own e-graph, printing each verdict as
+  it is reached; a watchdog kills a hole at the per-hole budget, and a
+  killed child loses only the holes it had not reached.
+
+Sample: 10 arithmetic proofs of the full run with 1k–4.5k holes that the
+run had fully attempted (7 QF_LIA: c_inference, FISCHER9, ring_2exp10,
+cut_lemma_01_008, SMPT RwMutex RF-09, MULTIPLIER_3, bofill ex4880; 3
+QF_LRA: vpm2-0, clocksynchro_3clocks, tgc_io-safe-6), re-proved locally
+(cvc5 1.3.4.dev, same flags), 29,479 holes.  Local machine, 8 cores, two
+runs at a time, each with 4 workers, 30 s and 3 GB per hole.  Runner and
+logs: `~/exp/egglog-holes/batch/` (`run-batch-exp.sh`, `run-seq-exp.sh`,
+`summarize.py`, `results/`).
+
+### The fixed cost of a hole
+
+A child on a trivial goal (`a = a`) takes 0.18 s; with an empty RARE file
+0.01 s.  So the 163-rule database (its egglog program, and the per-rule
+overhead of each saturation round even with nothing to match) is most of
+a median hole (0.17–0.25 s).  That is the amortizable part; the rest is
+the goal's own saturation.
+
+### Shared e-graph: a loss at every size
+
+Three-proof subset with every size run (c_inference, FISCHER9, vpm2;
+7,750 holes; verdicts identical in all configurations, 7,682 proved):
+
+| batch | wall s | failed batches | holes in them |
+|---|---|---|---|
+| 1 (per hole) | 571 | 0 | 0 |
+| 10 | 1,351 | 59 of 777 | 586 |
+| 50 | 1,403 | 58 of 156 | 2,850 |
+| 100 | 1,594 | 40 of 79 | 3,850 |
+| 500 | 1,113 | 16 of 17 | 7,250 |
+| 1000 | 896 | 10 of 10 | 7,750 |
+
+Two effects.  Batches die, mostly at the 3 GB limit, after 60–70 s, and
+their holes are redone one by one.  And batches that succeed are slower
+than their holes alone: on RwMutex the successful batches of 10 took 21 s
+at the median where the ten holes take ~9 s (RwMutex and bofill at size
+10 were stopped after 30 min with 51 of 216 and 39 of 236 batches failed;
+their baselines are 8 and 7 min).  The goals interact: every goal's
+subterms are available to every rule, and the pair-equality seed rules
+(§19.1) grow quadratically in the available terms, so the batch's
+saturation costs more than the sum of its holes and blows up where none
+of them would.  At 500 and 1000 every batch dies within a minute or two
+and the run is the baseline plus that.  Batching holes in one e-graph is
+therefore out, at least while the seeding is what it is.
