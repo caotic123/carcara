@@ -1183,3 +1183,141 @@ the small samples' (QF_UF p50 18.6k steps, p90 136k), so the pass budgets
 will bind often. Wall-time estimate on 48 slots (24 nodes × 2): 11 h at a
 250 s mean per proof task, 26 h at 600 s, hard cap 84 h if every proof task
 ran to its 2,000 s limit.
+
+## 19. The full run: results (2026-09-16)
+
+Submitted 2026-09-15 19:52 (cluster time), aggregator stopped 2026-09-16
+13:21: about 17.5 h wall, of which the first hours ran on a handful of
+slots because the `max2` QOS pool was shared with other jobs; 48 slots for
+the rest. Binary: static build of `444621fa` (before the two fixes of
+`49c3e518`, see the end of this section). Results in
+`~/exp/results/egglog-holes/full/` (`results.json.gz`, 125 MB);
+`analyze.py`, `perhole.py` and the task-level script used here are in
+`~/exp/egglog-holes/`.
+
+### Yield
+
+| logic | tasks | complete proofs | proofs with an `ok` end-to-end | holes | holes per proof p50 / p90 / max |
+|---|---|---|---|---|---|
+| QF_UF | 4,361 | 4,326 | 4,126 | 2,421,863 | 553 / 828 / 5,136 |
+| QF_LIA | 4,748 | 2,542 | 2,495 | 5,528,247 | 47 / 2,617 / 104,276 |
+| QF_LRA | 703 | 537 | 515 | 4,395,839 | 595 / 27,520 / 117,845 |
+
+"Complete" is the `proof_complete` criterion of §18; no cvc5 run that
+exited 0 printed a truncated proof. The proofs that did not reach `ok`:
+QF_UF 198 upfront failures (all `pivot was not found in clause`, the
+QG-classification `iso_*` family: a cvc5 resolution-pivot problem, not
+ours), 1 checking-pass timeout, 1 re-check timeout; QF_LIA 5 upfront
+failures (2 pivot, 3 unspecific), 29 checking-pass external timeouts
+(660 s), 4 elaboration external timeouts (990 s), 9 re-check timeouts
+(180 s); QF_LRA 7 upfront (pivot), 15 checking-pass external timeouts.
+The external timeouts fire when the pass deadline expires inside a step
+the budget cannot interrupt (parsing, or the non-hole checking of a proof
+with hundreds of thousands of steps). Five QF_LIA tasks
+(`30_Function_Pointer3_vs-O0`, `SpamAssassin-loop-O0`, `cggmp2005_variant-O0`,
+`linear-inequality-inv-a-O0`, `prp-3-18`) hit the 24 GB job limit before
+printing anything, so they count as cvc5 failures.
+
+### Holes: the budgets bind on the arithmetic logics
+
+| logic | checking: proved / kept / skipped | elaboration: justified / kept / skipped |
+|---|---|---|
+| QF_UF | 2,266,130 / 31,762 / 15,865 | 2,194,555 / 33,290 / 14,638 |
+| QF_LIA | 1,574,011 / 23,028 / 3,921,150 | 1,626,925 / 26,638 / 3,790,597 |
+| QF_LRA | 380,758 / 19,837 / 3,685,946 | 434,653 / 23,985 / 3,618,144 |
+
+Skipped means the pass budget (600 s / 900 s) ran out before the hole was
+tried. The skipped mass is concentrated in a few hundred giant proofs:
+
+| logic | proofs that hit the checking budget | holes in them | share of the logic's holes in proofs > 10k holes |
+|---|---|---|---|
+| QF_UF | 10 | 24,480 | 0% |
+| QF_LIA | 225 | 4,549,797 | 74% (104 proofs) |
+| QF_LRA | 244 | 4,032,981 | 88% (107 proofs) |
+
+Families: QF_LIA `rings` and `rings_preprocessed` alone hold 2.8 M holes,
+of which 2.56 M were kept or skipped; QF_LRA `uart`, `sc`, `LassoRanker`
+and `UltimateInvariantSynthesis` similar. Whatever the pass budget, a
+proof with 100k holes at 0.2 s each needs 5.5 CPU-hours per pass.
+
+Among the holes that were actually attempted the picture is the same as
+in the small runs:
+
+| logic | attempted (checking) | success | attempted (elaboration) | success | proofs left hole-free |
+|---|---|---|---|---|---|
+| QF_UF | 2,297,892 | 98.6% | 2,299,119 | 98.6% | 505 of 4,326 |
+| QF_LIA | 1,597,039 | 98.6% | 1,700,833 | 98.4% | 1,258 of 2,542 |
+| QF_LRA | 400,595 | 95.0% | 468,397 | 94.9% | 130 of 537 |
+
+Per-hole time (holes the pass finished): checking p50 0.22 s (QF_LIA),
+0.23 s (QF_LRA), 0.09 s (QF_UF); elaboration 1.2× to 1.33× checking at
+the median. Phase shares of elaboration time: egglog 71% (QF_UF) to 85%
+(QF_LIA), serialize 5.5% to 14% (QF_UF), search 9% to 11%, index and
+emit under 3%. The serializer fix (§16) holds: only 255 holes were killed
+in the serialize phase across the run, 32k in the egglog phase.
+
+### Why holes are kept (per pass, all logics)
+
+| reason | checking | elaboration |
+|---|---|---|
+| killed at the per-hole limit (30 s / 45 s) | 40,932 | 30,568 |
+| killed at the 5 GB per-hole memory limit | 24,391 | 39,805 |
+| egglog could not prove (saturated, goal not reached) | 6,667 | 7,329 |
+| killed by the pass budget while running | 1,905 | 1,791 |
+| no certificate found in the snapshot | 2 | 2,960 |
+| independent checker rejected the reconstruction | – | 544 |
+| worker errors (below) | 63 | 120 |
+
+So 96% of the kept holes die inside egglog's saturation, by time or by
+memory, exactly the loss profile of §17 and EGGLOG-3-ROUTE.md; the
+reconstruction side (no certificate + checker rejected + decode) is 3.5k
+of 83k in the elaboration pass. Holes proved by checking but kept by
+elaboration: 3,919 of 4.14 M proved (0.09%), mostly `no certificate`
+(2,711) and `checker rejected` (525).
+
+Worker errors, all reproducible offline:
+
+* 120 `identifier 'x' is not defined`: holes under `bind` anchors that
+  bind variables. In these quantifier-free logics that comes from
+  parameterized `define-fun`: cvc5 keeps `f` as
+  `(= f (lambda ((x Int)) body))` and rewrites the body under an anchor
+  with `:args ((x Int) (:= (x Int) x))`. Fixed in `49c3e518` (the hole's
+  problem text declares the anchor-bound variables). Affected: 13 QF_LIA
+  `2019-ezsmt/incrementalScheduling` benchmarks; parameterized
+  `define-fun` exists in 23 QF_LIA and 19 QF_LRA benchmarks of the sets,
+  none in QF_UF. Minimal reproducer: `define-fun-anchor.smt2` +
+  `.smt2.alethe` in the repo root (untracked), fixture
+  `tests/rare/elaborate/anchor-vars.smt2`.
+* The same `define-fun` applications also produce one beta-reduction hole
+  each, `(= ((lambda ((x Int)) body) a) body[a/x])`. The engine has no
+  beta reduction: `Term::App` names the egglog function after the head's
+  printed text, so the lambda-headed application is an opaque symbol and
+  the goal is unreachable. With the goal unreachable the rewrite ruleset
+  does not saturate: the seed rules that build `(= t s)` for every pair
+  of available terms feed `eq-symm`/`arith-eq-elim` → `and` of `>=`/`<=`
+  → `arith-elim-leq`/`arith-leq-norm`/`arith-geq-norm1`, whose outputs
+  become available and pair up again; quadratic growth per iteration
+  (160 → 4,421 eq-elim matches in two iterations) and a memory kill after
+  ~10 s. Open. Cheapest fix: refuse lambda-headed goals up front; right
+  fix: substitute the parameters before encoding.
+* 29 panics at `search.rs:1087` (`a reconstructed certificate must pass
+  the independent checker`): now a warning that keeps the hole
+  (`49c3e518`).
+* 29 `a certificate term failed to decode`, 6 `Illegal merge attempted
+  for function to_formula` (QF_UF), 59 `e-graph too large to capture`
+  (QF_LIA): open.
+
+### What a rerun should change
+
+1. The static binary must be rebuilt from `49c3e518` or later.
+2. The pass budgets are the wrong knob for the arithmetic logics: 3.9 M of
+   5.5 M QF_LIA holes and 3.7 M of 4.4 M QF_LRA holes were never tried.
+   Either accept that (report per-hole rates over attempted holes, which is
+   what the small runs measured) or cap the proof size and give the giant
+   proofs their own run with a budget proportional to the hole count.
+3. The re-check limit (180 s) is too short for the elaborated giant
+   proofs (10 timeouts); the external pass timeouts (49) mean the
+   `--hole-total-budget` deadline needs to be observed inside the non-hole
+   checking too.
+4. The 24 GB job limit was hit by 5 tasks before cvc5 finished; either
+   raise it or accept those as cvc5 failures.
