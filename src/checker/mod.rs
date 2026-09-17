@@ -107,6 +107,12 @@ pub struct RunEgglogOptions {
     /// ill-sorted terms.  Sorts are seeded from the goal's terms and
     /// propagated through operator heads and declared function sorts.
     pub sort_guards: bool,
+
+    /// Stop a goal once the e-graph has grown past this many times its size
+    /// after the program was loaded (with a floor), instead of running the
+    /// remaining rounds to the budget: an unreachable goal then fails in
+    /// well under a second.  Zero disables the bound.
+    pub growth_bound: usize,
 }
 
 impl Default for RunEgglogOptions {
@@ -118,6 +124,7 @@ impl Default for RunEgglogOptions {
             print_egglog: false,
             seed_from_goal: false,
             sort_guards: false,
+            growth_bound: 0,
         }
     }
 }

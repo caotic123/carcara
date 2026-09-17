@@ -101,6 +101,10 @@ pub struct ReconstructHoleOptions {
     /// See `--rare-sort-guards`.
     #[clap(long)]
     pub sort_guards: bool,
+
+    /// See `--rare-growth-bound`.
+    #[clap(long, value_name = "FACTOR")]
+    pub growth_bound: Option<usize>,
 }
 
 #[derive(Args)]
@@ -264,6 +268,12 @@ pub struct CheckingOptions {
     /// equalities over other sorts.
     #[clap(long)]
     pub rare_sort_guards: bool,
+
+    /// Stop a hole once the e-graph has grown past this many times its
+    /// initial size (floor 50k tuples) instead of running the remaining
+    /// rounds to the budget; zero disables the bound.
+    #[clap(long, value_name = "FACTOR")]
+    pub rare_growth_bound: Option<usize>,
 
     /// Cooperative time budget in milliseconds for each RARE hole rewrite.
     #[clap(long, value_name = "MILLISECONDS")]
@@ -631,6 +641,7 @@ impl IntoConfig for (CheckingOptions, ToolOptions) {
                 print_egglog: c.print_egglog,
                 seed_from_goal: c.rare_seed_from_goal,
                 sort_guards: c.rare_sort_guards,
+                growth_bound: c.rare_growth_bound.unwrap_or(0),
                 ..RunEgglogOptions::default()
             })
     }

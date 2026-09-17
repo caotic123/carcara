@@ -1422,19 +1422,35 @@ const MAX_SATURATION_TUPLES: usize = 4_000_000;
 /// loop stopping as soon as the database stops growing (its fixpoint) or the
 /// step bound is reached.  With no deadline the original single saturating
 /// call is kept, so untimed runs behave exactly as before.
+/// The smallest growth cap: a goal may always reach this many tuples.
+const GROWTH_FLOOR: usize = 50_000;
+
+/// Fails when the e-graph has grown past `tuple_cap`.
+fn check_growth(egraph: &EGraph, tuple_cap: Option<usize>, goal_label: &str) -> Result<(), String> {
+    match tuple_cap {
+        Some(cap) if egraph.num_tuples() > cap => Err(format!(
+            "egglog check for {goal_label} stopped: the e-graph grew past the bound ({} tuples, cap {cap})",
+            egraph.num_tuples()
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn run_statement_within_deadline(
     egraph: &mut EGraph,
     code_str: &mut String,
     statement: &EggStatement,
     deadline: Option<Instant>,
+    tuple_cap: Option<usize>,
     goal_label: &str,
 ) -> Result<(), String> {
     let EggStatement::Saturate { ruleset } = statement else {
         check_timeout(deadline, goal_label)?;
         run_and_record_statements(egraph, code_str, vec![statement.clone()])?;
+        check_growth(egraph, tuple_cap, goal_label)?;
         return check_timeout(deadline, goal_label);
     };
-    if deadline.is_none() {
+    if deadline.is_none() && tuple_cap.is_none() {
         return run_and_record_statements(egraph, code_str, vec![statement.clone()]);
     }
     for _ in 0..BOUNDED_SATURATION_STEPS {
@@ -1449,6 +1465,7 @@ fn run_statement_within_deadline(
             }],
         )?;
         check_timeout(deadline, goal_label)?;
+        check_growth(egraph, tuple_cap, goal_label)?;
         let after = egraph.num_tuples();
         if after == before || after > MAX_SATURATION_TUPLES {
             break;
@@ -1462,6 +1479,7 @@ fn run_goal_schedule_round(
     code_str: &mut String,
     iterations: i16,
     deadline: Option<Instant>,
+    tuple_cap: Option<usize>,
     goal_label: &str,
 ) -> Result<(), String> {
     for statement in goal_run_schedule(1) {
@@ -1474,7 +1492,9 @@ fn run_goal_schedule_round(
             iterations
         };
         for _ in 0..repeats {
-            run_statement_within_deadline(egraph, code_str, &statement, deadline, goal_label)?;
+            run_statement_within_deadline(
+                egraph, code_str, &statement, deadline, tuple_cap, goal_label,
+            )?;
         }
     }
     Ok(())
@@ -1513,10 +1533,11 @@ fn run_goal_fallback_attempt(
     code_str: &mut String,
     fallback: &GoalFallbackPlan,
     deadline: Option<Instant>,
+    tuple_cap: Option<usize>,
     goal_label: &str,
 ) -> Result<(), String> {
     for statement in &fallback.guard_setup {
-        run_statement_within_deadline(egraph, code_str, statement, deadline, goal_label)?;
+        run_statement_within_deadline(egraph, code_str, statement, deadline, tuple_cap, goal_label)?;
     }
     check_timeout(deadline, goal_label)?;
     run_and_record_check(
@@ -1526,7 +1547,7 @@ fn run_goal_fallback_attempt(
         EggExpr::NativeBool(true),
     )?;
     for statement in &fallback.setup {
-        run_statement_within_deadline(egraph, code_str, statement, deadline, goal_label)?;
+        run_statement_within_deadline(egraph, code_str, statement, deadline, tuple_cap, goal_label)?;
     }
     check_timeout(deadline, goal_label)?;
     let result = run_and_record_check(egraph, code_str, fallback.lhs.clone(), fallback.rhs.clone());
@@ -1539,12 +1560,14 @@ fn run_goal_fallback_attempts(
     code_str: &mut String,
     fallback_plans: &[GoalFallbackPlan],
     deadline: Option<Instant>,
+    tuple_cap: Option<usize>,
     goal_label: &str,
 ) -> Result<(), String> {
     let mut errors = Vec::with_capacity(fallback_plans.len());
 
     for fallback in fallback_plans {
-        match run_goal_fallback_attempt(egraph, code_str, fallback, deadline, goal_label) {
+        match run_goal_fallback_attempt(egraph, code_str, fallback, deadline, tuple_cap, goal_label)
+        {
             Ok(()) => return Ok(()),
             Err(error) => errors.push(format!("{} fallback failed:\n{}", fallback.label, error)),
         }
@@ -1560,6 +1583,7 @@ fn check_goal_against_current_state(
     rhs_expr: &EggExpr,
     fallback_plans: &[GoalFallbackPlan],
     deadline: Option<Instant>,
+    tuple_cap: Option<usize>,
     goal_label: &str,
 ) -> Result<(), String> {
     check_timeout(deadline, goal_label)?;
@@ -1570,7 +1594,14 @@ fn check_goal_against_current_state(
                 return Err(raw_error);
             }
 
-            run_goal_fallback_attempts(egraph, code_str, fallback_plans, deadline, goal_label)
+            run_goal_fallback_attempts(
+                egraph,
+                code_str,
+                fallback_plans,
+                deadline,
+                tuple_cap,
+                goal_label,
+            )
                 .map_err(|fallback_error| format!("{raw_error}\n{fallback_error}"))
         }
     }
@@ -1592,6 +1623,8 @@ fn check_goal_with_retry_rounds(
     deadline: Option<Instant>,
 ) -> Result<(), String> {
     let mut last_error = None;
+    let base = egraph.num_tuples();
+    let tuple_cap = growth_cap(egraph, options);
 
     let mut round = 0;
     loop {
@@ -1607,7 +1640,14 @@ fn check_goal_with_retry_rounds(
         } else {
             round as i16
         };
-        run_goal_schedule_round(egraph, code_str, iterations, deadline, &goal.goal_label)?;
+        run_goal_schedule_round(
+            egraph,
+            code_str,
+            iterations,
+            deadline,
+            tuple_cap,
+            &goal.goal_label,
+        )?;
         check_timeout(deadline, &goal.goal_label)?;
 
         let check_result = check_goal_against_current_state(
@@ -1617,16 +1657,29 @@ fn check_goal_with_retry_rounds(
             &goal.rhs_expr,
             &goal.fallback_plans,
             deadline,
+            tuple_cap,
             &goal.goal_label,
         );
         check_timeout(deadline, &goal.goal_label)?;
 
         match check_result {
             Ok(()) => {
+                if tuple_cap.is_some() {
+                    log::info!(
+                        "growth: base {base} final {} rounds {round} reached",
+                        egraph.num_tuples()
+                    );
+                }
                 return Ok(());
             }
             Err(error) => last_error = Some(error),
         }
+    }
+    if tuple_cap.is_some() {
+        log::info!(
+            "growth: base {base} final {} rounds {round} unreached",
+            egraph.num_tuples()
+        );
     }
 
     Err(format!(
@@ -1634,6 +1687,17 @@ fn check_goal_with_retry_rounds(
         goal.goal_label,
         last_error.unwrap_or_else(|| "goal equality check failed".to_owned())
     ))
+}
+
+/// The tuple cap of a goal under `growth_bound`: the bound times the
+/// e-graph's size once the goal's program is loaded, never below the floor.
+fn growth_cap(egraph: &EGraph, options: RunEgglogOptions) -> Option<usize> {
+    (options.growth_bound > 0).then(|| {
+        egraph
+            .num_tuples()
+            .saturating_mul(options.growth_bound)
+            .max(GROWTH_FLOOR)
+    })
 }
 
 fn check_timeout(deadline: Option<Instant>, goal_label: &str) -> Result<(), String> {
@@ -1759,18 +1823,56 @@ fn function_sort_rules(name: &str, is_op: bool, result: Option<&Sort>) -> Vec<Eg
     }
 }
 
-/// Sort facts for a goal-side or premise term and every subterm of it,
-/// from the term pool's sorts: the seeds of `sort_guards`.
+/// The sort relation of a term as far as the guards need it: Int, Real or
+/// Bool, or `None` for any other sort.  Computed from the term itself, not
+/// from a pool: a hole worker's pool holds only what it parsed.
+fn guard_sort(term: &Rc<Term>) -> Option<&'static str> {
+    match term.as_ref() {
+        Term::Const(constant) => sort_relation(&constant.sort()),
+        Term::Var(_, sort) => sort_relation(sort.as_ref()),
+        Term::App(head, _) => application_result_sort(head)
+            .as_ref()
+            .and_then(sort_relation),
+        Term::Op(operator, args) => match operator {
+            Operator::True
+            | Operator::False
+            | Operator::Not
+            | Operator::Implies
+            | Operator::And
+            | Operator::Or
+            | Operator::Xor
+            | Operator::Equals
+            | Operator::Distinct
+            | Operator::LessThan
+            | Operator::GreaterThan
+            | Operator::LessEq
+            | Operator::GreaterEq
+            | Operator::IsInt => Some(SORT_BOOL),
+            Operator::ToReal | Operator::RealDiv => Some(SORT_REAL),
+            Operator::ToInt | Operator::IntDiv | Operator::Mod => Some(SORT_INT),
+            Operator::Add | Operator::Sub | Operator::Mult | Operator::Abs => {
+                args.first().and_then(guard_sort)
+            }
+            Operator::Ite => args.get(1).and_then(guard_sort),
+            _ => None,
+        },
+        Term::Binder(Binder::Forall | Binder::Exists, ..) => Some(SORT_BOOL),
+        Term::Let(_, body) => guard_sort(body),
+        _ => None,
+    }
+}
+
+/// Sort facts for a goal-side or premise term and every subterm of it: the
+/// seeds of `sort_guards`.
 fn sort_premises(
     term: &Rc<Term>,
-    pool: &dyn TermPool,
     func_cache: &mut EggFunctions,
     var_map: &mut HashMap<String, u64>,
 ) -> Result<Vec<EggStatement>, String> {
     let subs = IndexMap::new();
     let mut premises = Vec::new();
     for subterm in collect_subterms(term) {
-        let Some(relation) = sort_relation(pool.sort(&subterm).as_ref()) else {
+        let Some(relation) = guard_sort(&subterm) else {
             continue;
         };
         let expr = translate_term(
@@ -1908,6 +2010,11 @@ fn prepare_database(
     declare_logic_operators(&mut functions);
     let mut declarations = declare_functions(&functions, sort_guards);
     declare_database_eliminations(&mut declarations, &functions);
+    // The polynomial normalizer's rules are goal-independent, but preparing
+    // them in the baseline was measured (2026-09-17) to cost every hole a
+    // bigger baseline clone (~0.1 s) and to save the arithmetic holes
+    // nothing: their cost is the normalizer's iterations, not its
+    // declaration.  They stay per goal.
 
     let mut ast = create_headers();
     if sort_guards {
@@ -2066,14 +2173,14 @@ fn run_egglog_with_premises_inner(
     if options.sort_guards {
         let mut sorts = Vec::new();
         for term in [lhs, rhs] {
-            match sort_premises(term, pool, &mut goal_functions, &mut var_map) {
+            match sort_premises(term, &mut goal_functions, &mut var_map) {
                 Ok(premises) => sorts.extend(premises),
                 Err(error) => return (Err(error), code_str),
             }
         }
         for clause in premise_clauses {
             if let Some(clause) = clauses_to_or(pool, clause) {
-                match sort_premises(&clause, pool, &mut goal_functions, &mut var_map) {
+                match sort_premises(&clause, &mut goal_functions, &mut var_map) {
                     Ok(premises) => sorts.extend(premises),
                     Err(error) => return (Err(error), code_str),
                 }
@@ -2316,13 +2423,12 @@ fn check_hole_rewrites_batched_inner(
             }
             if options.sort_guards {
                 for term in [lhs, rhs] {
-                    goals_ast.extend(sort_premises(term, pool, &mut goal_functions, &mut var_map)?);
+                    goals_ast.extend(sort_premises(term, &mut goal_functions, &mut var_map)?);
                 }
                 for clause in &clauses {
                     if let Some(clause) = clauses_to_or(pool, clause) {
                         goals_ast.extend(sort_premises(
                             &clause,
-                            pool,
                             &mut goal_functions,
                             &mut var_map,
                         )?);
@@ -2377,6 +2483,7 @@ fn check_hole_rewrites_batched_inner(
 
     // The same rounds as a single goal, but every round checks all the goals
     // still open, and the batch stops as soon as none is.
+    let tuple_cap = growth_cap(&egraph, options);
     let mut round = 0;
     loop {
         let pending: Vec<usize> = (0..goals.len())
@@ -2404,7 +2511,14 @@ fn check_hole_rewrites_batched_inner(
             round as i16
         };
         if let Err(error) =
-            run_goal_schedule_round(&mut egraph, &mut code_str, iterations, deadline, &label)
+            run_goal_schedule_round(
+                &mut egraph,
+                &mut code_str,
+                iterations,
+                deadline,
+                tuple_cap,
+                &label,
+            )
         {
             fill(&mut results, error);
             break;
@@ -2421,6 +2535,7 @@ fn check_hole_rewrites_batched_inner(
                 &rhs,
                 &plans,
                 deadline,
+                tuple_cap,
                 &goals[index].label,
             ) {
                 Ok(()) => results[index] = Some(Ok(())),

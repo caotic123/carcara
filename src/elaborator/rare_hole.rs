@@ -1014,6 +1014,10 @@ fn run_hole_worker_inner(
     if options.sort_guards {
         arguments.push("--sort-guards".into());
     }
+    if options.growth_bound > 0 {
+        arguments.push("--growth-bound".into());
+        arguments.push(options.growth_bound.to_string().into());
+    }
     if check_only {
         arguments.push("--check-only".into());
     }
