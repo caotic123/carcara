@@ -5,11 +5,12 @@ use crate::rare::{
 };
 
 fn declare_aci_rules(decls: &mut Vec<EggStatement>, functions: &EggFunctions) {
-    for (_, name, op_with_at, identity) in aci_norm::aci_operators() {
+    for (_, name, op_with_at, identity, absorbing) in aci_norm::aci_operators() {
         if functions.names.contains_key(name) {
             decls.extend(aci_norm::aci_rules(
                 op_with_at,
                 identity,
+                absorbing,
                 functions.assoc_calls.get(op_with_at),
             ));
         }
@@ -32,7 +33,7 @@ pub fn declare_goal_eliminations(
     enable_arith_poly: bool,
     database_has_distinct: bool,
 ) {
-    for (_, name, op_with_at, _) in aci_norm::aci_operators() {
+    for (_, name, op_with_at, _, _) in aci_norm::aci_operators() {
         if functions.names.contains_key(name) {
             decls.extend(aci_norm::aci_call_rules(
                 op_with_at,

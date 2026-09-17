@@ -4,19 +4,21 @@ use crate::rare::language::{EggExpr, EggStatement};
 use indexmap::IndexSet;
 
 /// Centralized definition of ACI (Associative-Commutative-Idempotent) operators.
-/// Returns: (Operator enum, string name, @-prefixed name, identity element)
-pub fn aci_operators() -> impl Iterator<Item = (Operator, &'static str, &'static str, EggExpr)> {
+/// Returns: (Operator enum, string name, @-prefixed name, identity element,
+/// absorbing element)
+pub fn aci_operators()
+-> impl Iterator<Item = (Operator, &'static str, &'static str, EggExpr, EggExpr)> {
     [
-        (Operator::And, "and", "@and", egg_expr!((mk true))),
-        (Operator::Or, "or", "@or", egg_expr!((mk false))),
+        (Operator::And, "and", "@and", egg_expr!((mk true)), egg_expr!((mk false))),
+        (Operator::Or, "or", "@or", egg_expr!((mk false)), egg_expr!((mk true))),
     ]
     .into_iter()
 }
 
 pub fn singleton_operators(op: Operator) -> Option<EggExpr> {
     aci_operators()
-        .find(|(o, _, _, _)| *o == op)
-        .map(|(_, _, _, identity)| identity)
+        .find(|(o, _, _, _, _)| *o == op)
+        .map(|(_, _, _, identity, _)| identity)
 }
 
 /// Generate all ACI normalization rules for an operator:
@@ -26,6 +28,7 @@ pub fn singleton_operators(op: Operator) -> Option<EggExpr> {
 pub fn aci_rules(
     op_with_at: &str,
     identity: EggExpr,
+    absorbing: EggExpr,
     assoc_calls: Option<&IndexSet<EggExpr>>,
 ) -> Vec<EggStatement> {
     let mut decls = aci_call_rules(op_with_at, assoc_calls);
@@ -64,6 +67,44 @@ pub fn aci_rules(
         ruleset: Some("list-ruleset".to_owned()),
         body: vec![egg_expr!((= {op_call} "result"))],
         head: vec![egg_expr!((union "result" (mk "x")))],
+    });
+
+    // 6. Identity elimination in the set form: an identity element in the
+    // set is dropped, so `(and true true true x)`, which the conversion
+    // turns into the set {true, x}, reaches x.  Sets only shrink, so this
+    // saturates.  The set form is the bare `(op (Assoc s))` node the
+    // conversion unions into the formula's class, without `Mk`.
+    let set_call = EggExpr::Call(op_with_at.into(), vec![egg_expr!((Assoc "s"))]);
+    let without = EggExpr::Call(
+        op_with_at.into(),
+        vec![egg_expr!((Assoc ("set-remove" "s" {identity.clone()})))],
+    );
+    decls.push(EggStatement::Rule {
+        ruleset: Some("list-ruleset".to_owned()),
+        body: vec![
+            egg_expr!((= {set_call.clone()} "result")),
+            egg_expr!(("set-contains" "s" {identity.clone()})),
+        ],
+        head: vec![egg_expr!((union "result" {without}))],
+    });
+
+    // 7. The empty set is the identity: `(and)` is true, `(or)` is false.
+    let empty_call = EggExpr::Call(op_with_at.into(), vec![egg_expr!((Assoc (set_empty)))]);
+    decls.push(EggStatement::Rule {
+        ruleset: Some("list-ruleset".to_owned()),
+        body: vec![egg_expr!((= {empty_call} "result"))],
+        head: vec![egg_expr!((union "result" {identity}))],
+    });
+
+    // 8. Absorbing element: a set holding it makes the whole formula the
+    // absorbing element, `(or x true)` is true and `(and x false)` is false.
+    decls.push(EggStatement::Rule {
+        ruleset: Some("list-ruleset".to_owned()),
+        body: vec![
+            egg_expr!((= {set_call} "result")),
+            egg_expr!(("set-contains" "s" {absorbing.clone()})),
+        ],
+        head: vec![egg_expr!((union "result" {absorbing}))],
     });
 
     decls
