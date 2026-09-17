@@ -65,9 +65,13 @@ impl<'a> RareCtx<'a> {
     /// The prepared database, built on first use with the given seeding
     /// (see `RunEgglogOptions::seed_from_goal`); one context serves one
     /// setting.
-    fn baseline(&self, seed_from_goal: bool) -> Result<&RareDatabaseBaseline, String> {
+    fn baseline(
+        &self,
+        seed_from_goal: bool,
+        sort_guards: bool,
+    ) -> Result<&RareDatabaseBaseline, String> {
         self.baseline
-            .get_or_init(|| prepare_database_safely(self.database, seed_from_goal))
+            .get_or_init(|| prepare_database_safely(self.database, seed_from_goal, sort_guards))
             .as_ref()
             .map_err(Clone::clone)
     }
@@ -287,6 +291,20 @@ pub fn create_headers() -> EggLanguage {
         // range over under `seed_from_goal`.
         EggStatement::Relation(
             ORIGIN_RELATION.to_owned(),
+            vec![ConstType::ConstrType("Term".to_owned())],
+        ),
+        // The sort of a class, for `sort_guards`: seeded from the goal's
+        // terms, propagated by operator heads and declared function sorts.
+        EggStatement::Relation(
+            SORT_INT.to_owned(),
+            vec![ConstType::ConstrType("Term".to_owned())],
+        ),
+        EggStatement::Relation(
+            SORT_REAL.to_owned(),
+            vec![ConstType::ConstrType("Term".to_owned())],
+        ),
+        EggStatement::Relation(
+            SORT_BOOL.to_owned(),
             vec![ConstType::ConstrType("Term".to_owned())],
         ),
         EggStatement::Rule {
@@ -904,6 +922,7 @@ fn construct_rules(
     func_cache: &mut EggFunctions,
     var_map: &mut HashMap<String, u64>,
     seed_from_goal: bool,
+    sort_guards: bool,
 ) -> Result<IndexSet<EggStatement>, String> {
     // The relation a conditional rule's premise instances range over: every
     // available term, or only the goal's and the proof premises' subterms.
@@ -940,6 +959,11 @@ fn construct_rules(
             ));
         };
         premise_available_args.extend(collect_vars(conclusion_lhs, false).into_keys());
+        let guards = if sort_guards {
+            sort_guard_premises(definition, &premise_available_args)
+        } else {
+            Vec::new()
+        };
 
         let context = format!("translating RARE rule '{}'", definition.name);
 
@@ -1051,12 +1075,18 @@ fn construct_rules(
         // as a unique egglog rule name (the suffix keeps several
         // instantiations of one rule apart), so reconstruction can cite the
         // rule.  Conditional rewrites are never reconstructed and stay plain.
-        rules.insert(if premises.is_empty() {
+        // Sort guards are conditions too, but a rule that is unconditional
+        // apart from them stays a named rewrite: reconstruction ignores the
+        // guards (they do not change what the rule rewrites) and needs the
+        // name.
+        let conditional = !premises.is_empty();
+        premises.extend(guards.iter().cloned());
+        rules.insert(if !conditional {
             EggStatement::NamedRewrite {
                 name: format!("rare:{}#{}", definition.name, rules.len()),
                 lhs: egg_equations.0.clone(),
                 rhs: egg_equations.1.clone(),
-                conditions: Vec::new(),
+                conditions: guards.clone(),
             }
         } else {
             EggStatement::Rewrite(
@@ -1065,7 +1095,7 @@ fn construct_rules(
                 premises.clone(),
             )
         });
-        if !premises.is_empty() {
+        if conditional {
             let lhs_available =
                 EggExpr::Call("Avaliable".to_owned(), vec![(*egg_equations.0).clone()]);
             let mut availability_premises = premises.clone();
@@ -1158,6 +1188,9 @@ fn construct_rules(
 }
 
 const ORIGIN_RELATION: &str = "Origin";
+const SORT_INT: &str = "SortInt";
+const SORT_REAL: &str = "SortReal";
+const SORT_BOOL: &str = "SortBool";
 const GOAL_LHS_NAME: &str = "goal_lhs";
 const GOAL_RHS_NAME: &str = "goal_rhs";
 
@@ -1611,10 +1644,152 @@ fn check_timeout(deadline: Option<Instant>, goal_label: &str) -> Result<(), Stri
     }
 }
 
-fn declare_functions(functions: &EggFunctions) -> Vec<EggStatement> {
+/// The guard premises of a RARE rule under `sort_guards`: one sort fact per
+/// non-list parameter declared Int, Real or Bool that the left-hand side
+/// binds, on the class the parameter stands for.
+fn sort_guard_premises(
+    definition: &RuleDefinition,
+    lhs_vars: &IndexSet<String>,
+) -> Vec<EggExpr> {
+    definition
+        .parameters
+        .iter()
+        .filter(|(name, parameter)| {
+            parameter.attribute != AttributeParameters::List && lhs_vars.contains(*name)
+        })
+        .filter_map(|(name, parameter)| {
+            let relation = sort_relation(&parameter.sort)?;
+            Some(EggExpr::Call(
+                relation.to_owned(),
+                vec![EggExpr::Mk(Box::new(EggExpr::Literal(name.clone())))],
+            ))
+        })
+        .collect()
+}
+
+fn sort_relation(sort: &Sort) -> Option<&'static str> {
+    match sort {
+        Sort::Int => Some(SORT_INT),
+        Sort::Real => Some(SORT_REAL),
+        Sort::Bool => Some(SORT_BOOL),
+        _ => None,
+    }
+}
+
+fn sort_rule(body: Vec<EggExpr>, relation: &str) -> EggStatement {
+    EggStatement::Rule {
+        ruleset: None,
+        body,
+        head: vec![EggExpr::Call(
+            relation.to_owned(),
+            vec![EggExpr::Literal("e".to_owned())],
+        )],
+    }
+}
+
+/// Sort facts for the constants the rewrites produce.
+fn constant_sort_rules() -> Vec<EggStatement> {
+    let e = || EggExpr::Literal("e".to_owned());
+    let mk = |name: &str, args: Vec<&str>| {
+        EggExpr::Mk(Box::new(EggExpr::Call(
+            name.to_owned(),
+            args.into_iter().map(|a| EggExpr::Literal(a.to_owned())).collect(),
+        )))
+    };
+    vec![
+        sort_rule(vec![EggExpr::Equal(Box::new(e()), Box::new(mk("Num", vec!["n"])))], SORT_INT),
+        sort_rule(vec![EggExpr::Equal(Box::new(e()), Box::new(mk("Real", vec!["n", "d"])))], SORT_REAL),
+        sort_rule(vec![EggExpr::Equal(Box::new(e()), Box::new(mk("RatConst", vec!["q"])))], SORT_REAL),
+        sort_rule(vec![EggExpr::Equal(Box::new(e()), Box::new(mk("Bool", vec!["b"])))], SORT_BOOL),
+    ]
+}
+
+/// The sort propagation rules of one declared function: the sort of an
+/// application from its head (operators) or its declared result sort
+/// (uninterpreted functions), the sort-preserving operators from their
+/// first argument, `ite` from its branch.
+fn function_sort_rules(name: &str, is_op: bool, result: Option<&Sort>) -> Vec<EggStatement> {
+    let e = || EggExpr::Literal("e".to_owned());
+    let lit = |s: &str| EggExpr::Literal(s.to_owned());
+    let call = |args: EggExpr| EggExpr::Mk(Box::new(EggExpr::Call(format!("@{name}"), vec![args])));
+    let whole = |relation: &str| {
+        sort_rule(vec![EggExpr::Equal(Box::new(e()), Box::new(call(lit("args"))))], relation)
+    };
+    let from_first = |relation: &str| {
+        sort_rule(
+            vec![
+                EggExpr::Equal(
+                    Box::new(e()),
+                    Box::new(call(EggExpr::Args(Box::new(lit("a")), Box::new(lit("rest"))))),
+                ),
+                EggExpr::Call(relation.to_owned(), vec![lit("a")]),
+            ],
+            relation,
+        )
+    };
+    let from_branch = |relation: &str| {
+        sort_rule(
+            vec![
+                EggExpr::Equal(
+                    Box::new(e()),
+                    Box::new(call(EggExpr::Args(
+                        Box::new(lit("c")),
+                        Box::new(EggExpr::Args(Box::new(lit("t")), Box::new(lit("rest")))),
+                    ))),
+                ),
+                EggExpr::Call(relation.to_owned(), vec![lit("t")]),
+            ],
+            relation,
+        )
+    };
+    if !is_op {
+        return match result.and_then(sort_relation) {
+            Some(relation) => vec![whole(relation)],
+            None => Vec::new(),
+        };
+    }
+    match name {
+        "and" | "or" | "not" | "=>" | "xor" | "=" | "distinct" | "<" | "<=" | ">" | ">="
+        | "is_int" => vec![whole(SORT_BOOL)],
+        "/" | "to_real" => vec![whole(SORT_REAL)],
+        "to_int" | "div" | "mod" => vec![whole(SORT_INT)],
+        "+" | "-" | "*" | "abs" => vec![from_first(SORT_INT), from_first(SORT_REAL)],
+        "ite" => vec![from_branch(SORT_INT), from_branch(SORT_REAL), from_branch(SORT_BOOL)],
+        _ => Vec::new(),
+    }
+}
+
+/// Sort facts for a goal-side or premise term and every subterm of it,
+/// from the term pool's sorts: the seeds of `sort_guards`.
+fn sort_premises(
+    term: &Rc<Term>,
+    pool: &dyn TermPool,
+    func_cache: &mut EggFunctions,
+    var_map: &mut HashMap<String, u64>,
+) -> Result<Vec<EggStatement>, String> {
+    let subs = IndexMap::new();
+    let mut premises = Vec::new();
+    for subterm in collect_subterms(term) {
+        let Some(relation) = sort_relation(pool.sort(&subterm).as_ref()) else {
+            continue;
+        };
+        let expr = translate_term(
+            &subterm,
+            &subs,
+            func_cache,
+            var_map,
+            false,
+            "translating a goal subterm",
+        )?;
+        premises.push(EggStatement::Premise(relation.to_owned(), Box::new(expr)));
+    }
+    Ok(premises)
+}
+
+fn declare_functions(functions: &EggFunctions, sort_guards: bool) -> Vec<EggStatement> {
     let mut decls = Vec::new();
 
-    for func in functions.names.keys() {
+    for (func, (is_op, _, result_sort)) in &functions.names {
         decls.push(EggStatement::Constructor(
             format!("@{}", func),
             vec![ConstType::ConstrType("Term".to_owned())],
@@ -1634,6 +1809,10 @@ fn declare_functions(functions: &EggFunctions) -> Vec<EggStatement> {
                 vec![EggExpr::Literal("args".to_owned())],
             )],
         });
+        // After the constructor, which the rules mention.
+        if sort_guards {
+            decls.extend(function_sort_rules(func, *is_op, result_sort.as_ref()));
+        }
     }
 
     // Note: @+ computation rule is now in arith_poly_norm.egglog
@@ -1707,20 +1886,33 @@ fn register_ineq_primitive(egraph: &mut EGraph) {
     });
 }
 
-fn prepare_database(database: &Rules, seed_from_goal: bool) -> Result<RareDatabaseBaseline, String> {
+fn prepare_database(
+    database: &Rules,
+    seed_from_goal: bool,
+    sort_guards: bool,
+) -> Result<RareDatabaseBaseline, String> {
     let mut functions = EggFunctions::default();
     let mut var_map = HashMap::new();
     let definitions: Vec<_> = database.rules.values().cloned().collect();
-    let rules = construct_rules(&definitions, &mut functions, &mut var_map, seed_from_goal)?;
+    let rules = construct_rules(
+        &definitions,
+        &mut functions,
+        &mut var_map,
+        seed_from_goal,
+        sort_guards,
+    )?;
     let has_distinct = functions.names.contains_key("distinct");
 
     // Logic operators and all database-derived rules belong to the immutable
     // baseline. Every proof step starts by cloning this fully initialized EGraph.
     declare_logic_operators(&mut functions);
-    let mut declarations = declare_functions(&functions);
+    let mut declarations = declare_functions(&functions, sort_guards);
     declare_database_eliminations(&mut declarations, &functions);
 
     let mut ast = create_headers();
+    if sort_guards {
+        ast.extend(constant_sort_rules());
+    }
     ast.extend(declarations);
     ast.extend(rules);
     let (program, code) = compile_program(ast);
@@ -1748,8 +1940,12 @@ fn prepare_database(database: &Rules, seed_from_goal: bool) -> Result<RareDataba
 fn prepare_database_safely(
     database: &Rules,
     seed_from_goal: bool,
+    sort_guards: bool,
 ) -> Result<RareDatabaseBaseline, String> {
-    catch_unwind(AssertUnwindSafe(|| prepare_database(database, seed_from_goal))).map_err(|panic| {
+    catch_unwind(AssertUnwindSafe(|| {
+        prepare_database(database, seed_from_goal, sort_guards)
+    }))
+    .map_err(|panic| {
         format!(
             "preparing the RARE database panicked: {}",
             panic_message(panic)
@@ -1783,7 +1979,7 @@ fn run_egglog_with_premises_inner(
         return (Err(error), String::new());
     }
 
-    let baseline = match context.baseline(options.seed_from_goal) {
+    let baseline = match context.baseline(options.seed_from_goal, options.sort_guards) {
         Ok(baseline) => baseline,
         Err(error) => return (Err(error), String::new()),
     };
@@ -1867,6 +2063,24 @@ fn run_egglog_with_premises_inner(
         }
         goals_ast.extend(origins);
     }
+    if options.sort_guards {
+        let mut sorts = Vec::new();
+        for term in [lhs, rhs] {
+            match sort_premises(term, pool, &mut goal_functions, &mut var_map) {
+                Ok(premises) => sorts.extend(premises),
+                Err(error) => return (Err(error), code_str),
+            }
+        }
+        for clause in premise_clauses {
+            if let Some(clause) = clauses_to_or(pool, clause) {
+                match sort_premises(&clause, pool, &mut goal_functions, &mut var_map) {
+                    Ok(premises) => sorts.extend(premises),
+                    Err(error) => return (Err(error), code_str),
+                }
+            }
+        }
+        goals_ast.extend(sorts);
+    }
 
     let (raw_lhs, raw_rhs) = equal_terms();
     let mut goal = GoalCheckTarget {
@@ -1885,7 +2099,7 @@ fn run_egglog_with_premises_inner(
     new_functions
         .names
         .retain(|name, _| !baseline.functions.names.contains_key(name));
-    let mut declarations = declare_functions(&new_functions);
+    let mut declarations = declare_functions(&new_functions, options.sort_guards);
     declare_goal_eliminations(
         &mut declarations,
         &goal_functions,
@@ -2014,7 +2228,7 @@ fn check_hole_rewrites_batched_inner(
         },
         None => None,
     };
-    let baseline = match context.baseline(options.seed_from_goal) {
+    let baseline = match context.baseline(options.seed_from_goal, options.sort_guards) {
         Ok(baseline) => baseline,
         Err(error) => {
             fill(&mut results, error);
@@ -2100,6 +2314,21 @@ fn check_hole_rewrites_batched_inner(
                     }
                 }
             }
+            if options.sort_guards {
+                for term in [lhs, rhs] {
+                    goals_ast.extend(sort_premises(term, pool, &mut goal_functions, &mut var_map)?);
+                }
+                for clause in &clauses {
+                    if let Some(clause) = clauses_to_or(pool, clause) {
+                        goals_ast.extend(sort_premises(
+                            &clause,
+                            pool,
+                            &mut goal_functions,
+                            &mut var_map,
+                        )?);
+                    }
+                }
+            }
             Ok((EggExpr::Literal(lhs_name), EggExpr::Literal(rhs_name)))
         };
         match setup() {
@@ -2116,7 +2345,7 @@ fn check_hole_rewrites_batched_inner(
     new_functions
         .names
         .retain(|name, _| !baseline.functions.names.contains_key(name));
-    let mut declarations = declare_functions(&new_functions);
+    let mut declarations = declare_functions(&new_functions, options.sort_guards);
     declare_goal_eliminations(
         &mut declarations,
         &goal_functions,

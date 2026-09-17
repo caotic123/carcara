@@ -97,6 +97,10 @@ pub struct ReconstructHoleOptions {
     /// See `--rare-seed-from-goal`.
     #[clap(long)]
     pub seed_from_goal: bool,
+
+    /// See `--rare-sort-guards`.
+    #[clap(long)]
+    pub sort_guards: bool,
 }
 
 #[derive(Args)]
@@ -254,6 +258,12 @@ pub struct CheckingOptions {
     /// fast instead of growing the e-graph until the budget kills it.
     #[clap(long)]
     pub rare_seed_from_goal: bool,
+
+    /// Guard every RARE rule parameter declared Int, Real or Bool with the
+    /// sort of the term it binds, so arithmetic rules stop firing on
+    /// equalities over other sorts.
+    #[clap(long)]
+    pub rare_sort_guards: bool,
 
     /// Cooperative time budget in milliseconds for each RARE hole rewrite.
     #[clap(long, value_name = "MILLISECONDS")]
@@ -620,6 +630,7 @@ impl IntoConfig for (CheckingOptions, ToolOptions) {
                 timeout: c.rare_check_timeout.map(Duration::from_millis),
                 print_egglog: c.print_egglog,
                 seed_from_goal: c.rare_seed_from_goal,
+                sort_guards: c.rare_sort_guards,
                 ..RunEgglogOptions::default()
             })
     }

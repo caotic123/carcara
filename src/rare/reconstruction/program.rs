@@ -155,10 +155,18 @@ pub fn rules_from_generated_program(program: &str) -> Vec<Rewrite> {
                 let Some(rare_name) = rare_name_of(&egglog_name) else {
                     continue;
                 };
+                // Sort guards (`SortInt`/`SortReal`/`SortBool` facts) do not
+                // change what the rule rewrites; the declarative rule is the
+                // body without them.
+                let body: Vec<&GenericFact<_, _>> = rule
+                    .body
+                    .iter()
+                    .filter(|fact| !is_sort_guard(fact))
+                    .collect();
                 let (
                     [GenericFact::Eq(_, GenericExpr::Var(_, pivot), lhs)],
                     [GenericAction::Union(_, GenericExpr::Var(_, target), rhs)],
-                ) = (rule.body.as_slice(), rule.head.0.as_slice())
+                ) = (body.as_slice(), rule.head.0.as_slice())
                 else {
                     continue;
                 };
@@ -175,6 +183,19 @@ pub fn rules_from_generated_program(program: &str) -> Vec<Rewrite> {
         }
     }
     rules
+}
+
+fn is_sort_guard<H, L>(fact: &GenericFact<H, L>) -> bool
+where
+    H: std::fmt::Display,
+{
+    match fact {
+        GenericFact::Fact(GenericExpr::Call(_, head, _)) => {
+            let head = head.to_string();
+            head == "SortInt" || head == "SortReal" || head == "SortBool"
+        }
+        _ => false,
+    }
 }
 
 /// The RARE rule name a generated egglog rule carries, if the engine

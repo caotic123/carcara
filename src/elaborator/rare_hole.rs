@@ -1011,6 +1011,9 @@ fn run_hole_worker_inner(
     if options.seed_from_goal {
         arguments.push("--seed-from-goal".into());
     }
+    if options.sort_guards {
+        arguments.push("--sort-guards".into());
+    }
     if check_only {
         arguments.push("--check-only".into());
     }

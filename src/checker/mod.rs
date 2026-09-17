@@ -100,6 +100,13 @@ pub struct RunEgglogOptions {
     /// goal's size, so an unreachable goal fails fast instead of growing the
     /// e-graph quadratically until the budget kills it.
     pub seed_from_goal: bool,
+
+    /// Guard every RARE rule parameter declared Int, Real or Bool with the
+    /// sort of the term it binds, so that arithmetic rules no longer fire on
+    /// equalities over other sorts and Boolean rules no longer manufacture
+    /// ill-sorted terms.  Sorts are seeded from the goal's terms and
+    /// propagated through operator heads and declared function sorts.
+    pub sort_guards: bool,
 }
 
 impl Default for RunEgglogOptions {
@@ -110,6 +117,7 @@ impl Default for RunEgglogOptions {
             timeout: None,
             print_egglog: false,
             seed_from_goal: false,
+            sort_guards: false,
         }
     }
 }
