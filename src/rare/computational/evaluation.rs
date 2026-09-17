@@ -74,26 +74,49 @@ pub mod tests {
         (declare-fun b () Int)
     "#;
 
+    // Goals that need more than one iteration of the default ruleset: a
+    // chain of rewrites, each fired by the iteration after the one that
+    // produced its left-hand side.  (The earlier fixtures leaned on the ACI
+    // normalization of a ground `or`, which the engine now folds when the
+    // program loads, before any round runs.)
     const ROUND_RETRY_DEFINITIONS: &str = r#"
         (declare-fun f () Bool)
+        (declare-fun g () Bool)
     "#;
 
     const DEEP_ROUND_RETRY_DEFINITIONS: &str = r#"
         (declare-fun f () Bool)
+        (declare-fun g1 () Bool)
+        (declare-fun g2 () Bool)
+        (declare-fun g3 () Bool)
+        (declare-fun g4 () Bool)
+        (declare-fun g5 () Bool)
+        (declare-fun g6 () Bool)
+        (declare-fun g7 () Bool)
+        (declare-fun g8 () Bool)
     "#;
 
     const ROUND_RETRY_RULES: &str = r#"
-        (declare-rare-rule late-eval ()
+        (declare-rare-rule step-1 ()
           :args ()
-          :conclusion (= f (or false true))
+          :conclusion (= f g)
+        )
+        (declare-rare-rule step-2 ()
+          :args ()
+          :conclusion (= g true)
         )
     "#;
 
     const DEEP_ROUND_RETRY_RULES: &str = r#"
-        (declare-rare-rule late-eval ()
-          :args ()
-          :conclusion (= f (or false (or false (or false (or false (or false (or false (or false (or false true)))))))))
-        )
+        (declare-rare-rule step-1 () :args () :conclusion (= f g1))
+        (declare-rare-rule step-2 () :args () :conclusion (= g1 g2))
+        (declare-rare-rule step-3 () :args () :conclusion (= g2 g3))
+        (declare-rare-rule step-4 () :args () :conclusion (= g3 g4))
+        (declare-rare-rule step-5 () :args () :conclusion (= g4 g5))
+        (declare-rare-rule step-6 () :args () :conclusion (= g5 g6))
+        (declare-rare-rule step-7 () :args () :conclusion (= g6 g7))
+        (declare-rare-rule step-8 () :args () :conclusion (= g7 g8))
+        (declare-rare-rule step-9 () :args () :conclusion (= g8 true))
     "#;
 
     /// Parse a term from a string with boolean/arithmetic definitions

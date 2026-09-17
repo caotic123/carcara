@@ -111,6 +111,12 @@ pub fn aci_rules(
 }
 
 /// Generate only the conversions tied to concrete calls seen in a proof step.
+///
+/// Each call is a ground term of the step, so its conversion is a `union`
+/// rather than a rewrite: a rewrite with a ground left-hand side is the same
+/// equation, but egglog 3.0 runs it as a join over every constructor table the
+/// pattern mentions, on every iteration, and a deep `and`/`or` chain over a
+/// six-figure e-graph took 20 s per iteration where the union is a lookup.
 pub fn aci_call_rules(
     op_with_at: &str,
     assoc_calls: Option<&IndexSet<EggExpr>>,
@@ -124,9 +130,31 @@ pub fn aci_call_rules(
             let call = EggExpr::Call(op_with_at.into(), vec![args_expr.clone()]);
             let lhs = egg_expr!((mk { call }));
             let rhs = to_assoc_call(op_with_at, args_expr_to_vec(op_with_at, args_expr));
-            EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![])
+            if is_ground(args_expr) {
+                EggStatement::Union(Box::new(lhs), Box::new(rhs))
+            } else {
+                EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), vec![])
+            }
         })
         .collect()
+}
+
+/// A call from the step itself, as opposed to one from a rule: no pattern
+/// variable anywhere in it.  Rule variables are `Literal`s; the step's own
+/// variables are hashed `Var`s, and no `Literal` (the engine's globals,
+/// `goal_lhs`/`goal_rhs`) occurs inside a step's call.
+fn is_ground(expr: &EggExpr) -> bool {
+    use EggExpr::*;
+    match expr {
+        Literal(_) => false,
+        Var(..) | NativeBool(_) | Bool(_) | Num(_) | String(_) | RawString(_) | Real(_)
+        | BitVec(..) | Op(_) | Const(_) | Empty() => true,
+        Ground(e) | Mk(e) => is_ground(e),
+        App(a, b) | Args(a, b) | Equal(a, b) | Distinct(a, b) | Union(a, b) | Set(a, b) => {
+            is_ground(a) && is_ground(b)
+        }
+        Call(_, args) => args.iter().all(is_ground),
+    }
 }
 
 pub fn to_assoc_call(op_with_at: &str, args: Vec<EggExpr>) -> EggExpr {
