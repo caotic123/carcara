@@ -1559,3 +1559,78 @@ add the six rules to the file (list-form rules already work, cf.
 form plus an absorbing-element rule.  The timing column repeats the
 sort-blindness point: the same unprovable goal fails in 0.1 s without the
 arithmetic rules and takes 6 s to die with them.
+
+## 21. ACI identities, sort guards, growth bound (2026-09-17)
+
+Three engine changes from the full run's loss analysis (§19.1, §20),
+measured with the check-only pass on the ten sample proofs of §20
+(baseline: per hole, 4 workers, 30 s / 3 GB per hole, `results/*.b1.err`;
+today's passes ran two at a time with one job each under heavy load from
+another worktree's experiment, so only verdicts are compared).
+
+### ACI identity and absorbing rules (commit `1c280cd5`)
+
+The ACI normalization handled flattening, duplicates, singletons and the
+two-element identity form only; three `list-ruleset` rules on the set form
+(`(op (Assoc s))`, which the conversion unions into the formula's class
+without `Mk`) now remove an identity element from the set, collapse the
+empty set to the identity, and collapse a set holding the absorbing
+element to it.  `(and true true true p) = p`, `(or p true) = true` and
+`(and p false) = false` are proved in ~0.1 s where they died at the memory
+limit.  The reconstruction has no certificate kind for the set-form rules,
+so in the elaboration pass these holes are proved by egglog but come out
+as no-certificate holes, like the other ACI steps (`gen` holes, §19.1).
+De Morgan stays out: cvc5's `bool-and/or-de-morgan` are `define-rule*`
+fixed-point rules with a context hole, which Carcara's RARE format does
+not have, and no hole of that shape occurs in the 29k holes of the sample.
+
+### Sort guards (commit `58bc6945`, `--rare-sort-guards`)
+
+The blow-up driver of §19.1/§20 was sort-blind rule application (one
+untyped `Term` sort).  Relations `SortInt`/`SortReal`/`SortBool` on
+classes, seeded from the goal's and the premises' subterms (sort computed
+structurally from the term: constants, variables' declared sorts, the
+operator table, declared function result sorts), propagated by rules per
+declared function (Bool for the logical and comparison operators, Real for
+`/` and `to_real`, Int for `to_int`/`div`/`mod`, the first argument's sort
+for `+ - * abs`, the then-branch's for `ite`, the declared result sort for
+uninterpreted functions, and the constants the rewrites produce), and a
+guard premise on every non-list Int/Real/Bool rule parameter the LHS
+binds.  Named rewrites keep their name with the guards as conditions; the
+reconstruction strips the guard facts when reading the rules back, so
+elaboration and re-check work unchanged.  Micro-tests: the unprovable De
+Morgan goal fails in 1.4 s instead of 6.2 s (still not milliseconds: the
+Boolean rules keep growing the e-graph within their sort), the arithmetic
+micro-goal drops from 0.51 s to 0.28 s.
+
+### Verdicts on the sample
+
+| proof | baseline proved / kept | ACI only | ACI + guards |
+|---|---|---|---|
+| c_inference | 2,143 / 0 | 2,143 / 0 | 2,143 / 0 |
+| RwMutex RF-09 | 4,339 / 4 | 4,339 / 4 | 4,339 / 4 |
+| bofill ex4880 | 2,497 / 20 | 2,513 / 4 | 2,513 / 4 |
+| MULTIPLIER_3 | 3,374 / 0 | 3,366 / 8 (load) | 3,370 / 4 (load) |
+| FISCHER9 | 2,060 / 56 | 2,116 / 0 | 2,116 / 0 |
+| cut_lemma_01_008 | 1,881 / 63 | 1,879 / 65 (load) | 1,879 / 65 (load) |
+| ring_2exp10 | 3,818 / 0 | 3,818 / 0 | 3,818 / 0 |
+| vpm2-0 | 3,479 / 12 | 3,479 / 12 | 3,479 / 12 |
+| clocksynchro_3clocks | 1,615 / 48 | 1,622 / 41 | 1,658 / 5 |
+| tgc_io-safe-6 | 778 / 64 | 807 / 35 | 807 / 35 |
+| total kept | 267 | 169 | 129 |
+
+"(load)" marks losses that are holes at 16–29 s in the baseline killed at
+30 s under the day's doubled load, not verdict changes.  The ACI rules
+recover FISCHER9's 56, bofill's 16 and tgc's 29; the guards add
+clocksynchro's 36 (and 4 on MULTIPLIER).  No hole the baseline proved
+comfortably was lost.
+
+### Normalizer in the baseline: measured and rejected
+
+Preparing the polynomial normalizer's rules (goal-independent, in their
+own rulesets) once per child instead of per goal was implemented and
+measured on the micro-goals: non-arithmetic holes went from 0.09–0.13 s to
+0.19–0.25 s (every hole clones a bigger baseline e-graph) and the
+arithmetic hole did not change (0.5–0.7 s either way: its cost is the
+normalizer's ~60 iterations, not the declaration).  Reverted; the note
+stays in `prepare_database`.
