@@ -102,9 +102,17 @@ pub struct ReconstructHoleOptions {
     #[clap(long)]
     pub sort_guards: bool,
 
-    /// See `--rare-growth-bound`.
-    #[clap(long, value_name = "FACTOR")]
-    pub growth_bound: Option<usize>,
+    /// See `--rare-growth-cap-arith`.
+    #[clap(long, value_name = "TUPLES")]
+    pub growth_cap_arith: Option<usize>,
+
+    /// See `--rare-growth-cap-plain`.
+    #[clap(long, value_name = "TUPLES")]
+    pub growth_cap_plain: Option<usize>,
+
+    /// See `--rare-memory-soft-cap`.
+    #[clap(long, value_name = "MEGABYTES")]
+    pub memory_soft_cap: Option<usize>,
 }
 
 #[derive(Args)]
@@ -269,11 +277,22 @@ pub struct CheckingOptions {
     #[clap(long)]
     pub rare_sort_guards: bool,
 
-    /// Stop a hole once the e-graph has grown past this many times its
-    /// initial size (floor 50k tuples) instead of running the remaining
-    /// rounds to the budget; zero disables the bound.
-    #[clap(long, value_name = "FACTOR")]
-    pub rare_growth_bound: Option<usize>,
+    /// Stop a hole that runs the polynomial normalizer once its e-graph
+    /// holds more than this many tuples, instead of running the remaining
+    /// rounds to the budget (provable ones reach a few hundred thousand).
+    #[clap(long, value_name = "TUPLES")]
+    pub rare_growth_cap_arith: Option<usize>,
+
+    /// The same cap for a hole without the normalizer (provable ones stay
+    /// within a few hundred tuples).
+    #[clap(long, value_name = "TUPLES")]
+    pub rare_growth_cap_plain: Option<usize>,
+
+    /// Stop a hole once its worker's resident memory exceeds this many
+    /// megabytes, checked after every statement, instead of waiting for the
+    /// address-space kill.
+    #[clap(long, value_name = "MEGABYTES")]
+    pub rare_memory_soft_cap: Option<usize>,
 
     /// Cooperative time budget in milliseconds for each RARE hole rewrite.
     #[clap(long, value_name = "MILLISECONDS")]
@@ -641,7 +660,9 @@ impl IntoConfig for (CheckingOptions, ToolOptions) {
                 print_egglog: c.print_egglog,
                 seed_from_goal: c.rare_seed_from_goal,
                 sort_guards: c.rare_sort_guards,
-                growth_bound: c.rare_growth_bound.unwrap_or(0),
+                growth_cap_arith: c.rare_growth_cap_arith.unwrap_or(0),
+                growth_cap_plain: c.rare_growth_cap_plain.unwrap_or(0),
+                memory_soft_cap_mb: c.rare_memory_soft_cap.unwrap_or(0),
                 ..RunEgglogOptions::default()
             })
     }

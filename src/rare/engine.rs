@@ -1422,18 +1422,42 @@ const MAX_SATURATION_TUPLES: usize = 4_000_000;
 /// loop stopping as soon as the database stops growing (its fixpoint) or the
 /// step bound is reached.  With no deadline the original single saturating
 /// call is kept, so untimed runs behave exactly as before.
-/// The smallest growth cap: a goal may always reach this many tuples.
-const GROWTH_FLOOR: usize = 50_000;
+/// The caps a goal runs under: on the e-graph's tuples and on the process's
+/// resident memory.
+#[derive(Clone, Copy, Default)]
+struct GrowthCaps {
+    tuples: Option<usize>,
+    memory_mb: Option<usize>,
+}
 
-/// Fails when the e-graph has grown past `tuple_cap`.
-fn check_growth(egraph: &EGraph, tuple_cap: Option<usize>, goal_label: &str) -> Result<(), String> {
-    match tuple_cap {
-        Some(cap) if egraph.num_tuples() > cap => Err(format!(
+/// The process's resident set in megabytes, from `/proc/self/statm`; `None`
+/// where that is unavailable.
+fn resident_mb() -> Option<usize> {
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: usize = statm.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages.saturating_mul(4096) / (1024 * 1024))
+}
+
+/// Fails when the e-graph has grown past the tuple cap or the process past
+/// the memory cap.
+fn check_growth(egraph: &EGraph, caps: GrowthCaps, goal_label: &str) -> Result<(), String> {
+    if let Some(cap) = caps.tuples
+        && egraph.num_tuples() > cap
+    {
+        return Err(format!(
             "egglog check for {goal_label} stopped: the e-graph grew past the bound ({} tuples, cap {cap})",
             egraph.num_tuples()
-        )),
-        _ => Ok(()),
+        ));
     }
+    if let Some(cap) = caps.memory_mb
+        && let Some(resident) = resident_mb()
+        && resident > cap
+    {
+        return Err(format!(
+            "egglog check for {goal_label} stopped: the worker grew past the memory cap ({resident} MB resident, cap {cap} MB)"
+        ));
+    }
+    Ok(())
 }
 
 fn run_statement_within_deadline(
@@ -1441,16 +1465,16 @@ fn run_statement_within_deadline(
     code_str: &mut String,
     statement: &EggStatement,
     deadline: Option<Instant>,
-    tuple_cap: Option<usize>,
+    caps: GrowthCaps,
     goal_label: &str,
 ) -> Result<(), String> {
     let EggStatement::Saturate { ruleset } = statement else {
         check_timeout(deadline, goal_label)?;
         run_and_record_statements(egraph, code_str, vec![statement.clone()])?;
-        check_growth(egraph, tuple_cap, goal_label)?;
+        check_growth(egraph, caps, goal_label)?;
         return check_timeout(deadline, goal_label);
     };
-    if deadline.is_none() && tuple_cap.is_none() {
+    if deadline.is_none() && caps.tuples.is_none() && caps.memory_mb.is_none() {
         return run_and_record_statements(egraph, code_str, vec![statement.clone()]);
     }
     for _ in 0..BOUNDED_SATURATION_STEPS {
@@ -1465,7 +1489,7 @@ fn run_statement_within_deadline(
             }],
         )?;
         check_timeout(deadline, goal_label)?;
-        check_growth(egraph, tuple_cap, goal_label)?;
+        check_growth(egraph, caps, goal_label)?;
         let after = egraph.num_tuples();
         if after == before || after > MAX_SATURATION_TUPLES {
             break;
@@ -1479,7 +1503,7 @@ fn run_goal_schedule_round(
     code_str: &mut String,
     iterations: i16,
     deadline: Option<Instant>,
-    tuple_cap: Option<usize>,
+    tuple_cap: GrowthCaps,
     goal_label: &str,
 ) -> Result<(), String> {
     for statement in goal_run_schedule(1) {
@@ -1533,7 +1557,7 @@ fn run_goal_fallback_attempt(
     code_str: &mut String,
     fallback: &GoalFallbackPlan,
     deadline: Option<Instant>,
-    tuple_cap: Option<usize>,
+    tuple_cap: GrowthCaps,
     goal_label: &str,
 ) -> Result<(), String> {
     for statement in &fallback.guard_setup {
@@ -1560,7 +1584,7 @@ fn run_goal_fallback_attempts(
     code_str: &mut String,
     fallback_plans: &[GoalFallbackPlan],
     deadline: Option<Instant>,
-    tuple_cap: Option<usize>,
+    tuple_cap: GrowthCaps,
     goal_label: &str,
 ) -> Result<(), String> {
     let mut errors = Vec::with_capacity(fallback_plans.len());
@@ -1583,7 +1607,7 @@ fn check_goal_against_current_state(
     rhs_expr: &EggExpr,
     fallback_plans: &[GoalFallbackPlan],
     deadline: Option<Instant>,
-    tuple_cap: Option<usize>,
+    tuple_cap: GrowthCaps,
     goal_label: &str,
 ) -> Result<(), String> {
     check_timeout(deadline, goal_label)?;
@@ -1624,7 +1648,7 @@ fn check_goal_with_retry_rounds(
 ) -> Result<(), String> {
     let mut last_error = None;
     let base = egraph.num_tuples();
-    let tuple_cap = growth_cap(egraph, options);
+    let tuple_cap = growth_cap(!goal.fallback_plans.is_empty(), options);
 
     let mut round = 0;
     loop {
@@ -1664,9 +1688,10 @@ fn check_goal_with_retry_rounds(
 
         match check_result {
             Ok(()) => {
-                if tuple_cap.is_some() {
+                if tuple_cap.tuples.is_some() {
                     log::info!(
-                        "growth: base {base} final {} rounds {round} reached",
+                        "growth: {} base {base} final {} rounds {round} reached",
+                        goal_class(goal),
                         egraph.num_tuples()
                     );
                 }
@@ -1675,9 +1700,10 @@ fn check_goal_with_retry_rounds(
             Err(error) => last_error = Some(error),
         }
     }
-    if tuple_cap.is_some() {
+    if tuple_cap.tuples.is_some() {
         log::info!(
-            "growth: base {base} final {} rounds {round} unreached",
+            "growth: {} base {base} final {} rounds {round} unreached",
+            goal_class(goal),
             egraph.num_tuples()
         );
     }
@@ -1689,15 +1715,27 @@ fn check_goal_with_retry_rounds(
     ))
 }
 
-/// The tuple cap of a goal under `growth_bound`: the bound times the
-/// e-graph's size once the goal's program is loaded, never below the floor.
-fn growth_cap(egraph: &EGraph, options: RunEgglogOptions) -> Option<usize> {
-    (options.growth_bound > 0).then(|| {
-        egraph
-            .num_tuples()
-            .saturating_mul(options.growth_bound)
-            .max(GROWTH_FLOOR)
-    })
+/// Whether a goal runs the polynomial normalizer (it then has the
+/// arithmetic fallback plans); such goals grow by construction.
+fn goal_class(goal: &GoalCheckTarget) -> &'static str {
+    if goal.fallback_plans.is_empty() {
+        "plain"
+    } else {
+        "arith"
+    }
+}
+
+/// The caps of a goal, by whether it runs the polynomial normalizer.
+fn growth_cap(arith: bool, options: RunEgglogOptions) -> GrowthCaps {
+    let tuples = if arith {
+        options.growth_cap_arith
+    } else {
+        options.growth_cap_plain
+    };
+    GrowthCaps {
+        tuples: (tuples > 0).then_some(tuples),
+        memory_mb: (options.memory_soft_cap_mb > 0).then_some(options.memory_soft_cap_mb),
+    }
 }
 
 fn check_timeout(deadline: Option<Instant>, goal_label: &str) -> Result<(), String> {
@@ -2483,7 +2521,7 @@ fn check_hole_rewrites_batched_inner(
 
     // The same rounds as a single goal, but every round checks all the goals
     // still open, and the batch stops as soon as none is.
-    let tuple_cap = growth_cap(&egraph, options);
+    let tuple_cap = growth_cap(enable_arith_poly, options);
     let mut round = 0;
     loop {
         let pending: Vec<usize> = (0..goals.len())

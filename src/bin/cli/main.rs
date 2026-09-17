@@ -207,7 +207,9 @@ fn elaborate_command(
         print_egglog: options.checking.print_egglog,
         seed_from_goal: options.checking.rare_seed_from_goal,
         sort_guards: options.checking.rare_sort_guards,
-        growth_bound: options.checking.rare_growth_bound.unwrap_or(0),
+        growth_cap_arith: options.checking.rare_growth_cap_arith.unwrap_or(0),
+        growth_cap_plain: options.checking.rare_growth_cap_plain.unwrap_or(0),
+        memory_soft_cap_mb: options.checking.rare_memory_soft_cap.unwrap_or(0),
         ..carcara::RunEgglogOptions::default()
     };
     let elaborate_hole_rewrites = options.elaboration.elaborate_hole_rewrites;
@@ -468,7 +470,9 @@ fn reconstruct_hole_command(options: ReconstructHoleOptions) -> CliResult<()> {
         continuous_saturation: options.continuous_saturation,
         seed_from_goal: options.seed_from_goal,
         sort_guards: options.sort_guards,
-        growth_bound: options.growth_bound.unwrap_or(0),
+        growth_cap_arith: options.growth_cap_arith.unwrap_or(0),
+        growth_cap_plain: options.growth_cap_plain.unwrap_or(0),
+        memory_soft_cap_mb: options.memory_soft_cap.unwrap_or(0),
         ..carcara::RunEgglogOptions::default()
     };
     let rules = parser::Source::new(std::path::Path::new(&options.rare_file), &rare_text);

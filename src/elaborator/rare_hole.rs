@@ -1014,9 +1014,17 @@ fn run_hole_worker_inner(
     if options.sort_guards {
         arguments.push("--sort-guards".into());
     }
-    if options.growth_bound > 0 {
-        arguments.push("--growth-bound".into());
-        arguments.push(options.growth_bound.to_string().into());
+    if options.growth_cap_arith > 0 {
+        arguments.push("--growth-cap-arith".into());
+        arguments.push(options.growth_cap_arith.to_string().into());
+    }
+    if options.growth_cap_plain > 0 {
+        arguments.push("--growth-cap-plain".into());
+        arguments.push(options.growth_cap_plain.to_string().into());
+    }
+    if options.memory_soft_cap_mb > 0 {
+        arguments.push("--memory-soft-cap".into());
+        arguments.push(options.memory_soft_cap_mb.to_string().into());
     }
     if check_only {
         arguments.push("--check-only".into());

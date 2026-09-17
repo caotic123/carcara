@@ -108,11 +108,21 @@ pub struct RunEgglogOptions {
     /// propagated through operator heads and declared function sorts.
     pub sort_guards: bool,
 
-    /// Stop a goal once the e-graph has grown past this many times its size
-    /// after the program was loaded (with a floor), instead of running the
-    /// remaining rounds to the budget: an unreachable goal then fails in
-    /// well under a second.  Zero disables the bound.
-    pub growth_bound: usize,
+    /// Stop a goal once its e-graph holds more than this many tuples, for a
+    /// goal that runs the polynomial normalizer (it grows by construction:
+    /// provable ones reach a few hundred thousand tuples), instead of
+    /// running the remaining rounds to the budget.  Zero disables the cap.
+    pub growth_cap_arith: usize,
+
+    /// The same cap for a goal without the normalizer, whose provable
+    /// instances stay within a few hundred tuples.  Zero disables the cap.
+    pub growth_cap_plain: usize,
+
+    /// Stop a goal once the process's resident memory exceeds this many
+    /// megabytes, checked after every statement: a goal whose e-graph's
+    /// containers blow up fails here instead of at the address-space kill.
+    /// Zero disables the cap.
+    pub memory_soft_cap_mb: usize,
 }
 
 impl Default for RunEgglogOptions {
@@ -124,7 +134,9 @@ impl Default for RunEgglogOptions {
             print_egglog: false,
             seed_from_goal: false,
             sort_guards: false,
-            growth_bound: 0,
+            growth_cap_arith: 0,
+            growth_cap_plain: 0,
+            memory_soft_cap_mb: 0,
         }
     }
 }
