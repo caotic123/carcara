@@ -1529,3 +1529,33 @@ The 8 GB shared-batch run was stopped after its first result
 (c_inference, batches of 10, 300 s budget: 146 s against 131 s) with
 FISCHER9 at 146 good and 36 dead batches; more memory only lets a doomed
 batch take longer to die.
+
+### What the ACI normalization covers, and the Boolean gaps (2026-09-17)
+
+Isolated holes, `holes.rare` (163 rules) against the same file without the
+arith/bv/str/array/set/seq rules (68 rules):
+
+| identity | full file | without arith |
+|---|---|---|
+| nested `and`/`or` flattening (3 forms) | proved 0.06 s | proved 0.03 s |
+| `(or p p) = p`, `(or p q p) = (or p q)`, `(and p) = p` | proved | proved |
+| `(and p true) = p` | proved | proved |
+| `(= false p) = (not p)`, `(= p true) = p`, `(ite true p q) = p`, `(=> p q) = (or (not p) q)` | proved | proved |
+| `(and true true true p) = p` | fails 6.3 s | fails 0.10 s |
+| `(or p true) = true` | fails 6.6 s | fails 0.08 s |
+| `(and p false) = false` | fails 0.5 s | fails 0.07 s |
+| `(not (and p q)) = (or (not p) (not q))` | fails 1.9 s | fails 0.17 s |
+
+The ACI rules (`aci_norm.rs`) handle flattening, duplicates, singletons
+and the two-element identity form `(op x identity)`; in the `Assoc` set
+representation the identity stays an element, so `(and true true true p)`
+stops at `{true, p}`.  Missing: list-form identity elimination
+(`bool-and-true`, `bool-or-false`), absorbing elements (`bool-or-true`,
+`bool-and-false`) and De Morgan (`bool-not-and`, `bool-not-or`), all in
+cvc5's `rewrites.rare` and absent from `holes.rare`.  The b05 proof's
+kept holes were the first two: coverage gaps, not engine limits.  Fix:
+add the six rules to the file (list-form rules already work, cf.
+`bool-xor-*` and the bv rules) or extend the ACI identity rule to the set
+form plus an absorbing-element rule.  The timing column repeats the
+sort-blindness point: the same unprovable goal fails in 0.1 s without the
+arithmetic rules and takes 6 s to die with them.
