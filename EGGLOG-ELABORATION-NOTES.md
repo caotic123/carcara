@@ -1634,3 +1634,44 @@ measured on the micro-goals: non-arithmetic holes went from 0.09–0.13 s to
 arithmetic hole did not change (0.5–0.7 s either way: its cost is the
 normalizer's ~60 iterations, not the declaration).  Reverted; the note
 stays in `prepare_database`.
+
+### Growth caps and the soft memory cap (commits `1aac6c13`, `04f36c2b`)
+
+Calibration (in-process pass logging each goal's tuples after loading and
+at the end, by class): a goal's e-graph holds 17–120 tuples after its
+program is loaded; provable goals without the normalizer end below 400
+tuples on cut_lemma and tgc but at 25k–45k on tgc's large Boolean
+formulas; provable goals with the normalizer end at a median of ~500,
+p99 208k, max 348k (cut_lemma).  So a factor on the initial size means
+nothing and the caps are absolute, per class: `--rare-growth-cap-arith`
+(1,000,000 used) and `--rare-growth-cap-plain` (200,000; a first try at
+20,000 lost five provable tgc goals), checked after every statement and
+saturation step.  `--rare-memory-soft-cap MB` fails a goal when the
+worker's resident set passes the cap between statements; at 1,000 MB it
+never fired: the memory deaths are single 4 GB allocations (a table or
+container doubling) inside one statement, at a modest tuple count, so
+neither cap sees them coming.
+
+Final configuration (guards + ACI rules + caps 1M/200k + soft cap 1 GB),
+check-only, isolated, 4 workers, 30 s / 3 GB per hole, machine lightly
+loaded, against the unloaded baseline:
+
+| proof | baseline proved / kept, wall s | final proved / kept, wall s |
+|---|---|---|
+| cut_lemma_01_008 | 1,881 / 63, 704 | 1,881 / 63, 500 |
+| tgc_io-safe-6 | 778 / 64, 373 | 807 / 35, 162 |
+| clocksynchro_3clocks | 1,615 / 48, 480 | 1,659 / 4, 171 |
+| FISCHER9 | 2,060 / 56, 193 | 2,116 / 0, 81 |
+| MULTIPLIER_3 | 3,374 / 0, 460 | 3,374 / 0, 304 |
+| vpm2-0 | 3,479 / 12, 246 | 3,479 / 12, 205 |
+| total | 243 kept, 2,456 s | 114 kept, 1,423 s |
+
+Verdicts: 129 holes recovered, none lost.  Time: 42% less on these six,
+from three sources: the guards (fewer rules fire per round), the
+identities (holes that ran to the kill now close in 0.1 s), and the
+tuple cap (on cut_lemma 18 of the 63 hopeless holes stop at the cap
+instead of 30 s; 28 still run to 30 s in small but slow e-graphs, 17
+still die at the memory limit).  What remains for the hopeless holes is
+therefore a bound on rule work per round rather than on size, and a
+memory check inside a statement (an allocator hook or egglog 3.0's
+scheduler), not more caps of this kind.
