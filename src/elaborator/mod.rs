@@ -1,8 +1,10 @@
 //! An elaborator for Alethe proofs
 
 pub mod error;
+mod hoist;
 mod hole;
 mod local;
+mod prune;
 mod polyeq;
 pub mod rare_hole;
 mod reordering;
@@ -111,6 +113,9 @@ pub struct Config {
 
     /// Options for the egglog runs behind `elaborate_hole_rewrites`.
     hole_rewrite_options: RunEgglogOptions,
+
+    /// The rules the checker was told to accept as holes, which the hoist pass treats as such.
+    allowed_rules: HashSet<String>,
 }
 
 impl Config {
@@ -123,6 +128,12 @@ impl Config {
 /// An elaboration pass, to be applied to a proof.
 #[derive(Debug, Clone, Copy)]
 pub enum ElaborationPass {
+    /// Lifts every repeated closed derivation, holes included, to the top level and re-points
+    /// its other uses at it, so that a `TRUST_THEORY_REWRITE` equality cvc5 printed once per
+    /// subproof becomes one hole.
+    Hoist,
+    /// Removes every command that the derivation of the empty clause does not use.
+    Prune,
     /// Elaborates away all uses of polyequality in the proof.
     Polyeq,
     /// Fills holes in the proof using an external solver.
@@ -329,6 +340,10 @@ impl<'e> Elaborator<'e> {
         for pass in pipeline {
             let time = Instant::now();
             let result = match pass {
+                ElaborationPass::Hoist => {
+                    Ok(hoist::hoist(self.pool, current, &self.config.allowed_rules, true))
+                }
+                ElaborationPass::Prune => Ok(prune::prune(current)),
                 ElaborationPass::Polyeq => self.elaborate_polyeq(current),
                 ElaborationPass::Hole => self.elaborate_hole(current),
                 ElaborationPass::Local => self.elaborate_local(current),
@@ -423,6 +438,51 @@ impl<'e> Elaborator<'e> {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let results = std::sync::Mutex::new(HashMap::new());
 
+        // cvc5 prints the same theory-rewrite equality as a separate hole
+        // step at every use: on the sample proofs 40–75% of the holes of an
+        // arithmetic proof are duplicates.  A verdict depends only on the
+        // goal and its assumptions (terms are pooled, so pointer identity is
+        // structural identity), so the checking pass runs one hole per
+        // distinct goal and copies its verdict to the others.
+        let mut worklist: Vec<usize> = Vec::with_capacity(holes.len());
+        let mut duplicates: Vec<(usize, usize)> = Vec::new();
+        if check_only {
+            let mut first: HashMap<(usize, Vec<usize>), usize> = HashMap::new();
+            for (index, (node, step)) in holes.iter().enumerate() {
+                let conclusion = step
+                    .clause
+                    .first()
+                    .map(|term| Rc::as_ptr(term) as *const () as usize)
+                    .unwrap_or(0);
+                let mut context: Vec<usize> = node
+                    .get_assumptions()
+                    .iter()
+                    .map(|assumption| Rc::as_ptr(assumption) as *const () as usize)
+                    .collect();
+                context.sort_unstable();
+                match first.entry((conclusion, context)) {
+                    std::collections::hash_map::Entry::Occupied(entry) => {
+                        duplicates.push((index, *entry.get()));
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(index);
+                        worklist.push(index);
+                    }
+                }
+            }
+            if !duplicates.is_empty() {
+                log::info!(
+                    "hole memo: {} of {} holes repeat an earlier goal; {} distinct goals to check",
+                    duplicates.len(),
+                    holes.len(),
+                    worklist.len()
+                );
+            }
+        } else {
+            worklist.extend(0..holes.len());
+        }
+        let worklist = worklist;
+
         if check_only && self.config.hole_batch > 1 {
             self.check_holes_in_batches(&holes, &results);
             let mut results = results.into_inner().unwrap();
@@ -447,10 +507,11 @@ impl<'e> Elaborator<'e> {
                         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                             return;
                         }
-                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some((node, step)) = holes.get(index) else {
+                        let position = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(&index) = worklist.get(position) else {
                             return;
                         };
+                        let (node, step) = &holes[index];
                         let started = Instant::now();
                         let result = if isolate {
                             match rare_file.as_deref() {
@@ -484,6 +545,16 @@ impl<'e> Elaborator<'e> {
             }
         });
         let mut results = results.into_inner().unwrap();
+        // A duplicate takes its representative's verdict; one whose
+        // representative was never started is skipped like it.
+        for (index, representative) in duplicates {
+            let copied = results
+                .get(&holes[representative].1.id)
+                .map(|(result, _)| (result.clone(), Duration::ZERO));
+            if let Some(copied) = copied {
+                results.insert(holes[index].1.id.clone(), copied);
+            }
+        }
         for (_, step) in &holes {
             results.entry(step.id.clone()).or_insert_with(|| {
                 (

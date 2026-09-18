@@ -1,4 +1,5 @@
 use super::{AnchorArg, Rc, Substitution, Term, pool::TermPool};
+use std::collections::{HashMap, hash_map};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, atomic::AtomicUsize};
 
 /// A single Alethe subproof context.
@@ -41,6 +42,20 @@ pub struct ContextStack {
     /// The stack of contexts id (works just like a map to `context_vec`).
     stack: Vec<usize>,
     num_cumulative_calculated: usize,
+    /// How many of the anchors in the stack bind each variable name. A name is in scope exactly
+    /// while its count is positive.
+    ///
+    /// This is maintained by `push` and `pop` instead of being read off the stack on demand,
+    /// because deciding whether a term mentions a bound variable is done per step: walking the
+    /// whole stack for every step of a deeply nested proof is quadratic.
+    bound_names: HashMap<String, usize>,
+    /// Like `bound_names`, but counting only `Assign` anchor arguments: the variables the
+    /// cumulative context substitution can actually rewrite. `Variable` arguments declare a name
+    /// without assigning it (and remove any outer assignment while in scope), so a term whose
+    /// free variables are merely *declared* is left alone by the substitution.
+    assigned_names: HashMap<String, usize>,
+    /// The names each anchor in the stack added, so that popping it can take them back out.
+    bound_frames: Vec<Vec<(String, bool)>>,
 }
 
 impl ContextStack {
@@ -63,6 +78,9 @@ impl ContextStack {
             context_vec,
             stack: vec![],
             num_cumulative_calculated: 0,
+            bound_names: HashMap::new(),
+            assigned_names: HashMap::new(),
+            bound_frames: Vec::new(),
         }
     }
 
@@ -73,6 +91,9 @@ impl ContextStack {
             context_vec: self.context_vec.clone(),
             stack: vec![],
             num_cumulative_calculated: 0,
+            bound_names: HashMap::new(),
+            assigned_names: HashMap::new(),
+            bound_frames: Vec::new(),
         }
     }
 
@@ -91,6 +112,22 @@ impl ContextStack {
         self.stack
             .last()
             .map(|id| self.context_vec[*id].1.read().unwrap())
+    }
+
+    /// The anchor arguments of every context on the stack, outermost first.
+    pub fn all_args(&self) -> Vec<Vec<AnchorArg>> {
+        self.stack
+            .iter()
+            .map(|id| {
+                self.context_vec[*id]
+                    .1
+                    .read()
+                    .unwrap()
+                    .as_ref()
+                    .map(|c| c.args.clone())
+                    .unwrap_or_default()
+            })
+            .collect()
     }
 
     /// Gets a mutable handle to the top context in the stack.
@@ -126,6 +163,43 @@ impl ContextStack {
         // required at any moment, then we are assured it will wait until the
         // fully context construction
         self.stack.push(context_id);
+
+        let names: Vec<(String, bool)> = args
+            .iter()
+            .map(|arg| match arg {
+                AnchorArg::Variable((name, _)) => (name.clone(), false),
+                AnchorArg::Assign((name, _), _) => (name.clone(), true),
+            })
+            .collect();
+        for (name, assigned) in &names {
+            *self.bound_names.entry(name.clone()).or_insert(0) += 1;
+            if *assigned {
+                *self.assigned_names.entry(name.clone()).or_insert(0) += 1;
+            }
+        }
+        self.bound_frames.push(names);
+    }
+
+    /// Returns `true` if no anchor in the stack binds anything, which is the common case: the
+    /// `subproof` rule's anchors take no arguments.
+    pub fn binds_nothing(&self) -> bool {
+        self.bound_names.is_empty()
+    }
+
+    /// Returns `true` if some anchor in the stack declares or assigns a variable of this name.
+    pub fn binds(&self, name: &str) -> bool {
+        self.bound_names.contains_key(name)
+    }
+
+    /// Returns `true` if no anchor in the stack *assigns* anything, so the cumulative context
+    /// substitution is the identity.
+    pub fn assigns_nothing(&self) -> bool {
+        self.assigned_names.is_empty()
+    }
+
+    /// Returns `true` if some anchor in the stack assigns a variable of this name.
+    pub fn assigns(&self, name: &str) -> bool {
+        self.assigned_names.contains_key(name)
     }
 
     /// Pops the top context from the stack.
@@ -133,6 +207,25 @@ impl ContextStack {
         use std::sync::atomic::Ordering;
 
         if let Some(id) = self.stack.pop() {
+            for (name, assigned) in self.bound_frames.pop().unwrap_or_default() {
+                if assigned {
+                    if let hash_map::Entry::Occupied(mut e) =
+                        self.assigned_names.entry(name.clone())
+                    {
+                        *e.get_mut() -= 1;
+                        if *e.get() == 0 {
+                            e.remove();
+                        }
+                    }
+                }
+                if let hash_map::Entry::Occupied(mut e) = self.bound_names.entry(name) {
+                    *e.get_mut() -= 1;
+                    if *e.get() == 0 {
+                        e.remove();
+                    }
+                }
+            }
+
             let this_context = &self.context_vec[id];
 
             let mut remaining_threads = this_context.0.load(Ordering::Acquire);

@@ -3,7 +3,7 @@ pub mod error;
 mod parallel;
 mod rules;
 mod sat_refutation;
-mod shared;
+pub(crate) mod shared;
 
 use crate::{
     CarcaraResult, Error, Status,

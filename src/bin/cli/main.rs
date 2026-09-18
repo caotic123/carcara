@@ -222,6 +222,13 @@ fn elaborate_command(
         .hole_total_budget
         .map(|millis| started + std::time::Duration::from_millis(millis));
     let hole_check_only = options.elaboration.hole_check_only;
+    let allowed_rules: std::collections::HashSet<String> = options
+        .checking
+        .allowed_rules
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     let hole_batch = options.elaboration.hole_batch.unwrap_or(1);
     let hole_batch_timeout = options
         .elaboration
@@ -246,7 +253,8 @@ fn elaborate_command(
         .hole_batch_sequential(hole_batch_sequential)
         .hole_batch_overlap(hole_batch_overlap)
         .hole_batch_term_cap(hole_batch_term_cap)
-        .hole_rewrite_options(hole_rewrite_options);
+        .hole_rewrite_options(hole_rewrite_options)
+        .allowed_rules(allowed_rules);
 
     check_and_elaborate(
         instance.problem(),
