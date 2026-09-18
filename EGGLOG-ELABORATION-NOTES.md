@@ -1699,3 +1699,70 @@ guards and caps), against the run's own numbers:
 Five to fifteen times faster passes on QG-classification (long `and`/`or`
 chains), half to a quarter of the kept holes.  `chk1200` itself ran the
 binary without it.
+
+## 22. Fewer holes to check: hoist and prune, the verdict memo, reuse (2026-09-18)
+
+`chk1200` (§21) was cancelled after QF_UF and half of QF_LIA.  Its QF_UF
+numbers, final: 2,297,441 proved, 15,395 kept (31,762 in the full run), 921
+skipped (15,865), 4,127 of 4,326 complete proofs fully checked.  QF_LIA at the
+cancellation (2,162 complete proofs): 99.0% of the attempted holes proved but
+349k skipped, 53 proofs hit the 1200 s budget and one job the 60 GB node.
+
+The budget losses are a count problem, not an engine problem: cvc5's Alethe
+printer expands the proof DAG once per subproof, so the same rewrite hole
+appears many times.  On ten sample proofs 43–75% of the hole conclusions
+repeat an earlier one.  Three measures, in the order they apply:
+
+### Hoist and prune (commit `6364ff71`, from the coreAlethe work)
+
+`--pipeline hoist prune`: every closed derivation that repeats (same digest,
+holes included when `share_holes`, which the CLI always sets) is lifted once
+to depth 0 and its copies become references; `prune` then drops what nothing
+uses.  The context stack learned which anchors bind nothing, so derivations
+under such anchors count as closed.  Holes on the ten samples:
+
+| proof | holes | hoisted | pass s |
+|---|---|---|---|
+| MULTIPLIER_3 | 4,388 | 1,108 | 2 |
+| RF-09 | 4,389 | 2,716 | 3 |
+| c_inference | 2,143 | 822 | 1 |
+| bofill | 2,715 | 1,453 | 2 |
+| cut_lemma | 2,660 | 1,512 | 2 |
+| FISCHER9 | 2,246 | 1,819 | 12 |
+| ring | 4,457 | 1,027 | 3 |
+| clock_synchro | 1,741 | 1,198 | 2 |
+| vpm2 | 3,747 | 2,093 | 3 |
+
+The hoisted proofs re-check with the same verdicts.  The runner's pass 0
+(`run-holes.sh`, `HOIST_TIMEOUT` 300 s) writes the hoisted proof; the
+checking passes see only that.
+
+### Verdict memo (same commit)
+
+In check-only mode `reconstruct_holes_in_parallel` keys each hole by
+`(conclusion, sorted assumptions)` pointers; only representatives go to the
+workers, duplicates copy the verdict (`hole memo: X of Y holes repeat an
+earlier goal; Z distinct goals to check`).  It catches what hoisting cannot
+merge (holes under differing anchors, holes in proofs that hoisting failed
+on): MULTIPLIER_3 891 distinct goals among 3,374 holes, 173 s with 8 workers;
+c_inference 822 of 2,143, 53 s (131 s baseline, 4 workers); vpm2 1,838 of
+3,491, 127 s.
+
+### Proved equalities as premises (commit `27e4b56c`, `--hole-reuse-proved`)
+
+A later hole whose side terms occur in an equality already proved gets that
+equality as an extra premise (table keyed by side pointer, at most 64 per
+hole, only equalities whose assumptions are a subset of the hole's).  On
+FISCHER9 hoisted: 17,391 equalities handed out for 1,697 holes, same
+verdicts, 48 s against 40 s plain.  Whether it pays on other proofs is what
+`chk1200h` measures.
+
+### Run `chk1200h` (submitted 2026-09-18 01:15, arrays 29105879/80/81)
+
+As `chk1200` (quad, one job per node, 8 workers, 60 s and 8 GB per hole,
+guards, caps 3M/500k, binary `27e4b56c` with the ground-call union) but per
+benchmark: cvc5 once, hoist and prune once, then the checking pass twice on
+the hoisted proof, plain (`chk_*`, `ok`) and with `--hole-reuse-proved`
+(`chkr_*`, `chkr_reused`, `okr`), 1200 s budget each; wall limit 3100 s.
+Results `exp/results/egglog-holes/chk1200h`; `analyze.py` prints both passes
+side by side.
