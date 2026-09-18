@@ -549,10 +549,14 @@ pub fn hole_input(
     prelude: &ProblemPrelude,
     node: &Rc<ProofNode>,
     step: &StepNode,
+    extra_premises: &[crate::ast::Rc<crate::ast::Term>],
 ) -> Option<String> {
     let [conclusion] = step.clause.as_slice() else {
         return None;
     };
+    // The hole's own assumptions, then the equalities the caller adds (earlier
+    // holes already proved whose sides occur in this goal): the child takes
+    // every assumption as a union, so those give it the subterm rewrites.
     let assumptions: Vec<crate::ast::Rc<crate::ast::Term>> = node
         .get_assumptions()
         .iter()
@@ -560,6 +564,7 @@ pub fn hole_input(
             ProofNode::Assume { term, .. } => Some(term.clone()),
             _ => None,
         })
+        .chain(extra_premises.iter().cloned())
         .collect();
     let mut text = hole_problem_string(
         pool,
@@ -849,8 +854,9 @@ pub fn reconstruct_in_child(
     memory_limit_mb: Option<usize>,
     check_only: bool,
     deadline: Option<Instant>,
+    extra_premises: &[crate::ast::Rc<crate::ast::Term>],
 ) -> Result<Vec<String>, String> {
-    let input = hole_input(pool, prelude, node, step)
+    let input = hole_input(pool, prelude, node, step, extra_premises)
         .ok_or_else(|| "expected a single-literal clause".to_owned())?;
     run_hole_worker(
         &step.id,

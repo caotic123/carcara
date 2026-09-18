@@ -116,6 +116,11 @@ pub struct Config {
 
     /// The rules the checker was told to accept as holes, which the hoist pass treats as such.
     allowed_rules: HashSet<String>,
+
+    /// In the checking pass, give each hole the equalities of the holes already proved whose
+    /// sides occur in its goal, as premises: the e-graph then starts with those subterm rewrites.
+    /// Only equalities proved under a subset of the hole's assumptions are reused.
+    hole_reuse_proved: bool,
 }
 
 impl Config {
@@ -483,6 +488,32 @@ impl<'e> Elaborator<'e> {
         }
         let worklist = worklist;
 
+        // The equalities proved so far, by the pointer of each side: an
+        // equality is reused for a later hole whose goal contains that side,
+        // when it was proved under a subset of that hole's assumptions.
+        type Proved = HashMap<usize, Vec<(Vec<usize>, Rc<Term>)>>;
+        let proved: std::sync::Mutex<Proved> = std::sync::Mutex::new(HashMap::new());
+        let reuse = check_only && self.config.hole_reuse_proved;
+        let reused_count = std::sync::atomic::AtomicUsize::new(0);
+        let context_of = |node: &Rc<ProofNode>| -> Vec<usize> {
+            let mut key: Vec<usize> = node
+                .get_assumptions()
+                .iter()
+                .map(|assumption| Rc::as_ptr(assumption) as *const () as usize)
+                .collect();
+            key.sort_unstable();
+            key
+        };
+        let ptr = |term: &Rc<Term>| Rc::as_ptr(term) as *const () as usize;
+        let sides = |step: &StepNode| -> Option<(Rc<Term>, Rc<Term>)> {
+            match step.clause.first().map(|c| c.as_ref()) {
+                Some(Term::Op(crate::ast::Operator::Equals, args)) if args.len() == 2 => {
+                    Some((args[0].clone(), args[1].clone()))
+                }
+                _ => None,
+            }
+        };
+
         if check_only && self.config.hole_batch > 1 {
             self.check_holes_in_batches(&holes, &results);
             let mut results = results.into_inner().unwrap();
@@ -513,6 +544,43 @@ impl<'e> Elaborator<'e> {
                         };
                         let (node, step) = &holes[index];
                         let started = Instant::now();
+                        // Earlier proved equalities whose sides occur in this
+                        // goal, under a compatible context.
+                        let extra: Vec<Rc<Term>> = if reuse {
+                            const REUSE_LIMIT: usize = 64;
+                            let context = context_of(node);
+                            let own = step.clause.first().map(ptr).unwrap_or(0);
+                            let table = proved.lock().unwrap();
+                            let mut seen = HashSet::new();
+                            let mut extra = Vec::new();
+                            'outer: for term in step.clause.iter() {
+                                for subterm in crate::rare::util::collect_subterms(term) {
+                                    let Some(entries) = table.get(&ptr(&subterm)) else {
+                                        continue;
+                                    };
+                                    for (proved_context, equality) in entries {
+                                        if ptr(equality) == own
+                                            || !seen.insert(ptr(equality))
+                                            || !proved_context
+                                                .iter()
+                                                .all(|a| context.binary_search(a).is_ok())
+                                        {
+                                            continue;
+                                        }
+                                        extra.push(equality.clone());
+                                        if extra.len() >= REUSE_LIMIT {
+                                            break 'outer;
+                                        }
+                                    }
+                                }
+                            }
+                            extra
+                        } else {
+                            Vec::new()
+                        };
+                        if !extra.is_empty() {
+                            reused_count.fetch_add(extra.len(), std::sync::atomic::Ordering::Relaxed);
+                        }
                         let result = if isolate {
                             match rare_file.as_deref() {
                                 Some(path) => rare_hole::reconstruct_in_child(
@@ -525,6 +593,7 @@ impl<'e> Elaborator<'e> {
                                     memory_limit,
                                     check_only,
                                     deadline,
+                                    &extra,
                                 ),
                                 None => {
                                     Err("isolating holes needs the RARE file's path".to_owned())
@@ -536,6 +605,20 @@ impl<'e> Elaborator<'e> {
                         } else {
                             rare_hole::reconstruct_steps(&mut pool, node, step, rules, options)
                         };
+                        if reuse && result.is_ok() {
+                            if let (Some((lhs, rhs)), Some(conclusion)) =
+                                (sides(step), step.clause.first())
+                            {
+                                let context = context_of(node);
+                                let mut table = proved.lock().unwrap();
+                                for side in [lhs, rhs] {
+                                    table
+                                        .entry(ptr(&side))
+                                        .or_default()
+                                        .push((context.clone(), conclusion.clone()));
+                                }
+                            }
+                        }
                         results
                             .lock()
                             .unwrap()
@@ -545,6 +628,12 @@ impl<'e> Elaborator<'e> {
             }
         });
         let mut results = results.into_inner().unwrap();
+        if reuse {
+            log::info!(
+                "hole reuse: {} proved equalities handed to later holes as premises",
+                reused_count.load(std::sync::atomic::Ordering::Relaxed)
+            );
+        }
         // A duplicate takes its representative's verdict; one whose
         // representative was never started is skipped like it.
         for (index, representative) in duplicates {
@@ -748,6 +837,7 @@ impl<'e> Elaborator<'e> {
                                                 memory_limit,
                                                 true,
                                                 deadline,
+                                                &[],
                                             ),
                                             None => Err(
                                                 "isolating holes needs the RARE file's path"

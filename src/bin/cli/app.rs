@@ -395,6 +395,11 @@ pub struct ElaborationOptions {
     #[clap(long, value_name = "TERMS", requires = "hole_batch_by_overlap")]
     pub hole_batch_terms: Option<usize>,
 
+    /// With `--hole-check-only`, give each hole the equalities of the holes
+    /// already proved whose sides occur in its goal, as premises.
+    #[clap(long, requires = "hole_check_only")]
+    pub hole_reuse_proved: bool,
+
     /// The pipeline of elaboration passes to use.
     #[clap(
         value_enum,

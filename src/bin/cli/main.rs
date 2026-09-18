@@ -237,6 +237,7 @@ fn elaborate_command(
     let hole_batch_sequential = options.elaboration.hole_batch_sequential;
     let hole_batch_overlap = options.elaboration.hole_batch_by_overlap;
     let hole_batch_term_cap = options.elaboration.hole_batch_terms.unwrap_or(0);
+    let hole_reuse_proved = options.elaboration.hole_reuse_proved;
 
     let checker_config = (options.checking, options.tools.clone()).into_config();
     let (elab_config, pipeline) = (options.elaboration, options.tools).into_config();
@@ -253,6 +254,7 @@ fn elaborate_command(
         .hole_batch_sequential(hole_batch_sequential)
         .hole_batch_overlap(hole_batch_overlap)
         .hole_batch_term_cap(hole_batch_term_cap)
+        .hole_reuse_proved(hole_reuse_proved)
         .hole_rewrite_options(hole_rewrite_options)
         .allowed_rules(allowed_rules);
 
