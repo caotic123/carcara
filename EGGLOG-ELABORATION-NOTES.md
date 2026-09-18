@@ -1766,3 +1766,28 @@ the hoisted proof, plain (`chk_*`, `ok`) and with `--hole-reuse-proved`
 (`chkr_*`, `chkr_reused`, `okr`), 1200 s budget each; wall limit 3100 s.
 Results `exp/results/egglog-holes/chk1200h`; `analyze.py` prints both passes
 side by side.
+
+### Distinct solver aborts (found in chk1200h2, fixed in the next commit after bb384366)
+
+Six kept holes in QF_UF's `chk1200h2` results read "worker exited with status
+1: ... Illegal merge attempted for function to_formula".  Reproduced with a
+one-hole proof of `(= (distinct v n3 v) false)`; the same three proofs
+(blocks.3, firewire_tree.1/.3) lost the hole in the full run and in
+`chk1200`.  Cause: the base program's list re-association rewrites
+(`(Args (Args t1 t2) t3)` <-> `(Args t1 (Args t2 t3))`, the encoding behind
+RARE's `:list` variables) put nodes whose head is an improper sublist into
+every argument list's class after the first `(run)`; in round 2 the
+distinct-elimination rules bound such a sublist as an element, set a second
+value for the same `to_formula` key, and egglog aborted -- every distinct
+with three or more elements not proved in round 1, provable or not.  Fix:
+element positions matched as `(Mk _)`.  The same investigation showed that
+`(distinct a b a) = false` was unprovable even without the abort: the
+compiled `distinct-false` rule needs non-empty segments before, between and
+after the repeated element (segment variables cannot be empty), and the
+`(and ...)` the solver builds is a list that never reaches the ACI set form
+(the conversion exists only for the step's own calls).  The solver now marks
+its conjunct lists and unions the conjunction with false when a list holds
+false; restricted to those lists, the cost elsewhere is within noise
+(gensys_icl072 hoisted, 1,395 holes: 26.7-28.4 s old vs 28.3-29.1 s new;
+clocksynchro, 1,120 holes: 66.1-66.3 s vs 67.0-67.4 s).  Two engine tests
+cover both cases.
