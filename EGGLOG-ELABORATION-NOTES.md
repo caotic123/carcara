@@ -1675,3 +1675,27 @@ still die at the memory limit).  What remains for the hopeless holes is
 therefore a bound on rule work per round rather than on size, and a
 memory check inside a statement (an allocator hook or egglog 3.0's
 scheduler), not more caps of this kind.
+
+### Ground `and`/`or` calls as unions (commit `fc3e2100`, from the egglog-3 branch)
+
+`aci_call_rules` emitted, for every concrete `and`/`or` call of the step,
+a rewrite whose left-hand side is the ground call itself: matched at most
+once, searched on every iteration of the default ruleset, one rule per
+call.  The egglog-3 work found it (there the search is a join and took
+21 s per iteration on one hole; `wt-egglog/EGGLOG-ACI-GROUND-CALLS.md`)
+and replaced it with a `(union lhs rhs)` at load time; on this branch the
+groundness test is `Literal(_) => false` (the globals are unprefixed and
+never occur inside a step's call).  Measured on four QF_UF proofs of the
+`chk1200` run, same settings (8 workers, 1200 s, 60 s and 8 GB per hole,
+guards and caps), against the run's own numbers:
+
+| proof | chk1200 kept, pass s | union kept, pass s |
+|---|---|---|
+| gensys_icl072 | 19, 156 | 18, 34 |
+| iso_icl054 | 18, 160 | 9, 27 |
+| iso_icl942 | 14, 142 | 4, 10 |
+| iso_icl946 | 13, 183 | 3, 11 |
+
+Five to fifteen times faster passes on QG-classification (long `and`/`or`
+chains), half to a quarter of the kept holes.  `chk1200` itself ran the
+binary without it.
