@@ -2701,6 +2701,67 @@ mod tests {
         );
     }
 
+    /// A distinct with a repeated element is false.  Its expansion is the
+    /// conjunction of the pairwise disequalities, one of which is `(not
+    /// (= a a))`; the list re-association rewrites used to make the solver
+    /// bind a sublist as an element and abort the whole run with an
+    /// "Illegal merge" on `to_formula`.
+    #[test]
+    fn distinct_with_a_repeated_element_is_false() {
+        let mut pool = PrimitivePool::new();
+        let truth = pool.add(Term::Op(Operator::True, vec![]));
+        let falsity = pool.add(Term::Op(Operator::False, vec![]));
+        let distinct = pool.add(Term::Op(
+            Operator::Distinct,
+            vec![truth.clone(), falsity.clone(), truth],
+        ));
+        let goal = pool.add(Term::Op(Operator::Equals, vec![distinct, falsity]));
+        let database = RareStatements::default();
+        let context = RareCtx::new(&database);
+
+        let (result, _) = check_hole_rewrite_with_context(
+            &mut pool,
+            "distinct",
+            goal,
+            &[],
+            &context,
+            RunEgglogOptions::default(),
+        );
+        assert!(result.is_ok(), "check failed: {:?}", result.err());
+    }
+
+    /// A distinct without repeats is not false; the solver must say so
+    /// instead of aborting once the argument lists are re-associated.
+    #[test]
+    fn distinct_without_repeats_is_reported_unproved() {
+        let mut pool = PrimitivePool::new();
+        let numbers: Vec<_> = (1..=3)
+            .map(|i| pool.add(Term::Const(Constant::Integer(i.into()))))
+            .collect();
+        let falsity = pool.add(Term::Op(Operator::False, vec![]));
+        let distinct = pool.add(Term::Op(Operator::Distinct, numbers));
+        let goal = pool.add(Term::Op(Operator::Equals, vec![distinct, falsity]));
+        let database = RareStatements::default();
+        let context = RareCtx::new(&database);
+
+        let (result, _) = check_hole_rewrite_with_context(
+            &mut pool,
+            "distinct",
+            goal,
+            &[],
+            &context,
+            RunEgglogOptions::default(),
+        );
+        let error = match result {
+            Ok(_) => panic!("a distinct of three constants is not false"),
+            Err(error) => error,
+        };
+        assert!(
+            !error.contains("Illegal merge") && !error.contains("panic"),
+            "the solver aborted instead of failing: {error}"
+        );
+    }
+
     #[test]
     fn malformed_programmatic_rare_rule_returns_an_error() {
         let mut pool = PrimitivePool::new();
