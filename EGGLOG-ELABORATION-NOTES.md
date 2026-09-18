@@ -1791,3 +1791,47 @@ false; restricted to those lists, the cost elsewhere is within noise
 (gensys_icl072 hoisted, 1,395 holes: 26.7-28.4 s old vs 28.3-29.1 s new;
 clocksynchro, 1,120 holes: 66.1-66.3 s vs 67.0-67.4 s).  Two engine tests
 cover both cases.
+
+### Run `chk1200h2`: results (2026-09-19)
+
+Resubmission of `chk1200h` with the runner paging the binaries in before
+timing (the first task on each node had paid ~0.2 s in its first checking
+pass).  9,812 tasks, 344 node-hours.  Plain checking pass on the hoisted
+proofs, against the full run (600 s budget, 30 s and 5 GB per hole, original
+proofs) and `chk1200` (QF_UF only):
+
+| | QF_UF | QF_LIA | QF_LRA |
+|---|---|---|---|
+| complete proofs | 4,325 | 2,543 | 537 |
+| holes before / after hoisting | 2,420,688 / 2,348,353 (−3%) | 5,526,018 / 1,827,863 (−67%) | 4,395,839 / 1,691,984 (−62%) |
+| proved | 2,233,232 | 1,274,199 | 702,767 |
+| kept (full run) | 7,015 (31,762; chk1200 15,395) | 26,073 | 27,003 |
+| skipped at the budget (full run) | 0 (15,865) | 523,268 (3.9 M) | 652,916 (3.7 M) |
+| proved, % of attempted | 99.7 | 98.0 | 96.3 |
+| proved, % of all holes | 95.1 | 69.7 (full ≈ 29) | 41.5 (full ≈ 15) |
+| hole-free proofs (full run) | 1,599 = 37.0% (634 = 14.7%) | 1,698 = 66.8% (1,377 = 54.2%) | 236 = 43.9% (166 = 30.9%) |
+| proofs hitting the budget | 0 | 100 | 128 |
+| pass p50 / p90 / max, s | 10.9 / 19.7 / 852 | 2.1 / 228 / 1,303 | 144 / 1,208 / 1,300 |
+
+Proofs whose upfront check fails (cvc5 proof defects: 198 QF_UF, 24 QF_LIA,
+12 QF_LRA) also fail the hoist pass and are counted neither way, as before.
+Kept-hole reasons, plain pass: QF_LIA 33,873 at the 60 s hole limit, 14,186
+at the 8 GB limit, 4,045 unprovable, 2,041 at the pass budget; QF_LRA 26,107 /
+22,932 / 1,290 / 2,392; QF_UF 810 / 446 / 12,681 / 32, plus the six distinct
+aborts fixed above.  The remaining losses are the budget (the cut_lemma and
+uart families: 23k–32k holes per proof, 3k–7k proved in 1,200 s) and the
+arithmetic holes that exhaust 60 s or 8 GB.
+
+Reuse of proved equalities as premises (`--hole-reuse-proved`, second pass on
+the same hoisted proofs): a loss on every set -- QF_UF −4,559 holes, slower on
+3,912 of 4,127 proofs (65,912 s vs 58,186 s); QF_LIA −35,864 holes, slower on
+1,756 of 2,537; QF_LRA −45,753, slower on 397 of 530.  Why: a premise `l = r`
+is a `(union l r)` plus `Avaliable` facts for every subterm of both sides, so
+the normalizer and every other rule still fire on `l` (an e-graph union adds,
+it never replaces) and additionally on `r`; the pair-equality seeding grows
+with the square of the available terms; and the selection (any proved
+equality with a side occurring in the goal, up to 64 per hole) is loose.
+peg_solitaire.5: 46,042 equalities for 2,256 holes, 124 s -> 1,063 s, kept 11
+-> 114.  The variant that would give the intended effect substitutes each
+proved `l` by its normal form `r` in the goal before translation, so `l`
+never enters the e-graph; not implemented.
