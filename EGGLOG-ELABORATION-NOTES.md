@@ -2392,3 +2392,50 @@ justifies 3 of 3, and the elaborated proof checks **valid** with no hole
 left.  The unit tests cover the e-graph side
 (`mirrored_inequalities_meet_inside_a_conjunction`) and the certificate
 side end to end (`elaborates_mirrored_bounds_in_a_conjunction`).
+
+## 29. `:list` parameters, and the complement rules that never fired (2026-09-19)
+
+Probing the veriT corpus's kept holes turned up something that had been
+distorting every measurement since §17.  A RARE rule's `:list` parameter
+is compiled into **exactly one argument slot** of the `Args` chain (a bare
+pattern variable, which the list re-association lets bind a *sublist*, but
+never an empty one).  So a rule with k list parameters only matches when
+all k lists are non-empty.  `bool-or-taut`, with three of them, proves
+
+| goal | verdict |
+|---|---|
+| `(or a p b (not p) c)` | proved in 0.07 s |
+| `(or a p (not p) c)` | kept |
+| `(or a b p (not p))` | kept |
+| `(or p (not p))` | kept |
+
+and the kept ones are not merely unproved: an unreachable goal is what
+triggers the quadratic pair seeding, so `(= (not (or (not A) A (not B)))
+false)` with three-literal `A`, `B` exhausts 2 GB in 60 s
+(`scratchpad/verit/diag/d3`).  The same holds for `bool-and-conf` and for
+every other `:list` rule; Carcara's own `rare_rewrite` checker shares the
+convention, substituting one term per parameter, so an empty list has no
+form there either.
+
+**The fix, on the set form.**  The ACI machinery converts every `and`/`or`
+call into a set and already has set-level rules for the identity, the
+singleton, idempotence and the absorbing element.  One more rule unions a
+set that holds `w` and `(not w)` with the absorbing element, which finds
+the pair whatever the arity and the positions
+(`aci_norm.rs`, rule 9).  The reconstruction certifies it with a new
+computation kind, `AciComplement`, whose Alethe step is
+`or_simplify`/`and_simplify` -- Carcara's procedures for those rules
+short-circuit on exactly this pair.
+
+**Measured** on the six shapes of `scratchpad/verit/diag/d5`, all kept
+before: checking proves 6 of 6 in under 0.1 s each, elaboration justifies
+5 of 6 (the sixth has the pair under a `not`, where the search does not
+chain the step onto `bool-not-true` yet).  Two tests cover it, at the
+engine and end to end.
+
+**What is still open.**  The general fix is to compile a `:list` rule into
+the 2^k variants, one per emptiness pattern, and to give `rare_rewrite` a
+form for an empty list argument; that would revive `bool-and-conf`,
+`distinct` list rules and the rest, of which the complement pair is only
+the most common instance.  It is the largest known gap in the engine's
+coverage of the RARE database.
