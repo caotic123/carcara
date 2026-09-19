@@ -137,6 +137,61 @@ impl Default for Normalizer {
     }
 }
 
+/// A bound `(rel P c)` or a point `(= P c)` in normal form, as its relation, polynomial and
+/// constant.
+fn bound_parts(term: &Rc<Term>) -> Option<(Operator, &Rc<Term>, Rational)> {
+    use Operator::*;
+    match term.as_ref() {
+        Term::Op(rel @ (LessThan | LessEq | GreaterThan | GreaterEq | Equals), args)
+            if args.len() == 2 =>
+        {
+            Some((*rel, &args[0], args[1].as_signed_number()?))
+        }
+        _ => None,
+    }
+}
+
+/// Whether `(x P a)` and `(y P b)` have no common solution; `Distinct` stands for `(not (= P a))`.
+fn bounds_exclude(integer: bool, x: Operator, a: &Rational, y: Operator, b: &Rational) -> bool {
+    use Operator::*;
+    match (x, y) {
+        (Equals, Equals) => a != b,
+        (Equals, Distinct) | (Distinct, Equals) => a == b,
+        (Equals, LessEq) | (LessEq, Equals) => if x == Equals { b < a } else { a < b },
+        (Equals, LessThan) | (LessThan, Equals) => if x == Equals { b <= a } else { a <= b },
+        (Equals, GreaterEq) | (GreaterEq, Equals) => if x == Equals { b > a } else { a > b },
+        (Equals, GreaterThan) | (GreaterThan, Equals) => if x == Equals { b >= a } else { a >= b },
+        (LessEq | LessThan, GreaterEq | GreaterThan) => {
+            // upper a, lower b
+            b > a || (b == a && (x == LessThan || y == GreaterThan)) || (integer && b > a)
+        }
+        (GreaterEq | GreaterThan, LessEq | LessThan) => bounds_exclude(integer, y, b, x, a),
+        _ => false,
+    }
+}
+
+/// Whether `(x P a)` or `(y P b)` holds for every value; `Distinct` stands for `(not (= P a))`.
+fn bounds_cover(integer: bool, x: Operator, a: &Rational, y: Operator, b: &Rational) -> bool {
+    use Operator::*;
+    match (x, y) {
+        (Distinct, Distinct) => a != b,
+        (Distinct, LessEq) | (LessEq, Distinct) => if x == Distinct { b >= a } else { a >= b },
+        (Distinct, LessThan) | (LessThan, Distinct) => if x == Distinct { b > a } else { a > b },
+        (Distinct, GreaterEq) | (GreaterEq, Distinct) => if x == Distinct { b <= a } else { a <= b },
+        (Distinct, GreaterThan) | (GreaterThan, Distinct) => if x == Distinct { b < a } else { a < b },
+        (LessEq | LessThan, GreaterEq | GreaterThan) => {
+            // upper a, lower b
+            if integer {
+                *b <= a.clone() + Rational::from(1)
+            } else {
+                b < a || (b == a && !(x == LessThan && y == GreaterThan))
+            }
+        }
+        (GreaterEq | GreaterThan, LessEq | LessThan) => bounds_cover(integer, y, b, x, a),
+        _ => false,
+    }
+}
+
 impl Normalizer {
     pub fn new() -> Self {
         Self { cache: HashMap::new(), rewritten: 0 }
@@ -338,7 +393,9 @@ impl Normalizer {
         }
         kept.sort_unstable_by_key(Rc::as_ptr);
         kept.dedup();
-        // `p` and `(not p)` together make the absorbing element.
+        // `p` and `(not p)` together make the absorbing element, and so do
+        // two bounds on one polynomial that are inconsistent (under `and`) or
+        // that cover every value (under `or`).
         let negated: std::collections::HashSet<usize> = kept
             .iter()
             .filter_map(|arg| match arg.as_ref() {
@@ -346,11 +403,53 @@ impl Normalizer {
                 _ => None,
             })
             .collect();
-        let complemented = |x: &Rc<Term>| match x.as_ref() {
-            Term::Op(Operator::Not, inner) => {
-                kept.binary_search_by_key(&Rc::as_ptr(&inner[0]), Rc::as_ptr).is_ok()
+        let mut bounds: HashMap<usize, (bool, Vec<(Operator, Rational)>)> = HashMap::new();
+        for arg in &kept {
+            if let Some((rel, poly, value)) = bound_parts(arg) {
+                let key = Rc::as_ptr(poly) as *const () as usize;
+                let entry = match bounds.get_mut(&key) {
+                    Some(entry) => entry,
+                    None => {
+                        let integer = self.arith_sort(pool, poly) == Some(ArithSort::Int);
+                        bounds.entry(key).or_insert((integer, Vec::new()))
+                    }
+                };
+                entry.1.push((rel, value));
             }
-            _ => negated.contains(&(Rc::as_ptr(x) as *const () as usize)),
+        }
+        let under_and = op == Operator::And;
+        let complemented = |x: &Rc<Term>| -> bool {
+            let literal = match x.as_ref() {
+                Term::Op(Operator::Not, inner) => {
+                    kept.binary_search_by_key(&Rc::as_ptr(&inner[0]), Rc::as_ptr).is_ok()
+                }
+                _ => negated.contains(&(Rc::as_ptr(x) as *const () as usize)),
+            };
+            if literal {
+                return true;
+            }
+            // A bound or a point against the bounds kept on its polynomial.
+            let (rel, poly, value) = match x.as_ref() {
+                Term::Op(Operator::Not, inner) => match bound_parts(&inner[0]) {
+                    Some((Operator::Equals, poly, value)) => (Operator::Distinct, poly, value),
+                    _ => return false,
+                },
+                _ => match bound_parts(x) {
+                    Some(parts) => parts,
+                    None => return false,
+                },
+            };
+            let Some((integer, others)) = bounds.get(&(Rc::as_ptr(poly) as *const () as usize))
+            else {
+                return false;
+            };
+            others.iter().any(|(other, bound)| {
+                if under_and {
+                    bounds_exclude(*integer, rel, &value, *other, bound)
+                } else {
+                    bounds_cover(*integer, rel, &value, *other, bound)
+                }
+            })
         };
         if kept.iter().any(|arg| {
             matches!(arg.as_ref(), Term::Op(Operator::Not, _)) && complemented(arg)
@@ -366,6 +465,29 @@ impl Normalizer {
         }) {
             return pool.add(Term::new_bool(absorbing));
         }
+        // A member of such an argument that is complemented here is redundant
+        // in it: `(or p (and (not p) q))` is `(or p q)`.
+        let filtered: Vec<Option<Vec<Rc<Term>>>> = kept
+            .iter()
+            .map(|arg| match arg.as_ref() {
+                Term::Op(inner_op, inner) if *inner_op == dual => {
+                    let rest: Vec<Rc<Term>> =
+                        inner.iter().filter(|m| !complemented(m)).cloned().collect();
+                    (rest.len() < inner.len()).then_some(rest)
+                }
+                _ => None,
+            })
+            .collect();
+        if filtered.iter().any(Option::is_some) {
+            let mut rebuilt = Vec::with_capacity(kept.len());
+            for (arg, rest) in kept.iter().zip(filtered) {
+                match rest {
+                    Some(rest) => rebuilt.push(self.normalize_aci(pool, dual, rest)),
+                    None => rebuilt.push(arg.clone()),
+                }
+            }
+            return self.normalize_aci(pool, op, rebuilt);
+        }
         // Two bounds on one polynomial that make an equality (or, in a
         // disjunction, a disequality) are that: `(and (<= P c) (>= P c))` is
         // `(= P c)`, which meets veriT's `la_rw_eq` from the other side.
@@ -379,10 +501,13 @@ impl Normalizer {
         }
     }
 
-    /// `args` with every pair of bounds on the same polynomial that amounts to
-    /// an equality (under `and`) or a disequality (under `or`) replaced by it;
-    /// `None` when there is no such pair.  Bounds are in normal form, `(rel P c)`
-    /// with `c` a constant.
+    /// `args` with the bounds on each polynomial combined: under `and` only the
+    /// tightest lower and upper bound stay, an empty interval is `false` and a
+    /// point interval is the equality; under `or` only the weakest of each
+    /// stay, two half-lines that cover everything are `true` and two that
+    /// leave out one point are its disequality (the inverse of veriT's
+    /// `la_rw_eq`).  `None` when nothing changes.  Bounds are in normal form,
+    /// `(rel P c)` with `c` a constant; Int bounds are never strict.
     fn merge_bounds(
         &mut self,
         pool: &mut PrimitivePool,
@@ -390,74 +515,124 @@ impl Normalizer {
         args: &[Rc<Term>],
     ) -> Option<Vec<Rc<Term>>> {
         use Operator::*;
-        let bound_of = |term: &Rc<Term>| -> Option<(Operator, Rc<Term>, Rational)> {
-            match term.as_ref() {
-                Term::Op(rel @ (LessThan | LessEq | GreaterThan | GreaterEq), rel_args)
-                    if rel_args.len() == 2 =>
-                {
-                    Some((*rel, rel_args[0].clone(), rel_args[1].as_signed_number()?))
-                }
-                _ => None,
-            }
-        };
-        let mut by_poly: HashMap<usize, Vec<usize>> = HashMap::new();
+        // (index, strict, value)
+        type Bound = (usize, bool, Rational);
+        struct Bounds {
+            poly: Rc<Term>,
+            lower: Vec<Bound>,
+            upper: Vec<Bound>,
+        }
+        let mut by_poly: IndexMap<usize, Bounds> = IndexMap::new();
         for (index, arg) in args.iter().enumerate() {
-            if let Some((_, poly, _)) = bound_of(arg) {
-                by_poly
-                    .entry(Rc::as_ptr(&poly) as *const () as usize)
-                    .or_default()
-                    .push(index);
+            let Term::Op(rel @ (LessThan | LessEq | GreaterThan | GreaterEq), rel_args) =
+                arg.as_ref()
+            else {
+                continue;
+            };
+            if rel_args.len() != 2 {
+                continue;
+            }
+            let Some(value) = rel_args[1].as_signed_number() else { continue };
+            let entry = by_poly
+                .entry(Rc::as_ptr(&rel_args[0]) as *const () as usize)
+                .or_insert_with(|| Bounds {
+                    poly: rel_args[0].clone(),
+                    lower: Vec::new(),
+                    upper: Vec::new(),
+                });
+            let strict = matches!(rel, LessThan | GreaterThan);
+            match rel {
+                LessThan | LessEq => entry.upper.push((index, strict, value)),
+                _ => entry.lower.push((index, strict, value)),
             }
         }
         let mut removed = vec![false; args.len()];
         let mut added: Vec<Rc<Term>> = Vec::new();
-        for indices in by_poly.into_values() {
-            for a in 0..indices.len() {
-                for b in a + 1..indices.len() {
-                    let (i, j) = (indices[a], indices[b]);
-                    if removed[i] || removed[j] {
-                        continue;
-                    }
-                    let (Some((oi, poly, ci)), Some((oj, _, cj))) =
-                        (bound_of(&args[i]), bound_of(&args[j]))
-                    else {
-                        continue;
-                    };
-                    let Some(sort) = self.arith_sort(pool, &poly) else { continue };
-                    let equality = |this: &Self, pool: &mut PrimitivePool, c: &Rational| {
-                        let constant = this.constant_term(pool, c, sort);
-                        pool.add(Term::Op(Equals, vec![poly.clone(), constant]))
-                    };
-                    let merged = match (op, oi, oj) {
-                        (And, LessEq, GreaterEq) | (And, GreaterEq, LessEq) if ci == cj => {
-                            Some(equality(self, pool, &ci))
+        let mut changed = false;
+        for bounds in by_poly.into_values() {
+            if bounds.lower.len() + bounds.upper.len() < 2 {
+                continue;
+            }
+            let Some(sort) = self.arith_sort(pool, &bounds.poly) else { continue };
+            let integer = sort == ArithSort::Int;
+            // Under `and` the tightest bounds: the least upper (strict first at
+            // a tie) and the greatest lower; under `or` the weakest: the
+            // greatest upper (non-strict first) and the least lower.
+            let tighter = |a: &Bound, b: &Bound, upper: bool| -> bool {
+                let (av, bv) = (&a.2, &b.2);
+                if av != bv {
+                    (av < bv) == upper
+                } else {
+                    a.1 && !b.1
+                }
+            };
+            let pick = |list: &[Bound], upper: bool| -> Option<Bound> {
+                let mut best: Option<&Bound> = None;
+                for bound in list {
+                    let better = match best {
+                        None => true,
+                        Some(current) => {
+                            let a_tighter = tighter(bound, current, upper);
+                            if op == And { a_tighter } else { !a_tighter && (bound.2 != current.2 || bound.1 != current.1) }
                         }
-                        (Or, LessThan, GreaterThan) | (Or, GreaterThan, LessThan) if ci == cj => {
-                            let equality = equality(self, pool, &ci);
-                            Some(pool.add(Term::Op(Not, vec![equality])))
-                        }
-                        (Or, LessEq, GreaterEq) | (Or, GreaterEq, LessEq)
-                            if sort == ArithSort::Int =>
-                        {
-                            let (low, high) = if oi == LessEq { (ci, cj) } else { (cj, ci) };
-                            if high == low.clone() + Rational::from(2) {
-                                let equality = equality(self, pool, &(low + Rational::from(1)));
-                                Some(pool.add(Term::Op(Not, vec![equality])))
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
                     };
-                    if let Some(term) = merged {
-                        removed[i] = true;
-                        removed[j] = true;
-                        added.push(term);
+                    if better {
+                        best = Some(bound);
                     }
                 }
+                best.cloned()
+            };
+            let upper = pick(&bounds.upper, true);
+            let lower = pick(&bounds.lower, false);
+            let keep: Vec<usize> = upper.iter().chain(lower.iter()).map(|b| b.0).collect();
+            for bound in bounds.upper.iter().chain(bounds.lower.iter()) {
+                if !keep.contains(&bound.0) {
+                    removed[bound.0] = true;
+                    changed = true;
+                }
+            }
+            let (Some(upper), Some(lower)) = (upper, lower) else { continue };
+            let (up, low) = (&upper.2, &lower.2);
+            let point = |this: &Self, pool: &mut PrimitivePool, c: &Rational| {
+                let constant = this.constant_term(pool, c, sort);
+                pool.add(Term::Op(Equals, vec![bounds.poly.clone(), constant]))
+            };
+            let replacement = if op == And {
+                // `P <= up` and `P >= low`
+                if low > up || (low == up && (upper.1 || lower.1)) {
+                    Some(pool.add(Term::new_bool(false)))
+                } else if low == up {
+                    Some(point(self, pool, low))
+                } else {
+                    None
+                }
+            } else {
+                // `P <= up` or `P >= low`: everything when the half-lines meet
+                let covers = if integer {
+                    *low <= up.clone() + Rational::from(1)
+                } else {
+                    low < up || (low == up && !(upper.1 && lower.1))
+                };
+                if covers {
+                    Some(pool.add(Term::new_bool(true)))
+                } else if integer && *low == up.clone() + Rational::from(2) {
+                    let equality = point(self, pool, &(up.clone() + Rational::from(1)));
+                    Some(pool.add(Term::Op(Not, vec![equality])))
+                } else if !integer && low == up {
+                    let equality = point(self, pool, low);
+                    Some(pool.add(Term::Op(Not, vec![equality])))
+                } else {
+                    None
+                }
+            };
+            if let Some(term) = replacement {
+                removed[upper.0] = true;
+                removed[lower.0] = true;
+                added.push(term);
+                changed = true;
             }
         }
-        if added.is_empty() {
+        if !changed {
             return None;
         }
         let mut result: Vec<Rc<Term>> = args
@@ -704,7 +879,7 @@ mod tests {
         (nl == nr, format!("{nl:#}"), format!("{nr:#}"))
     }
 
-    const INTS: &str = "(declare-const x Int) (declare-const y Int) (declare-const z Int) (declare-const p Bool) (declare-const q Bool)";
+    const INTS: &str = "(declare-const x Int) (declare-const y Int) (declare-const z Int) (declare-const p Bool) (declare-const q Bool) (declare-const z_bool Bool)";
     const REALS: &str = "(declare-const a Real) (declare-const b Real) (declare-const x Int)";
 
     #[test]
@@ -746,6 +921,22 @@ mod tests {
             (INTS, "(not (and (<= x y) (<= y x)))", "(distinct x y)"),
             (REALS, "(and (<= a (* 2.0 b)) (<= (* 2.0 b) a))", "(= a (* 2.0 b))"),
             (REALS, "(or (not (<= a b)) (not (<= b a)))", "(not (= a b))"),
+            (INTS, "(or (<= x 0) (>= x 1))", "true"),
+            (INTS, "(or (not (>= x 1)) (>= x 1) p)", "true"),
+            (INTS, "(and (<= x 0) (>= x 1))", "false"),
+            (INTS, "(and (<= x 3) (<= x 5) (>= x 1))", "(and (<= x 3) (>= x 1))"),
+            (INTS, "(not (or (not (and (>= x 1) (>= y 1))) (and (>= x 1) (>= y 1)) (not (>= z 1))))", "false"),
+            (REALS, "(or (< a 1.0) (>= a 1.0))", "true"),
+            (INTS, "(and (>= x 1) (or (<= x 0) p) (not p))", "false"),
+            (INTS, "(and (= x 2) (or (<= x 1) (>= x 3)))", "false"),
+            (INTS, "(or (not (= x 2)) (and (<= x 2) (>= x 2)))", "true"),
+            (INTS, "(or p (and (not p) q))", "(or p q)"),
+            (INTS, "(and p (or (not p) q) (or (not q) (not p) z_bool))", "(and p q z_bool)"),
+            (INTS, "(or (<= x 1) (and (>= x 5) (>= x 7)))", "(or (<= x 1) (>= x 7))"),
+            (REALS, "(or (< a 1.0) (and (>= a 1.0) (>= b 1.0)))", "(or (< a 1.0) (>= b 1.0))"),
+            (REALS, "(and (< a 1.0) (>= a 1.0))", "false"),
+            (REALS, "(and (<= a 1.0) (< a 2.0))", "(<= a 1.0)"),
+            (REALS, "(or (<= a 1.0) (< a 2.0))", "(< a 2.0)"),
             (REALS, "(>= 0.0 (/ (- 1) 1024))", "true"),
             (REALS, "(* (/ 1 2) (to_real (+ x (* 2 x))))", "(* (/ 3 2) (to_real x))"),
             (REALS, "(< (* 2.0 a) b)", "(> (+ b (* (- 2.0) a)) 0.0)"),
@@ -768,6 +959,11 @@ mod tests {
             (INTS, "(not (and p q))", "(and (not p) (not q))"),
             (INTS, "(and (<= x y) (<= y (+ x 1)))", "(= x y)"),
             (INTS, "(or (<= x 2) (>= x 3))", "(not (= x 3))"),
+            (INTS, "(or (<= x 0) (>= x 2))", "true"),
+            (REALS, "(and (<= a 1.0) (< a 2.0))", "(< a 2.0)"),
+            (REALS, "(or (< a 1.0) (> a 1.0))", "true"),
+            (INTS, "(and (>= x 1) (or (<= x 1) p) (not p))", "false"),
+            (REALS, "(or (< a 1.0) (and (> a 1.0) (>= b 1.0)))", "(or (< a 1.0) (>= b 1.0))"),
         ] {
             let (equal, nl, nr) = same(problem, lhs, rhs);
             assert!(!equal, "{lhs} and {rhs} both normalize to {nl}, {nr}");
