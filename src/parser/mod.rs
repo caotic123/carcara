@@ -2057,7 +2057,13 @@ impl<'p, 's> Parser<'p, 's> {
             Token::Symbol(s) if Operator::from_str(s).is_ok() => {
                 let operator = Operator::from_str(s).unwrap();
                 self.next_token()?;
-                let args = self.parse_sequence(Self::parse_term, true)?;
+                // `rare-list` marks the sequence a RARE `:list` parameter
+                // stands for, which may be empty; every other operator needs
+                // at least one argument.
+                let args = self.parse_sequence(
+                    Self::parse_term,
+                    operator != Operator::RareList,
+                )?;
                 self.make_op(operator, args)
                     .map_err(|err| self.err(err, head_pos))
             }

@@ -397,7 +397,11 @@ impl<'a> AlethePrinter<'a> {
             Term::Var(name, _) => write!(self.inner, "{}", quote_symbol(name)),
             Term::App(func, args) => self.write_s_expr(func, args),
             Term::Op(op, args) => {
-                if args.is_empty() {
+                // A zero-argument operator is a constant symbol (`real.pi`),
+                // except `rare-list`, which is an application marking the
+                // sequence a RARE `:list` parameter stands for and may be
+                // empty; printed bare it would not parse back.
+                if args.is_empty() && *op != Operator::RareList {
                     write!(self.inner, "{}", op)
                 } else {
                     self.write_s_expr(op, args)

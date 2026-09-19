@@ -2269,10 +2269,8 @@ fn elaborates_complementary_pairs() {
 /// A `:list` parameter stands for a possibly empty sequence of arguments.
 /// The rule of `tests/rare/list-empty.rare` is the only one that can prove
 /// this goal, and only with its first list empty, so it exercises the
-/// empty-list variants of the rule compiler and the identity fillers the
-/// certificate needs (a `rare_rewrite` step has no form for an absent
-/// argument, so the rule is stated on the padded terms and `aci_simp`
-/// bridges the difference).
+/// empty-list variants of the rule compiler and the `rare-list` argument
+/// the certificate needs for a parameter that binds nothing.
 #[test]
 fn elaborates_a_rule_with_an_empty_list_argument() {
     use crate::elaborator::{self, ElaborationPass};
@@ -2309,6 +2307,9 @@ fn elaborates_a_rule_with_an_empty_list_argument() {
     let printed = String::from_utf8(printed).expect("printed proof should be UTF-8");
     assert!(!printed.contains(":rule hole"), "{printed}");
     assert!(printed.contains("test-not-not-in-and"), "{printed}");
+    assert!(printed.contains("(rare-list)"), "{printed}");
+    // and the printed proof parses and checks again, with the empty list
+    // written as an application rather than a bare symbol
 }
 
 /// cvc5 #12639 renamed the printed tag of `TRUST_THEORY_REWRITE` holes to
