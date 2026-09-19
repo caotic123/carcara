@@ -1079,8 +1079,57 @@ fn construct_rules(
         // apart from them stays a named rewrite: reconstruction ignores the
         // guards (they do not change what the rule rewrites) and needs the
         // name.
+        // A `:list` parameter stands for a possibly empty sequence of
+        // arguments, but the translation gives it one slot of the `Args`
+        // chain, which the chain re-association lets bind several elements
+        // and never none.  So the rule as translated only matches when every
+        // list is non-empty: `bool-or-taut` proved `(or a p b (not p) c)`
+        // and never `(or p (not p))`.  One variant per subset of the list
+        // parameters, with those dropped from the argument chains, covers
+        // the empty cases; a variant whose chain would end up without
+        // arguments is not emitted.
+        let list_slots: Vec<String> = definition
+            .parameters
+            .iter()
+            .filter(|(name, parameter)| {
+                parameter.attribute == AttributeParameters::List
+                    && mentions_slot(&egg_equations.0, name)
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        let variants: Vec<(EggExpr, EggExpr)> = if list_slots.len() <= MAX_LIST_SLOTS {
+            (1..(1u32 << list_slots.len()))
+                .filter_map(|mask| {
+                    let dropped: Vec<&str> = list_slots
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| mask & (1 << index) != 0)
+                        .map(|(_, name)| name.as_str())
+                        .collect();
+                    let lhs = drop_list_slots(&egg_equations.0, &dropped)?;
+                    let rhs = drop_list_slots(&egg_equations.1, &dropped)?;
+                    (lhs != *egg_equations.0).then_some((lhs, rhs))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let conditional = !premises.is_empty();
         premises.extend(guards.iter().cloned());
+        for (lhs, rhs) in variants {
+            let statement = if !conditional {
+                EggStatement::NamedRewrite {
+                    name: format!("rare:{}#{}", definition.name, rules.len()),
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    conditions: guards.clone(),
+                }
+            } else {
+                EggStatement::Rewrite(Box::new(lhs), Box::new(rhs), premises.clone())
+            };
+            rules.insert(statement);
+        }
         rules.insert(if !conditional {
             EggStatement::NamedRewrite {
                 name: format!("rare:{}#{}", definition.name, rules.len()),
@@ -1749,6 +1798,68 @@ fn check_timeout(deadline: Option<Instant>, goal_label: &str) -> Result<(), Stri
 /// The guard premises of a RARE rule under `sort_guards`: one sort fact per
 /// non-list parameter declared Int, Real or Bool that the left-hand side
 /// binds, on the class the parameter stands for.
+/// The most `:list` parameters a rule may have for its empty-list variants
+/// to be generated: the count doubles the variants, and no rule of the
+/// database has more than three.
+const MAX_LIST_SLOTS: usize = 4;
+
+/// Whether `expr` has an argument slot holding the bare variable `name`,
+/// which is how a `:list` parameter is translated.
+fn mentions_slot(expr: &EggExpr, name: &str) -> bool {
+    match expr {
+        EggExpr::Literal(literal) => literal == name,
+        EggExpr::Mk(inner) | EggExpr::Ground(inner) => mentions_slot(inner, name),
+        EggExpr::App(a, b)
+        | EggExpr::Args(a, b)
+        | EggExpr::Equal(a, b)
+        | EggExpr::Distinct(a, b)
+        | EggExpr::Union(a, b)
+        | EggExpr::Set(a, b) => mentions_slot(a, name) || mentions_slot(b, name),
+        EggExpr::Call(_, arguments) => arguments.iter().any(|a| mentions_slot(a, name)),
+        _ => false,
+    }
+}
+
+/// `expr` with the argument slots holding one of the `dropped` list
+/// variables removed from their chains.  `None` when that would leave an
+/// argument chain empty, which is not a term.
+fn drop_list_slots(expr: &EggExpr, dropped: &[&str]) -> Option<EggExpr> {
+    let is_dropped = |expr: &EggExpr| {
+        matches!(expr, EggExpr::Literal(literal) if dropped.contains(&literal.as_str()))
+    };
+    Some(match expr {
+        EggExpr::Args(head, tail) => {
+            let tail = drop_list_slots(tail, dropped)?;
+            if is_dropped(head) {
+                tail
+            } else {
+                EggExpr::Args(Box::new(drop_list_slots(head, dropped)?), Box::new(tail))
+            }
+        }
+        EggExpr::Mk(inner) => EggExpr::Mk(Box::new(drop_list_slots(inner, dropped)?)),
+        EggExpr::Ground(inner) => EggExpr::Ground(Box::new(drop_list_slots(inner, dropped)?)),
+        EggExpr::App(a, b) => EggExpr::App(
+            Box::new(drop_list_slots(a, dropped)?),
+            Box::new(drop_list_slots(b, dropped)?),
+        ),
+        EggExpr::Call(name, arguments) => {
+            let rebuilt = arguments
+                .iter()
+                .map(|argument| drop_list_slots(argument, dropped))
+                .collect::<Option<Vec<_>>>()?;
+            // An operator whose whole argument list was dropped is not a
+            // term, so that variant is not generated.
+            for (before, after) in arguments.iter().zip(&rebuilt) {
+                if matches!(after, EggExpr::Empty()) && !matches!(before, EggExpr::Empty()) {
+                    return None;
+                }
+            }
+            EggExpr::Call(name.clone(), rebuilt)
+        }
+        other => other.clone(),
+    })
+}
+
 fn sort_guard_premises(
     definition: &RuleDefinition,
     lhs_vars: &IndexSet<String>,

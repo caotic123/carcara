@@ -2266,6 +2266,51 @@ fn elaborates_complementary_pairs() {
     assert!(printed.contains("and_simplify"), "{printed}");
 }
 
+/// A `:list` parameter stands for a possibly empty sequence of arguments.
+/// The rule of `tests/rare/list-empty.rare` is the only one that can prove
+/// this goal, and only with its first list empty, so it exercises the
+/// empty-list variants of the rule compiler and the identity fillers the
+/// certificate needs (a `rare_rewrite` step has no form for an absent
+/// argument, so the rule is stated on the padded terms and `aci_simp`
+/// bridges the difference).
+#[test]
+fn elaborates_a_rule_with_an_empty_list_argument() {
+    use crate::elaborator::{self, ElaborationPass};
+
+    let problem_path = Path::new("tests/rare/elaborate/list-empty.smt2");
+    let proof_path = Path::new("tests/rare/elaborate/list-empty.smt2.alethe");
+    let rare_path = Path::new("tests/rare/list-empty.rare");
+    let parser_config = parser::Config::default()
+        .expand_lets(true)
+        .allow_int_real_subtyping(true)
+        .parse_hole_args(true);
+    let (mut problem_text, mut proof_text, mut rare_text) =
+        (String::new(), String::new(), String::new());
+    let (_, problem, elaborated, mut pool) = crate::check_and_elaborate(
+        parser::Source::file(problem_path, &mut problem_text).expect("problem should exist"),
+        parser::Source::file(proof_path, &mut proof_text).expect("proof should exist"),
+        Some(parser::Source::file(rare_path, &mut rare_text).expect("RARE database should exist")),
+        parser_config,
+        crate::checker::Config::new(),
+        elaborator::Config::new().elaborate_hole_rewrites(true),
+        vec![ElaborationPass::Hole],
+        false,
+    )
+    .expect("the proof should check and elaborate");
+    let mut printed = Vec::new();
+    crate::ast::printer::write_proof_to_dest(
+        &mut pool,
+        &problem.prelude,
+        &elaborated,
+        &mut printed,
+        false,
+    )
+    .expect("the elaborated proof should print");
+    let printed = String::from_utf8(printed).expect("printed proof should be UTF-8");
+    assert!(!printed.contains(":rule hole"), "{printed}");
+    assert!(printed.contains("test-not-not-in-and"), "{printed}");
+}
+
 /// cvc5 #12639 renamed the printed tag of `TRUST_THEORY_REWRITE` holes to
 /// `"untranslated rewrite"`; both spellings must be elaborated.
 #[test]

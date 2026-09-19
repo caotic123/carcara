@@ -21,6 +21,9 @@ pub struct AletheElaborator {
     /// Which uninterpreted atoms are integer-valued, for the integer
     /// tightening that relates a negated `>=` to a `<=`.
     pub sorts: ArithSorts,
+    /// The compiled rules, so that a rule instance whose `:list` parameters
+    /// were dropped can be stated in full (see the `Certificate::Rule` arm).
+    pub patterns: Vec<Rewrite>,
 }
 
 impl AletheElaborator {
@@ -52,12 +55,24 @@ impl AletheElaborator {
         rare: HashMap<String, Vec<String>>,
         sorts: ArithSorts,
     ) -> Option<Vec<String>> {
+        Self::elaborate_with_patterns(certificate, prefix, names, rare, sorts, Vec::new())
+    }
+
+    pub fn elaborate_with_patterns(
+        certificate: &Certificate,
+        prefix: &str,
+        names: HashMap<String, String>,
+        rare: HashMap<String, Vec<String>>,
+        sorts: ArithSorts,
+        patterns: Vec<Rewrite>,
+    ) -> Option<Vec<String>> {
         let mut elaborator = Self {
             prefix: prefix.to_owned(),
             steps: Vec::new(),
             names,
             rare,
             sorts,
+            patterns,
         };
         elaborator.step_for(certificate)?;
         Some(elaborator.steps)
@@ -79,6 +94,7 @@ impl AletheElaborator {
     }
 
     /// An encoded integer literal.
+    #[allow(dead_code)]
     fn numeral(value: &Integer) -> Term {
         Term::new(
             "Mk",
@@ -287,17 +303,70 @@ impl AletheElaborator {
                 // rare_rewrite with the rule's argument instantiation;
                 // engine-internal rewrites keep the trusted form.
                 if let Some(arguments) = self.rare.get(name).cloned() {
+                    // An empty-list variant of the rule binds nothing to its
+                    // dropped `:list` parameters, and a `rare_rewrite` step
+                    // has no form for an absent argument.  The connective's
+                    // identity element stands for the empty list instead
+                    // (`false` in an `or`, `true` in an `and`, `0` in a sum,
+                    // `1` in a product), which makes the instantiated
+                    // equality differ from the goal's by those identities
+                    // alone -- an `aci_simp` step on each side bridges the
+                    // difference.
+                    let missing: Vec<&String> = arguments
+                        .iter()
+                        .filter(|parameter| !substitution.contains_key(*parameter))
+                        .collect();
+                    let filler = (!missing.is_empty())
+                        .then(|| connective_identity(lhs).or_else(|| connective_identity(rhs)))
+                        .flatten();
                     let decoded: Option<Vec<String>> = arguments
                         .iter()
-                        .map(|parameter| {
-                            substitution
-                                .get(parameter)
-                                .and_then(|term| decode_any(term, &self.names))
+                        .map(|parameter| match substitution.get(parameter) {
+                            Some(term) => decode_any(term, &self.names),
+                            None => filler.map(str::to_owned),
                         })
                         .collect();
                     if let Some(decoded) = decoded {
                         let tail = format!(" :args (\"{name}\" {})", decoded.join(" "));
-                        return self.emit(lhs, rhs, "rare_rewrite", &tail);
+                        if missing.is_empty() {
+                            return self.emit(lhs, rhs, "rare_rewrite", &tail);
+                        }
+                        // With fillers the rule states the equality of the
+                        // padded terms, so the goal's sides are brought to
+                        // them by `aci_simp` first.  The padded terms are
+                        // the full rule's conclusion under the substitution
+                        // extended with the fillers, which is exactly what
+                        // the checker will recompute.
+                        let filler = identity_term(filler?);
+                        let mut extended = substitution.clone();
+                        for parameter in &missing {
+                            extended.insert((*parameter).to_owned(), filler.clone());
+                        }
+                        // Among the variants of the rule, the one that
+                        // mentions every parameter is the rule as declared,
+                        // and that is the equality the checker recomputes.
+                        let full = self
+                            .patterns
+                            .iter()
+                            .filter(|rule| rule.name == name)
+                            .max_by_key(|rule| pattern_variables(&rule.lhs))?;
+                        let (padded_lhs, padded_rhs) = (
+                            instantiate(&full.lhs, &extended)?,
+                            instantiate(&full.rhs, &extended)?,
+                        );
+                        let mut chain = Vec::new();
+                        if padded_lhs != *lhs {
+                            chain.push(self.emit(lhs, &padded_lhs, "aci_simp", "")?);
+                        }
+                        chain.push(self.emit(&padded_lhs, &padded_rhs, "rare_rewrite", &tail)?);
+                        if padded_rhs != *rhs {
+                            chain.push(self.emit(&padded_rhs, rhs, "aci_simp", "")?);
+                        }
+                        if chain.len() == 1 {
+                            return chain.pop();
+                        }
+                        let tail = format!(" :premises ({})", chain.join(" "));
+                        return self.emit(lhs, rhs, "trans", &tail);
                     }
                 }
                 self.trusted(lhs, rhs, name)
@@ -1692,7 +1761,14 @@ pub fn reconstruct_steps_timed(
     let clock = Instant::now();
     let names = goal_variable_names(&lhs, &rhs, conclusion);
     let index = rare_arguments(&rules.rules);
-    let steps = AletheElaborator::elaborate_in(&certificate, &step.id, names, index, sorts)
+    let steps = AletheElaborator::elaborate_with_patterns(
+        &certificate,
+        &step.id,
+        names,
+        index,
+        sorts,
+        rewrites.clone(),
+    )
         .ok_or_else(|| {
             stage(
                 "alethe elaboration",
@@ -1799,4 +1875,52 @@ fn parse_and_check(
     let status =
         checker::ProofChecker::new(pool, rules, checker::Config::new()).check(&problem, &proof)?;
     Ok((proof.commands, status))
+}
+
+/// The identity element of the n-ary connective at the top of an encoded
+/// term, as it is written in Alethe: what an empty `:list` argument stands
+/// for.
+fn connective_identity(term: &Term) -> Option<&'static str> {
+    let inner = if term.op == "Mk" {
+        term.children.first()?
+    } else {
+        term
+    };
+    match inner.op.as_str() {
+        "@or" => Some("false"),
+        "@and" => Some("true"),
+        "@+" => Some("0"),
+        "@*" => Some("1"),
+        _ => None,
+    }
+}
+
+/// How many distinct variables a pattern has.
+fn pattern_variables(pattern: &Pattern) -> usize {
+    fn collect<'p>(pattern: &'p Pattern, out: &mut std::collections::HashSet<&'p str>) {
+        match pattern {
+            Pattern::Var(variable) => {
+                out.insert(variable);
+            }
+            Pattern::App(_, children) => {
+                for child in children {
+                    collect(child, out);
+                }
+            }
+        }
+    }
+    let mut variables = std::collections::HashSet::new();
+    collect(pattern, &mut variables);
+    variables.len()
+}
+
+/// The encoded term of an identity element.
+fn identity_term(identity: &str) -> Term {
+    Term::new(
+        "Mk",
+        vec![match identity {
+            "false" | "true" => Term::new("Bool", vec![Term::leaf(identity)]),
+            digits => Term::new("Num", vec![Term::leaf(digits)]),
+        }],
+    )
 }

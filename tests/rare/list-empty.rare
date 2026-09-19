@@ -1,0 +1,6 @@
+; A rule whose `:list` parameters are the only way to prove the goal below:
+; the engine has to match it with `xs1` standing for no arguments at all.
+(declare-rare-rule test-not-not-in-and ((xs1 Bool :list) (x1 Bool) (ys1 Bool :list))
+  :args (xs1 x1 ys1)
+  :conclusion (= (and xs1 (not (not x1)) ys1) (and xs1 x1 ys1))
+)

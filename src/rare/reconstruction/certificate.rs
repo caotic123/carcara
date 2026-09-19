@@ -106,15 +106,19 @@ impl Certificate {
     pub fn verify_in(&self, rules: &[Rewrite], sorts: &ArithSorts) -> bool {
         match self {
             Self::Refl { .. } => true,
-            Self::Rule { name, lhs, rhs, substitution } => {
-                let Some(rule) = rules.iter().find(|rule| rule.name == name) else {
-                    return false;
-                };
-                let mut matched = BTreeMap::new();
-                match_pattern(&rule.lhs, lhs, &mut matched)
-                    && &matched == substitution
-                    && instantiate(&rule.rhs, substitution).as_ref() == Some(rhs)
-            }
+            // One RARE rule compiles to several egglog rules -- one per
+            // sort instantiation, one per emptiness pattern of its `:list`
+            // parameters -- which all carry the same name, so the
+            // certificate is accepted when *some* of them states it.
+            Self::Rule { name, lhs, rhs, substitution } => rules
+                .iter()
+                .filter(|rule| rule.name == name)
+                .any(|rule| {
+                    let mut matched = BTreeMap::new();
+                    match_pattern(&rule.lhs, lhs, &mut matched)
+                        && &matched == substitution
+                        && instantiate(&rule.rhs, substitution).as_ref() == Some(rhs)
+                }),
             // Verified by independent recomputation; the e-graph's own
             // solver state is never consulted.  ACI steps are judged by
             // flatten-and-compare, which subsumes the collapse edges the
