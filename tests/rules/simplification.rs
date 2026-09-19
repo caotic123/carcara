@@ -759,6 +759,15 @@ fn aci_simp() {
             // Idempotency is not applied inside a nested, different operator,
             // so the `(and p p)` is left untouched and differs from `p`.
             "(step t1 (cl (= (or s (and p p)) (or s p))) :rule aci_simp)": false,
+
+            // Only an idempotent operator lets a repeated argument go.
+            "(step t1 (cl (= (+ i i j) (+ j i i))) :rule aci_simp)": true,
+            "(step t1 (cl (= (bvadd a b a) (bvadd a a b))) :rule aci_simp)": true,
+            "(step t1 (cl (= (+ i i) i)) :rule aci_simp)": false,
+            "(step t1 (cl (= (* x x) x)) :rule aci_simp)": false,
+            "(step t1 (cl (= (+ i i j) (+ i j))) :rule aci_simp)": false,
+            "(step t1 (cl (= (bvadd a a) a)) :rule aci_simp)": false,
+            "(step t1 (cl (= (bvor a a) a)) :rule aci_simp)": true,
         }
         "Identity removal" {
             "(step t1 (cl (= (or p false) p)) :rule aci_simp)": true,

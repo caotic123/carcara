@@ -1,6 +1,6 @@
 use super::{Constant, Operator, ParamOperator, Rc, Sort, Term, pool::TermPool};
 use rug::{Integer, Rational};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// A representation of the value of an SMT-LIB/Alethe term.
 ///
@@ -24,6 +24,16 @@ pub enum Value {
 }
 
 impl Value {
+    /// Whether two values are the same, an integer and a real being compared as numbers.
+    pub fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Integer(i), Value::Real(r)) | (Value::Real(r), Value::Integer(i)) => {
+                *r == Rational::from(i)
+            }
+            _ => a == b,
+        }
+    }
+
     /// Constructs a value from a [`Constant`].
     pub fn from_constant(c: Constant) -> Option<Self> {
         match c {
@@ -285,10 +295,12 @@ fn eval_op(pool: &mut dyn TermPool, op: Operator, arg_terms: &[Rc<Term>]) -> Opt
             args.iter()
                 .try_fold(false, |acc, arg| Some(acc != arg.as_ref()?.as_bool()?))?,
         ),
+        // An integer and a real value are compared as numbers: under Int/Real
+        // subtyping `(= 1.0 1)` is true, and a proof may well write it.
         Operator::Equals => {
             let result = 'block: {
                 for w in args.windows(2) {
-                    if w[0].as_ref()? != w[1].as_ref()? {
+                    if !Value::same(w[0].as_ref()?, w[1].as_ref()?) {
                         break 'block false;
                     }
                 }
@@ -297,9 +309,16 @@ fn eval_op(pool: &mut dyn TermPool, op: Operator, arg_terms: &[Rc<Term>]) -> Opt
             Value::Bool(result)
         }
         Operator::Distinct => {
-            let n = args.len();
-            let set: HashSet<Value> = args.into_iter().collect::<Option<_>>()?;
-            Value::Bool(set.len() == n)
+            let values: Vec<&Value> = args.iter().map(Option::as_ref).collect::<Option<_>>()?;
+            let mut distinct = true;
+            for i in 0..values.len() {
+                for j in i + 1..values.len() {
+                    if Value::same(values[i], values[j]) {
+                        distinct = false;
+                    }
+                }
+            }
+            Value::Bool(distinct)
         }
         Operator::Ite => {
             if args[0].as_ref()?.as_bool()? {

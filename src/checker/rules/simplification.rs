@@ -743,6 +743,14 @@ pub fn ac_simp(RuleArgs { conclusion, pool, .. }: RuleArgs) -> RuleResult {
 }
 
 // Operators considered in aci_simp
+/// The associative operators for which a repeated argument is redundant.
+fn is_idempotent(op: Operator) -> bool {
+    matches!(
+        op,
+        Operator::And | Operator::Or | Operator::BvAnd | Operator::BvOr
+    )
+}
+
 fn is_assoc(op: Operator) -> bool {
     matches!(
         op,
@@ -874,9 +882,15 @@ fn apply_aci_simp(
                         _ => vec![term.clone()],
                     }
                 })
-                .dedup()
                 .filter(|t| identity.is_none() || *t.as_ref() != identity.clone().unwrap())
                 .collect();
+            // Only an idempotent operator lets a repeated argument go: `(+ a a)`
+            // is not `a`.
+            let args: Vec<_> = if is_idempotent(op) {
+                args.into_iter().dedup().collect()
+            } else {
+                args
+            };
             if args.len() == 1 {
                 args[0].clone()
             } else {
