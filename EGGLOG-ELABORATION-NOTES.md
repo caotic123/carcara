@@ -2275,3 +2275,52 @@ normalizer (`results-prenorm.txt`; the §24 column is kept as
 `results-prenorm-old-normalizer.txt`).  What the old normalizer closed and
 this one does not (veriT's `bool_simplify`, `la_rw_eq`, `comp_simplify`
 shapes) is what a `verit.rare` file has to supply.
+
+## 27. The residue: what egglog gave up on without a kill (2026-09-19)
+
+The question was whether the rule set is enough: the holes egglog "could
+not prove" after saturating (§19: 6,667 in the full run's checking pass)
+are the only candidates for missing rules, and they were never classified.
+`scratchpad/residue/residue.py` extracts them from a run's
+`results.json.gz` and classifies the goals; `report.md` has the tables.
+
+**chk1200h2 (growth caps, 60 s per hole).**  8,048 such holes in 2,863
+proofs: QF_UF 6,440 (2,496 proofs, 6,339 from QG-classification), QF_LIA
+1,101 (317), QF_LRA 507 (50).  Not one is a saturation: every one ends in
+"the e-graph grew past the bound" (500k for the plain cap, 3M for
+arithmetic), still growing when stopped, on goals of 100 to 8,000 nodes.
+Structurally, 5,752 of the 8,048 have sides that coincide after sorting
+and flattening `and`/`or`/`+` (5,552 of them QF_UF `or`/`and` chains) or
+after deduplication or double negation; of the 2,296 whose sides really
+differ, 794 QF_UF `or` goals differ by a `false` disjunct and 28 `and`
+goals by a `true` conjunct, 20 are `(ite (not c) a b)` against
+`(ite c b a)`, 12 are `(= s t)` against `true`, 8 `(ite false ..)`, and
+the rest are arithmetic: `+` against `+` with more than ten differing
+summands (656), sums that cancel to a constant (453), `<` against
+`(not (>= ..))` (153), `<=`/`>=` flips and negations (90), `*` against
+`+` (38).  No De Morgan shape, no `distinct`, nothing Boolean without UF
+atoms.  A further 411 (90 LIA, 321 LRA) failed the relation fallback's
+own key comparison (`arithRelBoolKeyOf`), i.e. relation goals whose
+canonical keys differ: flips and tightenings again.
+
+**The full run (no caps, 30 s per hole).**  The same reason is reported as
+egglog's final check failing, `(= (goal_lhs) (goal_rhs))`: 6,591 holes
+(QF_LIA 3,578 in 202 proofs, QF_UF 2,753 in 790, QF_LRA 260 in 56), plus
+47 relation-key failures; those logs carry no goal text, but the proofs
+are the same families that chk1200h2 stops at the cap.
+
+**Conclusion.**  The residue is not evidence of missing rules.  It is the
+e-graph blowing up on associativity and commutativity over long chains
+and on polynomial arithmetic over many summands, on goals that the
+§26 normalizer takes care of before egglog: `aci_simp` (flattening,
+sorting, deduplication, the `false`/`true` units) and `poly_simp` (the
+cancelling sums, the coefficient collection) cover about 7,700 of the 8,048
+outright, and what remains after normalization for egglog is small: the
+relation negations and flips (`<` vs `(not (>= ..))`, `<=` vs `>=`) and
+the `ite` condition swap, which are single RARE rules on small goals.
+The one structural gap found earlier, De Morgan (§19), does not occur in
+the residue at all.  So the rule set, with the normalizer in front of it,
+is sufficient for everything egglog was ever asked and failed to answer
+by saturation; the unknown that remains is the never-attempted holes of
+the budget-bound proofs, and the run with the §26 normalizer is what
+measures those.
