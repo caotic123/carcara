@@ -2324,3 +2324,14 @@ is sufficient for everything egglog was ever asked and failed to answer
 by saturation; the unknown that remains is the never-attempted holes of
 the budget-bound proofs, and the run with the §26 normalizer is what
 measures those.
+
+**In the checker too** (commit after 817c9516).  The normalizer had only
+been wired into the elaborator's hole pass, for the historical reason that
+the isolated workers and budgets live there.  `carcara check
+--check-hole-rewrites --rare-file ...` now normalizes every
+`TRUST_THEORY_REWRITE` hole before its in-process egglog call, logging
+`closed by normalization` for the ones that need none; that path still has
+no isolation and no hard per-hole limit (only the cooperative
+`--rare-check-timeout`), which is why the evaluation keeps using the
+elaborator's pass.  A plain `carcara check` without the flag leaves holes
+as holes, as before.
