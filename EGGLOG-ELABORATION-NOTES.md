@@ -2151,3 +2151,30 @@ at limit 100, and -- after the normalizer takes a mixed Int/Real relation's
 sort as Real rather than from its left side, which had kept
 `(<= (- 300) P)` as an Int bound and `(<= P (- 300))` as a Real one -- every
 one of them closes by normalization (hole time 0.047 s).
+
+**Corpus complete** (106 proofs; 2 do not parse: `simple_startup_12nodes`
+and `NEQ006_size5`, an undefined identifier on the last line of the veriT
+output).  Plain checking, limit 100, 4 workers at 4 GB, 60 s per hole,
+300 s per proof; the prenormalized column redone with 9027d5ac
+(`scratchpad/verit/run100/results.txt`, `results-prenorm.txt`):
+
+| logic | proofs | steps before -> after | holes | plain proved / kept / skipped | plain hole-free | plain time | prenorm closed / proved / kept | prenorm hole-free | prenorm time |
+|---|---|---|---|---|---|---|---|---|---|
+| QF_UF | 39 | 1,974,555 -> 1,663,096 | 2,401 | 2,012 / 389 / 0 | 2 | 683 s | 2,401 / 2,401 / 0 | 39 | 0 s |
+| QF_LIA | 30 | 29,685 -> 11,376 | 8,169 | 8,159 / 10 / 0 | 20 | 1,289 s | 8,169 / 8,169 / 0 | 30 | 0 s |
+| QF_LRA | 35 | 463,425 -> 363,685 | 10,254 | 812 / 1,496 / 7,946 | 2 | 7,805 s | 10,149 / 10,221 / 33 | 19 | 948 s |
+
+Rules folded: QF_UF `ac_simp` 7,324, `or_simplify` 557, `and_simplify`
+466, `eq_simplify` 193; QF_LIA `la_rw_eq` 10,403, `comp_simplify` 1,887,
+`sum_simplify` 1,309; QF_LRA `la_rw_eq` 29,823, `ac_simp` 12,359,
+`sum_simplify` 5,604, `prod_simplify` 5,552, `comp_simplify` 1,480, and
+smaller counts of eleven others.  The 33 QF_LRA holes left are in 16
+proofs, one to four each, and go to egglog after normalization and time
+out there.  The original benchmarks' veriT proofs (`gen-orig.log`) check
+valid with the subtyping port; the one `invalid` in that log was the
+runner passing two benchmark paths for a repeated basename (`RF-01`).
+
+This is the last measurement of the normalizer in this form: the design is
+being redone as the composition of Carcara's own rule procedures
+(`evaluate`, `poly_simp`/`poly_simp_rel`, `aci_simp`), so that elaboration
+can emit the same steps, with everything else left to RARE rules.
