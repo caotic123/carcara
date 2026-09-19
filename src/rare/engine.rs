@@ -2005,7 +2005,25 @@ fn get_fallback_plans_for(
                 },
             ],
             arith_poly_norm_rel::relation_bool_goal_guard_term(goal_lhs.clone()),
-            arith_poly_norm_rel::relation_bool_goal_check_terms(goal_lhs, goal_rhs),
+            arith_poly_norm_rel::relation_bool_goal_check_terms(goal_lhs.clone(), goal_rhs.clone()),
+        ),
+        // Last resort: the relation keys of every relation atom, the atoms
+        // with equal keys unioned, then one more round of the main rules over
+        // the merged e-graph and the goal checked as it is.  Only a goal the
+        // other checks failed pays for it.
+        GoalFallbackPlan::new(
+            "arithRelAll",
+            Vec::new(),
+            EggExpr::NativeBool(true),
+            (
+                {
+                    let mut setup = arith_poly_norm_rel::relation_all_setup();
+                    setup.extend(goal_run_schedule(1));
+                    setup
+                },
+                goal_lhs,
+                goal_rhs,
+            ),
         ),
     ]
 }
@@ -2722,6 +2740,36 @@ mod tests {
         let (result, _) = check_hole_rewrite_with_context(
             &mut pool,
             "distinct",
+            goal,
+            &[],
+            &context,
+            RunEgglogOptions::default(),
+        );
+        assert!(result.is_ok(), "check failed: {:?}", result.err());
+    }
+
+    /// Mirrored inequalities inside a conjunction: `(<= 1 x)` and `(>= x 1)`
+    /// have the same relation key but are different terms, and the goal-level
+    /// relation check does not look inside the `and`; the all-relations
+    /// fallback unions them, and the two conjunctions meet.
+    #[test]
+    fn mirrored_inequalities_meet_inside_a_conjunction() {
+        let mut pool = PrimitivePool::new();
+        let int = pool.add_sort(Sort::Int);
+        let x = pool.add(Term::Var("x".to_owned(), int));
+        let one = pool.add(Term::new_int(1));
+        let le_x1 = pool.add(Term::Op(Operator::LessEq, vec![x.clone(), one.clone()]));
+        let le_1x = pool.add(Term::Op(Operator::LessEq, vec![one.clone(), x.clone()]));
+        let ge_x1 = pool.add(Term::Op(Operator::GreaterEq, vec![x, one]));
+        let lhs = pool.add(Term::Op(Operator::And, vec![le_x1.clone(), le_1x]));
+        let rhs = pool.add(Term::Op(Operator::And, vec![ge_x1, le_x1]));
+        let goal = pool.add(Term::Op(Operator::Equals, vec![lhs, rhs]));
+        let database = RareStatements::default();
+        let context = RareCtx::new(&database);
+
+        let (result, _) = check_hole_rewrite_with_context(
+            &mut pool,
+            "mirrored",
             goal,
             &[],
             &context,

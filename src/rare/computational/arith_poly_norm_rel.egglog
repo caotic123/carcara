@@ -835,3 +835,36 @@
          (Mk (@not (Args (Mk (@< (Args x1 (Args x2 (Empty))))) (Empty)))))
         (GeqKey canon)))
   :ruleset arith_poly)
+
+;; ------------------------------------------------------------------
+;; Relation keys for every relation atom of the e-graph, and the unions of
+;; the atoms whose keys agree: the "all relations" fallback, run only after
+;; the goal-level checks have failed.  The demand rules fire once per
+;; relation term present; the merge unions two terms whose canonical keys
+;; are the same e-class, so `(<= (- P) (- c))` and `(>= P c)` meet inside
+;; any Boolean structure, not only at the goal.
+;; ------------------------------------------------------------------
+(ruleset arith_rel_all)
+(ruleset arith_rel_merge)
+
+(rule ((= t (Mk (@= (Args x1 (Args x2 (Empty)))))))
+  ((arithRelBoolKeyOf-demand t)) :ruleset arith_rel_all)
+(rule ((= t (Mk (@>= (Args x1 (Args x2 (Empty)))))))
+  ((arithRelBoolKeyOf-demand t)) :ruleset arith_rel_all)
+(rule ((= t (Mk (@<= (Args x1 (Args x2 (Empty)))))))
+  ((arithRelBoolKeyOf-demand t)) :ruleset arith_rel_all)
+(rule ((= t (Mk (@> (Args x1 (Args x2 (Empty)))))))
+  ((arithRelBoolKeyOf-demand t)) :ruleset arith_rel_all)
+(rule ((= t (Mk (@< (Args x1 (Args x2 (Empty)))))))
+  ((arithRelBoolKeyOf-demand t)) :ruleset arith_rel_all)
+(rule ((= t (Mk (@not (Args (Mk (@>= (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((arithRelBoolKeyOf-demand t)) :ruleset arith_rel_all)
+(rule ((= t (Mk (@not (Args (Mk (@<= (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((arithRelBoolKeyOf-demand t)) :ruleset arith_rel_all)
+(rule ((= t (Mk (@not (Args (Mk (@> (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((arithRelBoolKeyOf-demand t)) :ruleset arith_rel_all)
+(rule ((= t (Mk (@not (Args (Mk (@< (Args x1 (Args x2 (Empty))))) (Empty))))))
+  ((arithRelBoolKeyOf-demand t)) :ruleset arith_rel_all)
+
+(rule ((= (arithRelBoolKeyOf a) k) (= (arithRelBoolKeyOf b) k))
+  ((union a b)) :ruleset arith_rel_merge)

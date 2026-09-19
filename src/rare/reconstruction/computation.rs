@@ -152,6 +152,42 @@ impl ArithSorts {
     }
 }
 
+/// The sort of an encoded term as far as the rule guards need it: `Int`,
+/// `Real` or `Bool`, or `None` when it is another sort or unknown (an
+/// uninterpreted function the program did not type), which a guard then
+/// does not reject.
+pub fn encoded_sort(term: &Term, sorts: &ArithSorts) -> Option<&'static str> {
+    let ("Mk", [inner]) = (term.op.as_str(), term.children.as_slice()) else {
+        return None;
+    };
+    match inner.op.as_str() {
+        "Num" => Some("Int"),
+        "Real" | "RatConst" => Some("Real"),
+        "Bool" => Some("Bool"),
+        "Var" => match inner.children.get(1).and_then(sort_name)? {
+            "Int" => Some("Int"),
+            "Real" => Some("Real"),
+            "Bool" => Some("Bool"),
+            _ => None,
+        },
+        "@to_real" | "@/" | "@/_total" => Some("Real"),
+        "@to_int" | "@div" | "@mod" => Some("Int"),
+        "@and" | "@or" | "@not" | "@=>" | "@xor" | "@=" | "@distinct" | "@<" | "@<=" | "@>"
+        | "@>=" | "@is_int" => Some("Bool"),
+        "@+" | "@-" | "@*" | "@abs" => encoded_application(term)?
+            .1
+            .first()
+            .and_then(|first| encoded_sort(first, sorts)),
+        "@ite" => encoded_application(term)?
+            .1
+            .get(1)
+            .and_then(|branch| encoded_sort(branch, sorts)),
+        function if sorts.int_functions.contains(function) => Some("Int"),
+        function if sorts.real_functions.contains(function) => Some("Real"),
+        _ => None,
+    }
+}
+
 pub fn sort_name(sort: &Term) -> Option<&str> {
     let inner = match (sort.op.as_str(), sort.children.as_slice()) {
         ("Sort", [inner]) => inner,

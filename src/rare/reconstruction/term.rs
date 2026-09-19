@@ -54,6 +54,10 @@ pub struct Rewrite {
     pub name: &'static str,
     pub lhs: Pattern,
     pub rhs: Pattern,
+    /// The sort guards of the generated rule: pattern variables that may
+    /// only bind a term of that sort (`Int`, `Real` or `Bool`), which keeps
+    /// a rule instantiated for one numeric sort off the other.
+    pub guards: Vec<(String, &'static str)>,
 }
 
 pub type Substitution = BTreeMap<String, Term>;

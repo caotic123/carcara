@@ -34,11 +34,13 @@ fn rules() -> Vec<Rewrite> {
             name: "ite-then-false",
             lhs: App("Ite", vec![Var("c"), App("False", vec![]), Var("x")]),
             rhs: App("And", vec![App("Not", vec![Var("c")]), Var("x")]),
+            guards: Vec::new(),
         },
         Rewrite {
             name: "and-true-right",
             lhs: App("And", vec![Var("x"), App("True", vec![])]),
             rhs: Var("x"),
+            guards: Vec::new(),
         },
     ]
 }
@@ -219,6 +221,7 @@ fn encoded_eq_symm_rule() -> Rewrite {
         name: "eq-symm",
         lhs: encoded_formula("@=", vec![Var("t1"), Var("s1")]),
         rhs: encoded_formula("@=", vec![Var("s1"), Var("t1")]),
+        guards: Vec::new(),
     }
 }
 
@@ -229,6 +232,7 @@ fn encoded_bool_double_not_elim_rule() -> Rewrite {
         name: "bool-double-not-elim",
         lhs: encoded_formula("@not", vec![encoded_call("@not", vec![Var("t1")])]),
         rhs: encoded_mk(Var("t1")),
+        guards: Vec::new(),
     }
 }
 
@@ -242,6 +246,7 @@ fn encoded_bool_or_false_rule() -> Rewrite {
             vec![Var("x"), App("Bool", vec![App("false", vec![])])],
         ),
         rhs: encoded_mk(Var("x")),
+        guards: Vec::new(),
     }
 }
 
@@ -2167,6 +2172,53 @@ fn elaborates_holes_under_variable_binding_anchors() {
     let printed = String::from_utf8(printed).expect("printed proof should be UTF-8");
     assert!(!printed.contains(":rule hole"), "{printed}");
     assert!(printed.contains("rare_rewrite"), "{printed}");
+}
+
+/// An equality against the conjunction of its two bounds, one of them
+/// mirrored (`(<= 1 p)`): the bounds meet through the all-relations
+/// fallback inside the `and`, and the certificate combines `aci_simp` with
+/// a `poly_simp_rel` step for the mirrored bound.
+#[test]
+fn elaborates_mirrored_bounds_in_a_conjunction() {
+    use crate::elaborator::{self, ElaborationPass};
+
+    let problem_path = Path::new("tests/rare/elaborate/mirrored-bounds.smt2");
+    let proof_path = Path::new("tests/rare/elaborate/mirrored-bounds.smt2.alethe");
+    let rare_path = Path::new("tests/rare/big.rare");
+    let parser_config = parser::Config::default()
+        .expand_lets(true)
+        .allow_int_real_subtyping(true)
+        .parse_hole_args(true);
+    let (mut problem_text, mut proof_text, mut rare_text) =
+        (String::new(), String::new(), String::new());
+    let (_, problem, elaborated, mut pool) = crate::check_and_elaborate(
+        parser::Source::file(problem_path, &mut problem_text).expect("problem should exist"),
+        parser::Source::file(proof_path, &mut proof_text).expect("proof should exist"),
+        Some(parser::Source::file(rare_path, &mut rare_text).expect("RARE database should exist")),
+        parser_config,
+        crate::checker::Config::new(),
+        elaborator::Config::new()
+            .elaborate_hole_rewrites(true)
+            .hole_rewrite_options(crate::checker::RunEgglogOptions {
+                sort_guards: true,
+                ..Default::default()
+            }),
+        vec![ElaborationPass::Hole],
+        false,
+    )
+    .expect("the proof should check and elaborate");
+    let mut printed = Vec::new();
+    crate::ast::printer::write_proof_to_dest(
+        &mut pool,
+        &problem.prelude,
+        &elaborated,
+        &mut printed,
+        false,
+    )
+    .expect("the elaborated proof should print");
+    let printed = String::from_utf8(printed).expect("printed proof should be UTF-8");
+    assert!(!printed.contains(":rule hole"), "{printed}");
+    assert!(printed.contains("poly_simp_rel"), "{printed}");
 }
 
 /// cvc5 #12639 renamed the printed tag of `TRUST_THEORY_REWRITE` holes to

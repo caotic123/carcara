@@ -1,0 +1,6 @@
+(assume a0 (= p 1))
+(assume a1 (not (and (<= p 1) (<= 1 p))))
+(step t1 (cl (= (= p 1) (and (<= p 1) (<= 1 p)))) :rule hole :args ("TRUST_THEORY_REWRITE" "la_rw_eq"))
+(step t2 (cl (= (= a (+ b p)) (and (<= a (+ b p)) (<= (+ b p) a)))) :rule hole :args ("TRUST_THEORY_REWRITE" "la_rw_eq"))
+(step t3 (cl (not (= (= p 1) (and (<= p 1) (<= 1 p)))) (not (= p 1)) (and (<= p 1) (<= 1 p))) :rule equiv_pos2)
+(step t4 (cl) :rule resolution :premises (t3 t1 a0 a1))

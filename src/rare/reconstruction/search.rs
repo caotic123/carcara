@@ -288,6 +288,10 @@ pub enum CandidateEdge {
     /// The neighbour is derived from the vertex by checker-side
     /// recomputation of a computational solver; justification is by replay.
     Computational { kind: Computation },
+    /// `and`/`or` endpoints whose literal sets differ only in literals the
+    /// e-graph unioned; justified by `aci_simp` on the matching literals and
+    /// in-class proofs of the unioned ones.
+    AciModulo,
 }
 
 /// Per-obligation search state over the candidate c-graph.  Vertices and
@@ -620,6 +624,28 @@ impl Reconstructor<'_> {
         for (variable, &class) in class_substitution {
             substitution.insert((*variable).to_owned(), self.representative(class)?);
         }
+        // A guarded variable bound to a term of another known sort is not an
+        // instance: `arith-eq-elim-real` does not apply to integers.
+        for (variable, sort) in &rule.guards {
+            let Some(bound) = substitution.get(variable) else {
+                continue;
+            };
+            // the pattern variable stands for the term under the `Mk` wrapper
+            let wrapped = if bound.op == "Mk" {
+                bound.clone()
+            } else {
+                Term::new("Mk", vec![bound.clone()])
+            };
+            if let Some(actual) = encoded_sort(&wrapped, self.sorts) {
+                if actual != *sort {
+                    log::debug!(
+                        "guard: {} rejected, {variable} is {actual} not {sort}",
+                        rule.name
+                    );
+                    return None;
+                }
+            }
+        }
         let lhs = instantiate(&rule.lhs, &substitution)?;
         let rhs = instantiate(&rule.rhs, &substitution)?;
         (lhs != rhs
@@ -801,9 +827,165 @@ impl Reconstructor<'_> {
         target: &Term,
         eclass: u32,
     ) -> Option<Certificate> {
+        // The computational strategies come after the rule search: a rule
+        // path is a checkable certificate, while an arithmetic computation
+        // still has to be routed into `poly_simp_rel` steps and may end up
+        // trusted.
         self.prove_by_congruence(source, target)
             .or_else(|| self.prove_by_transitivity(source, target, eclass))
             .or_else(|| self.prove_by_aci(source, target))
+            .or_else(|| self.prove_by_arith(source, target))
+            .or_else(|| self.prove_by_aci_modulo(source, target))
+    }
+
+    /// Arithmetic strategy inside a class: two relation (or polynomial)
+    /// terms the e-graph unioned because their canonical keys agree -- the
+    /// all-relations fallback merges a relation with its mirror image
+    /// anywhere in a formula -- are one computational step, which the
+    /// checker recomputes.
+    pub fn prove_by_arith(&mut self, source: &Term, target: &Term) -> Option<Certificate> {
+        let kind = arith_kind(source, target, self.sorts)?;
+        self.stats.computational_edges += 1;
+        Some(Certificate::Computational {
+            kind,
+            lhs: source.clone(),
+            rhs: target.clone(),
+        })
+    }
+
+    /// ACI strategy modulo the class: `and`/`or` sides whose literal sets
+    /// differ only in literals the e-graph unioned (a bound and its mirror
+    /// image, say).  The target is rewritten, at those literals, into the
+    /// source's literals, which makes the sides ACI-equal; that intermediate
+    /// is then proved congruent to the target literal by literal, without
+    /// looking the intermediate up in the e-graph, where it need not exist.
+    pub fn prove_by_aci_modulo(&mut self, source: &Term, target: &Term) -> Option<Certificate> {
+        let (operator, replacement) = self.aci_modulo_pairs(source, target)?;
+        for (literal, partner) in &replacement {
+            if self.prove(partner, literal).is_none() {
+                log::debug!("aci modulo: no in-class proof of {partner:?} = {literal:?}");
+                return None;
+            }
+        }
+        let rewritten = replace_literals(target, operator, &replacement);
+        if !aci_equal(source, &rewritten) {
+            log::debug!("aci modulo: rewritten target is not ACI-equal to the source");
+            return None;
+        }
+        let first = Certificate::Computational {
+            kind: Computation::AciNorm,
+            lhs: source.clone(),
+            rhs: rewritten.clone(),
+        };
+        let second = self.congruence_by_structure(&rewritten, target, &replacement);
+        if second.is_none() {
+            log::debug!("aci modulo: no congruence from the rewritten target to the target");
+        }
+        let second = second?;
+        self.stats.computational_edges += 1;
+        Some(chain(source.clone(), vec![first, second]))
+    }
+
+    /// For `and`/`or` sides whose literal sets differ, the pairing of each
+    /// target-only literal with a source-only literal of its e-class (one
+    /// each, every source-only literal used), without proving the pairs;
+    /// with the operator.  `None` when the sides are not such a pair.
+    fn aci_modulo_pairs(
+        &mut self,
+        source: &Term,
+        target: &Term,
+    ) -> Option<(&'static str, HashMap<Term, Term>)> {
+        let (operator, identity) = match encoded_application(source) {
+            Some(("@and", _)) => ("@and", true),
+            Some(("@or", _)) => ("@or", false),
+            _ => return None,
+        };
+        if !matches!(encoded_application(target), Some((op, _)) if op == operator) {
+            return None;
+        }
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        flatten_aci(source, operator, identity, &mut left);
+        flatten_aci(target, operator, identity, &mut right);
+        let left_set: HashSet<Term> = left.into_iter().collect();
+        let right_set: HashSet<Term> = right.into_iter().collect();
+        let unmatched_source: Vec<Term> = left_set.difference(&right_set).cloned().collect();
+        let unmatched_target: Vec<Term> = right_set.difference(&left_set).cloned().collect();
+        if unmatched_source.is_empty() || unmatched_target.is_empty() {
+            return None;
+        }
+        let mut replacement: HashMap<Term, Term> = HashMap::new();
+        let mut used: HashSet<Term> = HashSet::new();
+        for literal in &unmatched_target {
+            let class = self.class_of(literal)?;
+            let partner = unmatched_source
+                .iter()
+                .find(|candidate| {
+                    !used.contains(*candidate) && self.class_of(candidate) == Some(class)
+                })
+                .cloned();
+            let Some(partner) = partner else {
+                log::debug!(
+                    "aci modulo: no source literal in the class of a target literal ({} source-only, {} target-only)",
+                    unmatched_source.len(),
+                    unmatched_target.len()
+                );
+                return None;
+            };
+            used.insert(partner.clone());
+            replacement.insert(literal.clone(), partner);
+        }
+        if used.len() != unmatched_source.len() {
+            log::debug!(
+                "aci modulo: {} source-only literals left unpaired",
+                unmatched_source.len() - used.len()
+            );
+            return None;
+        }
+        Some((operator, replacement))
+    }
+
+    /// The congruence proof of `from = to` for two terms that differ only at
+    /// literals `replacement` maps (`to`'s literal to `from`'s), built along
+    /// the structure without e-graph lookups; the literal pairs themselves
+    /// are proved in their class.
+    fn congruence_by_structure(
+        &mut self,
+        from: &Term,
+        to: &Term,
+        replacement: &HashMap<Term, Term>,
+    ) -> Option<Certificate> {
+        if from == to {
+            return Some(Certificate::Refl { term: from.clone() });
+        }
+        if replacement.get(to) == Some(from) {
+            return self.prove(from, to);
+        }
+        if from.op != to.op || from.children.len() != to.children.len() {
+            return None;
+        }
+        let mut current = from.clone();
+        let mut steps = Vec::new();
+        for child_index in 0..current.children.len() {
+            if current.children[child_index] == to.children[child_index] {
+                continue;
+            }
+            let child = self.congruence_by_structure(
+                &current.children[child_index],
+                &to.children[child_index],
+                replacement,
+            )?;
+            let mut children = current.children.clone();
+            children[child_index] = to.children[child_index].clone();
+            let next = Term::new(&current.op, children);
+            steps.push(Certificate::Congruence {
+                lhs: current.clone(),
+                rhs: next.clone(),
+                child_index,
+                child: Box::new(child),
+            });
+            current = next;
+        }
+        Some(chain(from.clone(), steps))
     }
 
     /// ACI strategy: `and`/`or` obligations whose sides flatten to the same
@@ -964,6 +1146,13 @@ impl Reconstructor<'_> {
                     certificate
                 })
             }
+            CandidateEdge::AciModulo => {
+                if flip {
+                    self.prove_by_aci_modulo(child, parent)
+                } else {
+                    self.prove_by_aci_modulo(parent, child)
+                }
+            }
         }
     }
 
@@ -1092,6 +1281,8 @@ impl Reconstructor<'_> {
                     goal.clone(),
                     CandidateEdge::Computational { kind: Computation::AciNorm },
                 ));
+            } else if self.aci_modulo_pairs(vertex, goal).is_some() {
+                edges.push((goal.clone(), CandidateEdge::AciModulo));
             }
         }
         edges.retain(|(neighbour, _)| !graph.banned.contains(&(vertex.clone(), neighbour.clone())));
@@ -1177,4 +1368,22 @@ pub fn reconstruct(
     strategy: SearchStrategy,
 ) -> Option<Certificate> {
     reconstruct_detailed(snapshot, source, target, rules, strategy).certificate
+}
+
+/// `term` with every literal of an `operator` list that `replacement` maps
+/// replaced, through nested lists of the same operator.
+fn replace_literals(term: &Term, operator: &str, replacement: &HashMap<Term, Term>) -> Term {
+    if let Some(mapped) = replacement.get(term) {
+        return mapped.clone();
+    }
+    match encoded_application(term) {
+        Some((op, elements)) if op == operator => encoded_app(
+            operator,
+            elements
+                .iter()
+                .map(|element| replace_literals(element, operator, replacement))
+                .collect(),
+        ),
+        _ => term.clone(),
+    }
 }

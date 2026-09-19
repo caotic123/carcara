@@ -136,6 +136,7 @@ pub fn rules_from_generated_program(program: &str) -> Vec<Rewrite> {
             name: leak(format!("gen-{}", rules.len())),
             lhs: pattern_from_egglog_expr(lhs),
             rhs: pattern_from_egglog_expr(rhs),
+            guards: Vec::new(),
         });
     };
     for command in commands {
@@ -157,7 +158,11 @@ pub fn rules_from_generated_program(program: &str) -> Vec<Rewrite> {
                 };
                 // Sort guards (`SortInt`/`SortReal`/`SortBool` facts) do not
                 // change what the rule rewrites; the declarative rule is the
-                // body without them.
+                // body without them, and they are kept as constraints on the
+                // variables they guard, so the search does not ground a rule
+                // instantiated for one numeric sort on the other.
+                let guards: Vec<(String, &'static str)> =
+                    rule.body.iter().filter_map(sort_guard_of).collect();
                 let body: Vec<&GenericFact<_, _>> = rule
                     .body
                     .iter()
@@ -177,12 +182,43 @@ pub fn rules_from_generated_program(program: &str) -> Vec<Rewrite> {
                     name: leak(rare_name.to_owned()),
                     lhs: pattern_from_egglog_expr(lhs),
                     rhs: pattern_from_egglog_expr(rhs),
+                    guards,
                 });
             }
             _ => {}
         }
     }
     rules
+}
+
+/// The variable and sort a sort-guard fact constrains: `(SortInt (Mk x))`
+/// gives `("x", "Int")`.
+fn sort_guard_of<H, L>(fact: &GenericFact<H, L>) -> Option<(String, &'static str)>
+where
+    H: std::fmt::Display,
+    L: std::fmt::Display,
+{
+    let GenericFact::Fact(GenericExpr::Call(_, head, arguments)) = fact else {
+        return None;
+    };
+    let sort = match head.to_string().as_str() {
+        "SortInt" => "Int",
+        "SortReal" => "Real",
+        "SortBool" => "Bool",
+        _ => return None,
+    };
+    // The engine guards the class the parameter stands for, `(SortInt (Mk t1))`.
+    let variable = match arguments.as_slice() {
+        [GenericExpr::Var(_, variable)] => variable.to_string(),
+        [GenericExpr::Call(_, wrapper, wrapped)] if wrapper.to_string() == "Mk" => {
+            let [GenericExpr::Var(_, variable)] = wrapped.as_slice() else {
+                return None;
+            };
+            variable.to_string()
+        }
+        _ => return None,
+    };
+    Some((variable, sort))
 }
 
 fn is_sort_guard<H, L>(fact: &GenericFact<H, L>) -> bool

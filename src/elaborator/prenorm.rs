@@ -122,7 +122,10 @@ fn identity_of(pool: &mut dyn TermPool, op: Operator, sample: &Rc<Term>) -> Opti
 
 impl Normalizer {
     pub fn new() -> Self {
-        Self { derivations: HashMap::new(), rewritten: 0 }
+        Self {
+            derivations: HashMap::new(),
+            rewritten: 0,
+        }
     }
 
     /// `term` in normal form.
@@ -140,12 +143,21 @@ impl Normalizer {
     }
 
     fn derive(&mut self, pool: &mut dyn TermPool, term: &Rc<Term>) -> Derivation {
-        let same = |t: &Rc<Term>| Derivation { cong: None, tops: Vec::new(), tail: None, result: t.clone() };
+        let same = |t: &Rc<Term>| Derivation {
+            cong: None,
+            tops: Vec::new(),
+            tail: None,
+            result: t.clone(),
+        };
         // 1. The arguments, under `cong`.
         let current = match term.as_ref() {
             Term::Op(op, args) => {
                 let normal: Vec<Rc<Term>> = args.iter().map(|a| self.normalize(pool, a)).collect();
-                if normal == *args { term.clone() } else { pool.add(Term::Op(*op, normal)) }
+                if normal == *args {
+                    term.clone()
+                } else {
+                    pool.add(Term::Op(*op, normal))
+                }
             }
             Term::App(function, args) => {
                 let normal: Vec<Rc<Term>> = args.iter().map(|a| self.normalize(pool, a)).collect();
@@ -174,7 +186,11 @@ impl Normalizer {
             (None, at)
         } else {
             let normal = self.normalize(pool, &at);
-            if normal == at { (None, at) } else { (Some(at), normal) }
+            if normal == at {
+                (None, at)
+            } else {
+                (Some(at), normal)
+            }
         };
         Derivation { cong, tops, tail, result }
     }
@@ -186,7 +202,12 @@ impl Normalizer {
             return None;
         };
         let step = |rule, to: Rc<Term>| {
-            (to != *term).then(|| TopStep { rule, from: term.clone(), to, premise: None })
+            (to != *term).then(|| TopStep {
+                rule,
+                from: term.clone(),
+                to,
+                premise: None,
+            })
         };
         // `evaluate`: a ground term is its value.
         if args.iter().all(|a| Value::from_term(a).is_some()) {
@@ -315,12 +336,19 @@ impl Normalizer {
 
     /// `aci_simp`'s canonical form: flattened, without the identity element,
     /// deduplicated when the operator is idempotent, in pointer order.
-    fn aci_canonical(&mut self, pool: &mut dyn TermPool, op: Operator, args: &[Rc<Term>]) -> Rc<Term> {
+    fn aci_canonical(
+        &mut self,
+        pool: &mut dyn TermPool,
+        op: Operator,
+        args: &[Rc<Term>],
+    ) -> Rc<Term> {
         let identity = identity_of(pool, op, &args[0]);
         let mut flat: Vec<Rc<Term>> = Vec::new();
         for arg in args {
             match arg.as_ref() {
-                Term::Op(inner, inner_args) if *inner == op => flat.extend(inner_args.iter().cloned()),
+                Term::Op(inner, inner_args) if *inner == op => {
+                    flat.extend(inner_args.iter().cloned())
+                }
                 _ => flat.push(arg.clone()),
             }
         }
@@ -351,7 +379,12 @@ impl Normalizer {
         entries
     }
 
-    fn constant_term(&self, pool: &mut dyn TermPool, value: &Rational, sort: ArithSort) -> Rc<Term> {
+    fn constant_term(
+        &self,
+        pool: &mut dyn TermPool,
+        value: &Rational,
+        sort: ArithSort,
+    ) -> Rc<Term> {
         match sort {
             ArithSort::Int if value.is_integer() => pool.add(Term::new_int(value.numer().clone())),
             _ => pool.add(Term::new_real(value.clone())),
@@ -362,7 +395,12 @@ impl Normalizer {
     /// atom or a product `(* c a1 ... an)`, summed, the constant last.  In a
     /// Real polynomial an Int atom is wrapped in `to_real`, which the
     /// checker's polynomial sees through.
-    fn term_of_polynomial(&self, pool: &mut dyn TermPool, poly: &Polynomial, sort: ArithSort) -> Rc<Term> {
+    fn term_of_polynomial(
+        &self,
+        pool: &mut dyn TermPool,
+        poly: &Polynomial,
+        sort: ArithSort,
+    ) -> Rc<Term> {
         let mut terms: Vec<Rc<Term>> = Vec::new();
         for (monomial, coefficient) in Self::sorted_monomials(poly) {
             let mut factors: Vec<Rc<Term>> = Vec::new();
@@ -370,11 +408,12 @@ impl Normalizer {
                 factors.push(self.constant_term(pool, coefficient, sort));
             }
             for atom in &monomial.0 {
-                let atom = if sort == ArithSort::Real && arith_sort(pool, atom) == Some(ArithSort::Int) {
-                    pool.add(Term::Op(Operator::ToReal, vec![atom.clone()]))
-                } else {
-                    atom.clone()
-                };
+                let atom =
+                    if sort == ArithSort::Real && arith_sort(pool, atom) == Some(ArithSort::Int) {
+                        pool.add(Term::Op(Operator::ToReal, vec![atom.clone()]))
+                    } else {
+                        atom.clone()
+                    };
                 factors.push(atom);
             }
             terms.push(if factors.len() == 1 {
@@ -395,13 +434,23 @@ impl Normalizer {
     /// The certificate of `(= lhs rhs)` for a hole whose sides have the same
     /// normal form: Alethe steps numbered `{id}.1`, `{id}.2`, ... whose last
     /// step concludes the equality.  `None` when the sides differ.
-    pub fn certificate(&mut self, pool: &mut dyn TermPool, id: &str, lhs: &Rc<Term>, rhs: &Rc<Term>) -> Option<Vec<String>> {
+    pub fn certificate(
+        &mut self,
+        pool: &mut dyn TermPool,
+        id: &str,
+        lhs: &Rc<Term>,
+        rhs: &Rc<Term>,
+    ) -> Option<Vec<String>> {
         let left = self.normalize(pool, lhs);
         let right = self.normalize(pool, rhs);
         if left != right {
             return None;
         }
-        let mut emitter = Emitter { prefix: id.to_owned(), steps: Vec::new(), memo: HashMap::new() };
+        let mut emitter = Emitter {
+            prefix: id.to_owned(),
+            steps: Vec::new(),
+            memo: HashMap::new(),
+        };
         let left_step = self.emit(pool, &mut emitter, lhs);
         let right_step = self.emit(pool, &mut emitter, rhs);
         match (left_step, right_step) {
@@ -424,11 +473,22 @@ impl Normalizer {
     /// proof of the normal forms' equality (`inner`, steps concluding
     /// `(= left right)` numbered from `{id}.1`): the combined certificate,
     /// concluding `(= lhs rhs)`.
-    pub fn bridge(&mut self, pool: &mut dyn TermPool, id: &str, lhs: &Rc<Term>, rhs: &Rc<Term>, inner: Vec<String>) -> Vec<String> {
+    pub fn bridge(
+        &mut self,
+        pool: &mut dyn TermPool,
+        id: &str,
+        lhs: &Rc<Term>,
+        rhs: &Rc<Term>,
+        inner: Vec<String>,
+    ) -> Vec<String> {
         let left = self.normalize(pool, lhs);
         let right = self.normalize(pool, rhs);
         let inner_last = format!("{id}.{}", inner.len());
-        let mut emitter = Emitter { prefix: id.to_owned(), steps: inner, memo: HashMap::new() };
+        let mut emitter = Emitter {
+            prefix: id.to_owned(),
+            steps: inner,
+            memo: HashMap::new(),
+        };
         let mut chain: Vec<String> = Vec::new();
         if let Some(l) = self.emit(pool, &mut emitter, lhs) {
             chain.push(l);
@@ -446,7 +506,12 @@ impl Normalizer {
 
     /// Emits the derivation of `term`'s normal form and returns the id of
     /// the step concluding `(= term normal)`, or `None` when it is normal.
-    fn emit(&mut self, pool: &mut dyn TermPool, emitter: &mut Emitter, term: &Rc<Term>) -> Option<String> {
+    fn emit(
+        &mut self,
+        pool: &mut dyn TermPool,
+        emitter: &mut Emitter,
+        term: &Rc<Term>,
+    ) -> Option<String> {
         if let Some(known) = emitter.memo.get(term) {
             return known.clone();
         }
@@ -473,7 +538,10 @@ impl Normalizer {
                 let mut premises = Vec::new();
                 for (arg, its_normal) in args.iter().zip(normal.iter()) {
                     if arg != its_normal {
-                        premises.push(self.emit(pool, emitter, arg).expect("a changed argument has a derivation"));
+                        premises.push(
+                            self.emit(pool, emitter, arg)
+                                .expect("a changed argument has a derivation"),
+                        );
                     }
                 }
                 chain.push(emitter.emit(pool, term, congruent, "cong", &premises));
@@ -512,14 +580,23 @@ struct Emitter {
 }
 
 impl Emitter {
-    fn emit(&mut self, _pool: &mut dyn TermPool, lhs: &Rc<Term>, rhs: &Rc<Term>, rule: &str, premises: &[String]) -> String {
+    fn emit(
+        &mut self,
+        _pool: &mut dyn TermPool,
+        lhs: &Rc<Term>,
+        rhs: &Rc<Term>,
+        rule: &str,
+        premises: &[String],
+    ) -> String {
         let id = format!("{}.{}", self.prefix, self.steps.len() + 1);
         let premises = if premises.is_empty() {
             String::new()
         } else {
             format!(" :premises ({})", premises.join(" "))
         };
-        self.steps.push(format!("(step {id} (cl (= {lhs:#} {rhs:#})) :rule {rule}{premises})"));
+        self.steps.push(format!(
+            "(step {id} (cl (= {lhs:#} {rhs:#})) :rule {rule}{premises})"
+        ));
         id
     }
 }
@@ -532,7 +609,16 @@ mod tests {
     const INTS: &str = "(declare-const x Int) (declare-const y Int) (declare-const z Int) (declare-const p Bool) (declare-const q Bool) (declare-fun f (Int) Int)";
     const REALS: &str = "(declare-const a Real) (declare-const b Real) (declare-const x Int)";
 
-    fn parse(problem: &str, lhs: &str, rhs: &str) -> (crate::ast::Problem, Rc<Term>, Rc<Term>, crate::ast::pool::PrimitivePool) {
+    fn parse(
+        problem: &str,
+        lhs: &str,
+        rhs: &str,
+    ) -> (
+        crate::ast::Problem,
+        Rc<Term>,
+        Rc<Term>,
+        crate::ast::pool::PrimitivePool,
+    ) {
         let problem_text = format!("{problem}\n(assert (= {lhs} {rhs}))\n");
         let proof = format!("(assume h0 (= {lhs} {rhs}))\n");
         let (problem, proof, _, pool) = parser::parse_instance(
@@ -584,7 +670,8 @@ mod tests {
         .map_err(|e| format!("certificate does not parse: {e}\n{proof}"))?;
         let _ = problem_ast;
         let rules = crate::ast::rare_rules::Rules::default();
-        let mut checker = crate::checker::ProofChecker::new(&mut pool, &rules, crate::checker::Config::new());
+        let mut checker =
+            crate::checker::ProofChecker::new(&mut pool, &rules, crate::checker::Config::new());
         match checker.check(&problem_parsed, &proof_parsed) {
             Ok(_) => Ok(steps.len()),
             Err(e) => Err(format!("certificate rejected: {e}\n{proof}")),
@@ -601,18 +688,30 @@ mod tests {
             (INTS, "(* (+ x 1) (+ x 1))", "(+ (* x x) (* 2 x) 1)"),
             (INTS, "(< x y)", "(< (- x y) 0)"),
             (INTS, "(> (* 2 x) 3)", "(> (* 2 x) 3)"),
-            (INTS, "(>= (* -2 x) (* -4 y))", "(>= (+ (* -1 x) (* 2 y)) 0)"),
+            (
+                INTS,
+                "(>= (* -2 x) (* -4 y))",
+                "(>= (+ (* -1 x) (* 2 y)) 0)",
+            ),
             (INTS, "(= x y)", "(= (- y x) 0)"),
             (INTS, "(and p true q p)", "(and q p)"),
             (INTS, "(or p (or q p) false)", "(or q p)"),
             (INTS, "(and (and p q) (and q p))", "(and p q)"),
             (INTS, "(distinct x y)", "(not (= x y))"),
-            (INTS, "(distinct x y z)", "(and (not (= y x)) (not (= z x)) (not (= z y)))"),
+            (
+                INTS,
+                "(distinct x y z)",
+                "(and (not (= y x)) (not (= z x)) (not (= z y)))",
+            ),
             (INTS, "(f (+ x 0))", "(f x)"),
             (INTS, "(<= 2 3)", "true"),
             (INTS, "(and p (<= x x))", "p"),
             (REALS, "(>= 0.0 (/ (- 1) 1024))", "true"),
-            (REALS, "(* (/ 1 2) (to_real (+ x (* 2 x))))", "(* (/ 3 2) (to_real x))"),
+            (
+                REALS,
+                "(* (/ 1 2) (to_real (+ x (* 2 x))))",
+                "(* (/ 3 2) (to_real x))",
+            ),
             (REALS, "(< (* 2.0 a) b)", "(< (+ a (* (- 0.5) b)) 0.0)"),
             (REALS, "(= (- 1.0) (- 1))", "true"),
             (REALS, "(<= 1 a)", "(<= (- a) (- 1.0))"),
@@ -648,16 +747,32 @@ mod tests {
             (INTS, "(* 4 256)", "1024"),
             (INTS, "(+ x y x)", "(+ (* 2 x) y)"),
             (INTS, "(< x y)", "(< (- x y) 0)"),
-            (INTS, "(>= (* -2 x) (* -4 y))", "(>= (+ (* -1 x) (* 2 y)) 0)"),
+            (
+                INTS,
+                "(>= (* -2 x) (* -4 y))",
+                "(>= (+ (* -1 x) (* 2 y)) 0)",
+            ),
             (INTS, "(= x y)", "(= (- y x) 0)"),
             (INTS, "(and p true q p)", "(and q p)"),
             (INTS, "(and (and p q) (and q p))", "(and p q)"),
-            (INTS, "(distinct x y z)", "(and (not (= y x)) (not (= z x)) (not (= z y)))"),
+            (
+                INTS,
+                "(distinct x y z)",
+                "(and (not (= y x)) (not (= z x)) (not (= z y)))",
+            ),
             (INTS, "(f (+ x 0))", "(f x)"),
             (INTS, "(and p (<= x x))", "p"),
-            (INTS, "(or (distinct x (+ y 0)) (= (f (* 1 x)) 0))", "(or (not (= x y)) (= (f x) 0))"),
+            (
+                INTS,
+                "(or (distinct x (+ y 0)) (= (f (* 1 x)) 0))",
+                "(or (not (= x y)) (= (f x) 0))",
+            ),
             (INTS, "x", "x"),
-            (REALS, "(* (/ 1 2) (to_real (+ x (* 2 x))))", "(* (/ 3 2) (to_real x))"),
+            (
+                REALS,
+                "(* (/ 1 2) (to_real (+ x (* 2 x))))",
+                "(* (/ 3 2) (to_real x))",
+            ),
             (REALS, "(< (* 2.0 a) b)", "(< (+ a (* (- 0.5) b)) 0.0)"),
             (REALS, "(<= 1 a)", "(<= (- a) (- 1.0))"),
         ] {

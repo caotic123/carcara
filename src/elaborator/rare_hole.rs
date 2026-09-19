@@ -1295,11 +1295,19 @@ fn run_hole_worker_inner(
     let fail = |reason: String| (reason, Vec::new());
     let exe = std::env::current_exe()
         .map_err(|error| fail(format!("locating carcara: {error}")))?;
-    let mut arguments: Vec<std::ffi::OsString> = vec![
+    // At debug level the child logs too and its whole stderr is reported, so
+    // a reconstruction can be followed.
+    let debug = log::log_enabled!(log::Level::Debug);
+    let mut arguments: Vec<std::ffi::OsString> = Vec::new();
+    if debug {
+        arguments.push("--log".into());
+        arguments.push("debug".into());
+    }
+    arguments.extend::<[std::ffi::OsString; 3]>([
         "reconstruct-hole".into(),
         "--rare-file".into(),
         rare_file.into(),
-    ];
+    ]);
     if let Some(timeout) = options.timeout {
         arguments.push("--rare-check-timeout".into());
         arguments.push(timeout.as_millis().to_string().into());
@@ -1413,6 +1421,9 @@ fn run_hole_worker_inner(
     };
     let stdout = stdout.join().unwrap_or_default();
     let stderr = stderr.join().unwrap_or_default();
+    if debug {
+        log::debug!("hole worker stderr:\n{}", String::from_utf8_lossy(&stderr));
+    }
     // The child reports "phase <name>=<seconds>" as each phase completes, so
     // the phases seen say how far it got.
     let phases: Vec<(String, String)> = String::from_utf8_lossy(&stderr)
@@ -1736,6 +1747,7 @@ pub fn insert_steps(
         step.id,
         steps.len() + 1,
     );
+    log::debug!("hole {}: reconstructed steps:\n{proof}", step.id);
     // A holey inner proof (a relation hole the routing could not discharge)
     // is still accepted: the trusted content strictly decreased.
     let (commands, _status) = parse_and_check(elaborator.pool, &problem, &proof, rules)

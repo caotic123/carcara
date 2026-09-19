@@ -32,3 +32,27 @@ pub fn relation_bool_goal_check_terms(
 pub fn relation_bool_goal_guard_term(lhs: EggExpr) -> EggExpr {
     EggExpr::Call("arithRelBoolCanMatch".to_owned(), vec![lhs])
 }
+
+/// The setup of the "all relations" fallback: keys for every relation atom
+/// of the e-graph (demanded by `arith_rel_all`, computed by `arith_poly`),
+/// then the unions of the atoms whose keys agree (`arith_rel_merge`).  The
+/// caller follows it with the main schedule, so the rules see the unions.
+pub fn relation_all_setup() -> Vec<EggStatement> {
+    vec![
+        EggStatement::Run {
+            ruleset: Some("arith_rel_all".to_owned()),
+            iterations: 1,
+        },
+        EggStatement::Run {
+            ruleset: Some("arith_poly_guard".to_owned()),
+            iterations: 1,
+        },
+        EggStatement::Saturate {
+            ruleset: Some("arith_poly".to_owned()),
+        },
+        EggStatement::Run {
+            ruleset: Some("arith_rel_merge".to_owned()),
+            iterations: 1,
+        },
+    ]
+}

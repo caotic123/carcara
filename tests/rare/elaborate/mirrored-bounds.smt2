@@ -1,0 +1,6 @@
+(set-logic QF_LIA)
+(declare-fun p () Int)
+(declare-fun a () Int)
+(declare-fun b () Int)
+(assert (= p 1))
+(assert (not (and (<= p 1) (<= 1 p))))
