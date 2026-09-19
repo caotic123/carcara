@@ -2,8 +2,8 @@
 //!
 //! cvc5 justifies a rewrite `t = t'` with one `hole` step tagged `TRUST_THEORY_REWRITE` — the
 //! whole rewrite at once — and the RARE/egglog machinery behind the `hole` pass re-derives it.
-//! veriT justifies the same rewrite with a derivation: `*_simplify`, `ac_simp`, ... steps
-//! rewrite subterms, and `cong`, `trans`, `refl` and `symm` steps assemble the subterm
+//! veriT justifies the same rewrite with a derivation: `*_simplify`, `ac_simp`, `la_rw_eq`, ...
+//! steps rewrite subterms, and `cong`, `trans`, `refl` and `symm` steps assemble the subterm
 //! rewrites into the rewrite of the whole term.
 //!
 //! This pass finds those derivations and replaces each by a single hole concluding the same
@@ -39,8 +39,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// The Alethe rules that rewrite a term into an equal one on their own: the seeds of a rewrite
 /// derivation.  Quantifier rules are left out (the hole checker has no rules for binders), and so
-/// are `ite_intro` and `bfun_elim`, whose conclusions are not rewrites of a term, and `la_rw_eq`,
-/// which Carcara checks natively and stays a checked step.
+/// are `ite_intro` and `bfun_elim`, whose conclusions are not rewrites of a term.
 pub const REWRITE_RULES: &[&str] = &[
     "ac_simp",
     "all_simplify",
@@ -58,6 +57,7 @@ pub const REWRITE_RULES: &[&str] = &[
     "minus_simplify",
     "sum_simplify",
     "comp_simplify",
+    "la_rw_eq",
     "distinct_elim",
     "nary_elim",
     "connective_def",
