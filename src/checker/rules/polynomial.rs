@@ -10,7 +10,7 @@ use indexmap::{IndexMap, map::Entry};
 use rug::{Integer, Rational, ops::NegAssign};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct Monomial(Vec<Rc<Term>>);
+pub(crate) struct Monomial(pub(crate) Vec<Rc<Term>>);
 
 impl Monomial {
     fn mul(mut self, other: Self) -> Self {
@@ -21,7 +21,7 @@ impl Monomial {
 }
 
 #[derive(Debug, Clone)]
-struct Polynomial(pub(crate) IndexMap<Monomial, Rational>, pub(crate) Rational);
+pub(crate) struct Polynomial(pub(crate) IndexMap<Monomial, Rational>, pub(crate) Rational);
 
 impl Polynomial {
     fn new() -> Self {
@@ -31,7 +31,7 @@ impl Polynomial {
     /// Builds a polynomial from a term. Takes a term with nested additions, subtractions and
     /// multiplications, and flattens it to polynomial, calculating the coefficient of each
     /// monomial.
-    fn from_term(term: &Rc<Term>) -> Self {
+    pub(crate) fn from_term(term: &Rc<Term>) -> Self {
         let mut result = Self::new();
         result.add_term(term, &Rational::from(1));
         result
@@ -125,7 +125,7 @@ impl Polynomial {
         }
     }
 
-    fn is_zero(&self) -> bool {
+    pub(crate) fn is_zero(&self) -> bool {
         self.0.is_empty() && self.1.is_zero()
     }
 
@@ -144,7 +144,7 @@ impl Polynomial {
         self.1.neg_assign();
     }
 
-    fn sub(self, mut other: Self) -> Self {
+    pub(crate) fn sub(self, mut other: Self) -> Self {
         other.neg();
         self.add(other)
     }

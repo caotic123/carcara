@@ -1,7 +1,7 @@
 //! A proof checker for Alethe proofs
 pub mod error;
 mod parallel;
-mod rules;
+pub(crate) mod rules;
 mod sat_refutation;
 pub(crate) mod shared;
 

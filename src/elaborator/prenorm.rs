@@ -1,132 +1,62 @@
-//! Normalizing a hole's goal with Carcara's own normal forms before the
-//! egglog engine sees it.
+//! Normalizing a hole's goal with the procedures behind four of Carcara's
+//! own rules, before the egglog engine sees it.
 //!
-//! cvc5's theory-rewrite holes are, for the most part, the arithmetic
-//! rewriter's and the Boolean rewriter's normal forms: polynomial
-//! normalization, constant evaluation, flattening of `and`/`or`, and the
-//! canonical shape of linear relations.  Carcara already has decision
-//! procedures for those (`poly_simp`, `evaluate`, `aci_simp`); this module
-//! turns them into a normalizer that rewrites every subterm of a goal into a
-//! canonical form.  A hole whose two sides normalize to the same term is
-//! proved without egglog; the others reach egglog as the equality of the two
-//! normal forms, with nothing left to normalize.
+//! The normalizer is the bottom-up composition of exactly the procedures
+//! that check `evaluate`, `poly_simp` (with `poly_simp_rel` for relations),
+//! `aci_simp` and `distinct_elim`: a ground term is evaluated, an arithmetic
+//! term is printed as its canonical polynomial, a relation is put in the
+//! form `(op P c)` with `P` the scaled difference of its sides, an `and`/`or`
+//! (and the associative bit-vector operators) is flattened, freed of its
+//! identity element, deduplicated when idempotent and sorted, and a
+//! `distinct` is expanded to its pairwise disequalities.  Nothing else: what
+//! these four do not reach is left to the RARE rules in egglog.
 //!
-//! Every step is an equivalence Carcara's checker can justify (`poly_simp`
-//! and `poly_simp_rel` for the polynomial and relation forms, `evaluate`
-//! for constants, `aci_simp` and `not_not` for the Boolean shapes), so a
-//! certificate can cite them; only the checking use is wired up here.
+//! Because each step is one of those rules applied to one subterm, the
+//! derivation of a normal form is a certificate of `cong`, `trans` and rule
+//! steps that the checker verifies, so the same normalization serves the
+//! checking pass (a hole whose sides have the same normal form is closed)
+//! and the elaboration pass (the certificate replaces the hole, or bridges
+//! the hole's sides to the normal forms egglog proves equal).
+//!
+//! The polynomial is the checker's own (`checker::rules::polynomial`), so a
+//! `poly_simp` step the normalizer emits is one the checker accepts by
+//! construction.
 use crate::ast::{
     Operator, Rc, Sort, Term,
+    Value,
     pool::{PrimitivePool, TermPool},
 };
-use indexmap::IndexMap;
+use crate::checker::rules::polynomial::{Monomial, Polynomial};
+use indexmap::IndexSet;
 use rug::{Integer, Rational};
 use std::collections::HashMap;
 
-/// A monomial: the atoms multiplied, sorted by pointer (one order per pool).
-#[derive(Clone, Hash, PartialEq, Eq, Debug)]
-struct Monomial(Vec<Rc<Term>>);
-
-impl Monomial {
-    fn one() -> Self {
-        Self(Vec::new())
-    }
-
-    fn mul(&self, other: &Self) -> Self {
-        let mut atoms = self.0.clone();
-        atoms.extend(other.0.iter().cloned());
-        atoms.sort_unstable_by_key(Rc::as_ptr);
-        Self(atoms)
-    }
+/// One rule application at the top of a term: `(= from to)` by `rule`, with
+/// the `poly_simp` premise a `poly_simp_rel` step needs.
+#[derive(Clone)]
+struct TopStep {
+    rule: &'static str,
+    from: Rc<Term>,
+    to: Rc<Term>,
+    premise: Option<(Rc<Term>, Rc<Term>)>,
 }
 
-/// A polynomial with rational coefficients over atoms (subterms that are
-/// not arithmetic operations): monomials with their coefficients, in
-/// insertion order.
-#[derive(Clone, Debug, Default)]
-struct Polynomial(IndexMap<Monomial, Rational>);
-
-impl Polynomial {
-    fn constant(value: Rational) -> Self {
-        let mut poly = Self::default();
-        poly.add_monomial(Monomial::one(), value);
-        poly
-    }
-
-    fn atom(term: Rc<Term>) -> Self {
-        let mut poly = Self::default();
-        poly.add_monomial(Monomial(vec![term]), Rational::from(1));
-        poly
-    }
-
-    fn add_monomial(&mut self, monomial: Monomial, coefficient: Rational) {
-        if coefficient == 0 {
-            return;
-        }
-        let entry = self.0.entry(monomial).or_insert_with(Rational::new);
-        *entry += coefficient;
-        if *entry == 0 {
-            self.0.retain(|_, c| *c != 0);
-        }
-    }
-
-    fn add(&mut self, other: &Self) {
-        for (monomial, coefficient) in &other.0 {
-            self.add_monomial(monomial.clone(), coefficient.clone());
-        }
-    }
-
-    fn scale(&mut self, factor: &Rational) {
-        if *factor == 0 {
-            self.0.clear();
-            return;
-        }
-        for coefficient in self.0.values_mut() {
-            *coefficient *= factor;
-        }
-    }
-
-    fn mul(&self, other: &Self) -> Self {
-        let mut result = Self::default();
-        for (m1, c1) in &self.0 {
-            for (m2, c2) in &other.0 {
-                result.add_monomial(m1.mul(m2), Rational::from(c1 * c2));
-            }
-        }
-        result
-    }
-
-    fn constant_part(&self) -> Rational {
-        self.0.get(&Monomial::one()).cloned().unwrap_or_default()
-    }
-
-    fn is_constant(&self) -> bool {
-        self.0.keys().all(|m| m.0.is_empty())
-    }
-
-    /// The monomials in the canonical order: fewer atoms first, then by
-    /// the atoms' pointers.
-    fn sorted(&self) -> Vec<(&Monomial, &Rational)> {
-        let mut entries: Vec<_> = self.0.iter().collect();
-        entries.sort_by(|(a, _), (b, _)| {
-            a.0.len().cmp(&b.0.len()).then_with(|| {
-                a.0.iter()
-                    .map(Rc::as_ptr)
-                    .cmp(b.0.iter().map(Rc::as_ptr))
-            })
-        });
-        entries
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ArithSort {
-    Int,
-    Real,
+/// How a term's normal form is derived: the arguments' normal forms under
+/// `cong`, then rule applications at the top, then the derivation of the
+/// last top step's result (whose own arguments may need normalizing again).
+#[derive(Clone)]
+struct Derivation {
+    /// The term with its arguments replaced by their normal forms, when any
+    /// changed.
+    cong: Option<Rc<Term>>,
+    tops: Vec<TopStep>,
+    /// The term the top steps end at, when it is not yet normal.
+    tail: Option<Rc<Term>>,
+    result: Rc<Term>,
 }
 
 pub struct Normalizer {
-    cache: HashMap<Rc<Term>, Rc<Term>>,
+    derivations: HashMap<Rc<Term>, Derivation>,
     /// How many subterms changed under normalization.
     pub rewritten: usize,
 }
@@ -137,600 +67,292 @@ impl Default for Normalizer {
     }
 }
 
-/// A bound `(rel P c)` or a point `(= P c)` in normal form, as its relation, polynomial and
-/// constant.
-fn bound_parts(term: &Rc<Term>) -> Option<(Operator, &Rc<Term>, Rational)> {
-    use Operator::*;
-    match term.as_ref() {
-        Term::Op(rel @ (LessThan | LessEq | GreaterThan | GreaterEq | Equals), args)
-            if args.len() == 2 =>
-        {
-            Some((*rel, &args[0], args[1].as_signed_number()?))
-        }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArithSort {
+    Int,
+    Real,
+}
+
+fn arith_sort(pool: &mut PrimitivePool, term: &Rc<Term>) -> Option<ArithSort> {
+    match pool.sort(term).as_ref() {
+        Sort::Int => Some(ArithSort::Int),
+        Sort::Real => Some(ArithSort::Real),
         _ => None,
     }
 }
 
-/// Whether `(x P a)` and `(y P b)` have no common solution; `Distinct` stands for `(not (= P a))`.
-fn bounds_exclude(integer: bool, x: Operator, a: &Rational, y: Operator, b: &Rational) -> bool {
-    use Operator::*;
-    match (x, y) {
-        (Equals, Equals) => a != b,
-        (Equals, Distinct) | (Distinct, Equals) => a == b,
-        (Equals, LessEq) | (LessEq, Equals) => if x == Equals { b < a } else { a < b },
-        (Equals, LessThan) | (LessThan, Equals) => if x == Equals { b <= a } else { a <= b },
-        (Equals, GreaterEq) | (GreaterEq, Equals) => if x == Equals { b > a } else { a > b },
-        (Equals, GreaterThan) | (GreaterThan, Equals) => if x == Equals { b >= a } else { a >= b },
-        (LessEq | LessThan, GreaterEq | GreaterThan) => {
-            // upper a, lower b
-            b > a || (b == a && (x == LessThan || y == GreaterThan)) || (integer && b > a)
-        }
-        (GreaterEq | GreaterThan, LessEq | LessThan) => bounds_exclude(integer, y, b, x, a),
-        _ => false,
-    }
+/// Whether every argument of `op` may be dropped when repeated.
+fn is_idempotent(op: Operator) -> bool {
+    matches!(
+        op,
+        Operator::And | Operator::Or | Operator::BvAnd | Operator::BvOr
+    )
 }
 
-/// Whether `(x P a)` or `(y P b)` holds for every value; `Distinct` stands for `(not (= P a))`.
-fn bounds_cover(integer: bool, x: Operator, a: &Rational, y: Operator, b: &Rational) -> bool {
-    use Operator::*;
-    match (x, y) {
-        (Distinct, Distinct) => a != b,
-        (Distinct, LessEq) | (LessEq, Distinct) => if x == Distinct { b >= a } else { a >= b },
-        (Distinct, LessThan) | (LessThan, Distinct) => if x == Distinct { b > a } else { a > b },
-        (Distinct, GreaterEq) | (GreaterEq, Distinct) => if x == Distinct { b <= a } else { a <= b },
-        (Distinct, GreaterThan) | (GreaterThan, Distinct) => if x == Distinct { b < a } else { a < b },
-        (LessEq | LessThan, GreaterEq | GreaterThan) => {
-            // upper a, lower b
-            if integer {
-                *b <= a.clone() + Rational::from(1)
-            } else {
-                b < a || (b == a && !(x == LessThan && y == GreaterThan))
+/// The operators the `aci_simp` component handles: associative and
+/// commutative, with an identity element.  `+` and `*` go through
+/// `poly_simp` instead.
+fn is_aci(op: Operator) -> bool {
+    matches!(
+        op,
+        Operator::And
+            | Operator::Or
+            | Operator::BvAnd
+            | Operator::BvOr
+            | Operator::BvXor
+            | Operator::BvAdd
+            | Operator::BvMul
+    )
+}
+
+fn identity_of(pool: &mut PrimitivePool, op: Operator, sample: &Rc<Term>) -> Option<Rc<Term>> {
+    let term = match op {
+        Operator::And => Term::new_bool(true),
+        Operator::Or => Term::new_bool(false),
+        Operator::BvAdd | Operator::BvOr | Operator::BvXor | Operator::BvMul | Operator::BvAnd => {
+            let &Sort::BitVec(width) = pool.sort(sample).as_ref() else {
+                return None;
+            };
+            match op {
+                Operator::BvMul => Term::new_bv(Integer::from(1), width),
+                Operator::BvAnd => Term::new_bv((Integer::from(1) << width) - 1, width),
+                _ => Term::new_bv(Integer::from(0), width),
             }
         }
-        (GreaterEq | GreaterThan, LessEq | LessThan) => bounds_cover(integer, y, b, x, a),
-        _ => false,
-    }
+        _ => return None,
+    };
+    Some(pool.add(term))
 }
 
 impl Normalizer {
     pub fn new() -> Self {
-        Self { cache: HashMap::new(), rewritten: 0 }
+        Self { derivations: HashMap::new(), rewritten: 0 }
     }
 
     /// `term` in normal form.
     pub fn normalize(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Rc<Term> {
-        if let Some(known) = self.cache.get(term) {
-            return known.clone();
+        if let Some(known) = self.derivations.get(term) {
+            return known.result.clone();
         }
-        let result = self.normalize_uncached(pool, term);
-        if result != *term {
+        let derivation = self.derive(pool, term);
+        if derivation.result != *term {
             self.rewritten += 1;
         }
-        self.cache.insert(term.clone(), result.clone());
+        let result = derivation.result.clone();
+        self.derivations.insert(term.clone(), derivation);
         result
     }
 
-    fn normalize_uncached(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Rc<Term> {
-        match term.as_ref() {
+    fn derive(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Derivation {
+        let same = |t: &Rc<Term>| Derivation { cong: None, tops: Vec::new(), tail: None, result: t.clone() };
+        // 1. The arguments, under `cong`.
+        let current = match term.as_ref() {
             Term::Op(op, args) => {
-                let args: Vec<Rc<Term>> =
-                    args.iter().map(|arg| self.normalize(pool, arg)).collect();
-                self.normalize_op(pool, term, *op, args)
+                let normal: Vec<Rc<Term>> = args.iter().map(|a| self.normalize(pool, a)).collect();
+                if normal == *args { term.clone() } else { pool.add(Term::Op(*op, normal)) }
             }
             Term::App(function, args) => {
-                let function = self.normalize(pool, function);
-                let args: Vec<Rc<Term>> =
-                    args.iter().map(|arg| self.normalize(pool, arg)).collect();
-                pool.add(Term::App(function, args))
-            }
-            _ => term.clone(),
-        }
-    }
-
-    fn normalize_op(
-        &mut self,
-        pool: &mut PrimitivePool,
-        original: &Rc<Term>,
-        op: Operator,
-        args: Vec<Rc<Term>>,
-    ) -> Rc<Term> {
-        use Operator::*;
-        match op {
-            Not => {
-                let arg = &args[0];
-                if let Term::Op(Not, inner) = arg.as_ref() {
-                    return inner[0].clone();
-                }
-                if arg.is_bool_true() {
-                    return pool.add(Term::new_bool(false));
-                }
-                if arg.is_bool_false() {
-                    return pool.add(Term::new_bool(true));
-                }
-                // A negated bound is the opposite bound.
-                if let Term::Op(rel @ (LessThan | LessEq | GreaterThan | GreaterEq), rel_args) =
-                    arg.as_ref()
-                {
-                    if rel_args.len() == 2 {
-                        if let Some(sort) = self.arith_sort(pool, &rel_args[0]) {
-                            let negated = match rel {
-                                LessThan => GreaterEq,
-                                LessEq => GreaterThan,
-                                GreaterThan => LessEq,
-                                _ => LessThan,
-                            };
-                            let (lhs, rhs) = (rel_args[0].clone(), rel_args[1].clone());
-                            return self.normalize_relation(pool, negated, &lhs, &rhs, sort);
-                        }
-                    }
-                }
-                // Negation normal form: a negated conjunction or disjunction is
-                // the dual connective over the negated arguments.
-                if let Term::Op(inner_op @ (And | Or), inner) = arg.as_ref() {
-                    let dual = if *inner_op == And { Or } else { And };
-                    let inner = inner.clone();
-                    let negated: Vec<Rc<Term>> = inner
-                        .iter()
-                        .map(|x| self.normalize_op(pool, original, Not, vec![x.clone()]))
-                        .collect();
-                    return self.normalize_aci(pool, dual, negated);
-                }
-                pool.add(Term::Op(Not, args))
-            }
-            And | Or => self.normalize_aci(pool, op, args),
-            Implies if args.len() == 2 => {
-                let negated = self.normalize_op(pool, original, Not, vec![args[0].clone()]);
-                self.normalize_aci(pool, Or, vec![negated, args[1].clone()])
-            }
-            Ite if args.len() == 3 => {
-                if args[0].is_bool_true() {
-                    return args[1].clone();
-                }
-                if args[0].is_bool_false() {
-                    return args[2].clone();
-                }
-                if args[1] == args[2] {
-                    return args[1].clone();
-                }
-                pool.add(Term::Op(Ite, args))
-            }
-            Add | Sub | Mult | RealDiv | ToReal => {
-                let sort = match self.arith_sort(pool, original) {
-                    Some(sort) => sort,
-                    None => return self.evaluated(pool, Term::Op(op, args)),
-                };
-                let candidate = pool.add(Term::Op(op, args));
-                let poly = self.polynomial(pool, &candidate);
-                self.term_of_polynomial(pool, &poly, sort)
-            }
-            LessThan | LessEq | GreaterThan | GreaterEq if args.len() == 2 => {
-                match self.relation_sort(pool, &args[0], &args[1]) {
-                    Some(sort) => self.normalize_relation(pool, op, &args[0], &args[1], sort),
-                    None => self.evaluated(pool, Term::Op(op, args)),
+                let normal: Vec<Rc<Term>> = args.iter().map(|a| self.normalize(pool, a)).collect();
+                if normal == *args {
+                    term.clone()
+                } else {
+                    pool.add(Term::App(function.clone(), normal))
                 }
             }
-            Equals if args.len() == 2 => {
-                if args[0] == args[1] {
-                    return pool.add(Term::new_bool(true));
-                }
-                if let Some(sort) = self.relation_sort(pool, &args[0], &args[1]) {
-                    return self.normalize_relation(pool, Equals, &args[0], &args[1], sort);
-                }
-                // `(= p true)` is `p`, `(= p false)` is `(not p)`.
-                for (index, other) in [(0, 1), (1, 0)] {
-                    if args[index].is_bool_true() {
-                        return args[other].clone();
-                    }
-                    if args[index].is_bool_false() {
-                        return self.normalize_op(pool, original, Not, vec![args[other].clone()]);
-                    }
-                }
-                // Symmetric: one order per pair.
-                let mut args = args;
-                if Rc::as_ptr(&args[0]) > Rc::as_ptr(&args[1]) {
-                    args.swap(0, 1);
-                }
-                self.evaluated(pool, Term::Op(Equals, args))
-            }
-            Distinct if args.len() == 2 => {
-                let equality = self.normalize_op(pool, original, Equals, args);
-                self.normalize_op(pool, original, Not, vec![equality])
-            }
-            // A distinct is the conjunction of the pairwise disequalities
-            // (Alethe's `distinct_elim`); as a conjunction it meets cvc5's
-            // expansion of it and a repeated element makes it false.
-            Distinct => {
-                let mut conjuncts = Vec::with_capacity(args.len() * (args.len() - 1) / 2);
-                for i in 0..args.len() {
-                    for j in i + 1..args.len() {
-                        let equality = self.normalize_op(
-                            pool,
-                            original,
-                            Equals,
-                            vec![args[i].clone(), args[j].clone()],
-                        );
-                        conjuncts.push(self.normalize_op(pool, original, Not, vec![equality]));
-                    }
-                }
-                self.normalize_aci(pool, And, conjuncts)
-            }
-            _ => self.evaluated(pool, Term::Op(op, args)),
-        }
-    }
-
-    /// The term, evaluated when it is ground.
-    fn evaluated(&mut self, pool: &mut PrimitivePool, term: Term) -> Rc<Term> {
-        let term = pool.add(term);
-        if let Term::Op(_, args) = term.as_ref() {
-            if args.iter().all(|arg| matches!(arg.as_ref(), Term::Const(_))) {
-                return term.evaluate(pool);
-            }
-        }
-        term
-    }
-
-    fn normalize_aci(&mut self, pool: &mut PrimitivePool, op: Operator, args: Vec<Rc<Term>>) -> Rc<Term> {
-        let (identity, absorbing) = match op {
-            Operator::And => (true, false),
-            _ => (false, true),
+            _ => return same(term),
         };
-        let mut flat: Vec<Rc<Term>> = Vec::new();
-        for arg in args {
-            match arg.as_ref() {
-                Term::Op(inner, inner_args) if *inner == op => flat.extend(inner_args.iter().cloned()),
-                _ => flat.push(arg),
+        let cong = (current != *term).then(|| current.clone());
+        // 2. Rule applications at the top, each on the previous one's result.
+        let mut tops = Vec::new();
+        let mut at = current;
+        while let Some(step) = self.top_step(pool, &at) {
+            at = step.to.clone();
+            tops.push(step);
+            if tops.len() > 16 {
+                break;
             }
         }
-        let mut kept: Vec<Rc<Term>> = Vec::new();
-        for arg in flat {
-            if arg.is_bool_true() == identity && (arg.is_bool_true() || arg.is_bool_false()) {
-                continue;
-            }
-            if arg.is_bool_true() == absorbing && (arg.is_bool_true() || arg.is_bool_false()) {
-                return pool.add(Term::new_bool(absorbing));
-            }
-            kept.push(arg);
-        }
-        kept.sort_unstable_by_key(Rc::as_ptr);
-        kept.dedup();
-        // `p` and `(not p)` together make the absorbing element, and so do
-        // two bounds on one polynomial that are inconsistent (under `and`) or
-        // that cover every value (under `or`).
-        let negated: std::collections::HashSet<usize> = kept
-            .iter()
-            .filter_map(|arg| match arg.as_ref() {
-                Term::Op(Operator::Not, inner) => Some(Rc::as_ptr(&inner[0]) as *const () as usize),
-                _ => None,
-            })
-            .collect();
-        let mut bounds: HashMap<usize, (bool, Vec<(Operator, Rational)>)> = HashMap::new();
-        for arg in &kept {
-            if let Some((rel, poly, value)) = bound_parts(arg) {
-                let key = Rc::as_ptr(poly) as *const () as usize;
-                let entry = match bounds.get_mut(&key) {
-                    Some(entry) => entry,
-                    None => {
-                        let integer = self.arith_sort(pool, poly) == Some(ArithSort::Int);
-                        bounds.entry(key).or_insert((integer, Vec::new()))
-                    }
-                };
-                entry.1.push((rel, value));
-            }
-        }
-        let under_and = op == Operator::And;
-        let complemented = |x: &Rc<Term>| -> bool {
-            let literal = match x.as_ref() {
-                Term::Op(Operator::Not, inner) => {
-                    kept.binary_search_by_key(&Rc::as_ptr(&inner[0]), Rc::as_ptr).is_ok()
-                }
-                _ => negated.contains(&(Rc::as_ptr(x) as *const () as usize)),
-            };
-            if literal {
-                return true;
-            }
-            // A bound or a point against the bounds kept on its polynomial.
-            let (rel, poly, value) = match x.as_ref() {
-                Term::Op(Operator::Not, inner) => match bound_parts(&inner[0]) {
-                    Some((Operator::Equals, poly, value)) => (Operator::Distinct, poly, value),
-                    _ => return false,
-                },
-                _ => match bound_parts(x) {
-                    Some(parts) => parts,
-                    None => return false,
-                },
-            };
-            let Some((integer, others)) = bounds.get(&(Rc::as_ptr(poly) as *const () as usize))
-            else {
-                return false;
-            };
-            others.iter().any(|(other, bound)| {
-                if under_and {
-                    bounds_exclude(*integer, rel, &value, *other, bound)
-                } else {
-                    bounds_cover(*integer, rel, &value, *other, bound)
-                }
-            })
+        // 3. The result of a top step may have arguments that are not normal
+        //    (a `distinct` expands to equalities), so it is normalized again.
+        let (tail, result) = if tops.is_empty() {
+            (None, at)
+        } else {
+            let normal = self.normalize(pool, &at);
+            if normal == at { (None, at) } else { (Some(at), normal) }
         };
-        if kept.iter().any(|arg| {
-            matches!(arg.as_ref(), Term::Op(Operator::Not, _)) && complemented(arg)
-        }) {
-            return pool.add(Term::new_bool(absorbing));
-        }
-        // So does an argument of the dual connective whose every argument is
-        // complemented here: `(and (or p q) (not p) (not q))` is false.
-        let dual = if op == Operator::And { Operator::Or } else { Operator::And };
-        if kept.iter().any(|arg| match arg.as_ref() {
-            Term::Op(inner_op, inner) if *inner_op == dual => inner.iter().all(complemented),
-            _ => false,
-        }) {
-            return pool.add(Term::new_bool(absorbing));
-        }
-        // A member of such an argument that is complemented here is redundant
-        // in it: `(or p (and (not p) q))` is `(or p q)`.
-        let filtered: Vec<Option<Vec<Rc<Term>>>> = kept
-            .iter()
-            .map(|arg| match arg.as_ref() {
-                Term::Op(inner_op, inner) if *inner_op == dual => {
-                    let rest: Vec<Rc<Term>> =
-                        inner.iter().filter(|m| !complemented(m)).cloned().collect();
-                    (rest.len() < inner.len()).then_some(rest)
-                }
-                _ => None,
-            })
-            .collect();
-        if filtered.iter().any(Option::is_some) {
-            let mut rebuilt = Vec::with_capacity(kept.len());
-            for (arg, rest) in kept.iter().zip(filtered) {
-                match rest {
-                    Some(rest) => rebuilt.push(self.normalize_aci(pool, dual, rest)),
-                    None => rebuilt.push(arg.clone()),
-                }
-            }
-            return self.normalize_aci(pool, op, rebuilt);
-        }
-        // Two bounds on one polynomial that make an equality (or, in a
-        // disjunction, a disequality) are that: `(and (<= P c) (>= P c))` is
-        // `(= P c)`, which meets veriT's `la_rw_eq` from the other side.
-        if let Some(merged) = self.merge_bounds(pool, op, &kept) {
-            return self.normalize_aci(pool, op, merged);
-        }
-        match kept.len() {
-            0 => pool.add(Term::new_bool(identity)),
-            1 => kept.pop().unwrap(),
-            _ => pool.add(Term::Op(op, kept)),
-        }
+        Derivation { cong, tops, tail, result }
     }
 
-    /// `args` with the bounds on each polynomial combined: under `and` only the
-    /// tightest lower and upper bound stay, an empty interval is `false` and a
-    /// point interval is the equality; under `or` only the weakest of each
-    /// stay, two half-lines that cover everything are `true` and two that
-    /// leave out one point are its disequality (the inverse of veriT's
-    /// `la_rw_eq`).  `None` when nothing changes.  Bounds are in normal form,
-    /// `(rel P c)` with `c` a constant; Int bounds are never strict.
-    fn merge_bounds(
-        &mut self,
-        pool: &mut PrimitivePool,
-        op: Operator,
-        args: &[Rc<Term>],
-    ) -> Option<Vec<Rc<Term>>> {
+    /// One rule applied at the top of `term`, whose arguments are normal.
+    fn top_step(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Option<TopStep> {
         use Operator::*;
-        // (index, strict, value)
-        type Bound = (usize, bool, Rational);
-        struct Bounds {
-            poly: Rc<Term>,
-            lower: Vec<Bound>,
-            upper: Vec<Bound>,
-        }
-        let mut by_poly: IndexMap<usize, Bounds> = IndexMap::new();
-        for (index, arg) in args.iter().enumerate() {
-            let Term::Op(rel @ (LessThan | LessEq | GreaterThan | GreaterEq), rel_args) =
-                arg.as_ref()
-            else {
-                continue;
-            };
-            if rel_args.len() != 2 {
-                continue;
-            }
-            let Some(value) = rel_args[1].as_signed_number() else { continue };
-            let entry = by_poly
-                .entry(Rc::as_ptr(&rel_args[0]) as *const () as usize)
-                .or_insert_with(|| Bounds {
-                    poly: rel_args[0].clone(),
-                    lower: Vec::new(),
-                    upper: Vec::new(),
-                });
-            let strict = matches!(rel, LessThan | GreaterThan);
-            match rel {
-                LessThan | LessEq => entry.upper.push((index, strict, value)),
-                _ => entry.lower.push((index, strict, value)),
-            }
-        }
-        let mut removed = vec![false; args.len()];
-        let mut added: Vec<Rc<Term>> = Vec::new();
-        let mut changed = false;
-        for bounds in by_poly.into_values() {
-            if bounds.lower.len() + bounds.upper.len() < 2 {
-                continue;
-            }
-            let Some(sort) = self.arith_sort(pool, &bounds.poly) else { continue };
-            let integer = sort == ArithSort::Int;
-            // Under `and` the tightest bounds: the least upper (strict first at
-            // a tie) and the greatest lower; under `or` the weakest: the
-            // greatest upper (non-strict first) and the least lower.
-            let tighter = |a: &Bound, b: &Bound, upper: bool| -> bool {
-                let (av, bv) = (&a.2, &b.2);
-                if av != bv {
-                    (av < bv) == upper
-                } else {
-                    a.1 && !b.1
-                }
-            };
-            let pick = |list: &[Bound], upper: bool| -> Option<Bound> {
-                let mut best: Option<&Bound> = None;
-                for bound in list {
-                    let better = match best {
-                        None => true,
-                        Some(current) => {
-                            let a_tighter = tighter(bound, current, upper);
-                            if op == And { a_tighter } else { !a_tighter && (bound.2 != current.2 || bound.1 != current.1) }
-                        }
-                    };
-                    if better {
-                        best = Some(bound);
-                    }
-                }
-                best.cloned()
-            };
-            let upper = pick(&bounds.upper, true);
-            let lower = pick(&bounds.lower, false);
-            let keep: Vec<usize> = upper.iter().chain(lower.iter()).map(|b| b.0).collect();
-            for bound in bounds.upper.iter().chain(bounds.lower.iter()) {
-                if !keep.contains(&bound.0) {
-                    removed[bound.0] = true;
-                    changed = true;
-                }
-            }
-            let (Some(upper), Some(lower)) = (upper, lower) else { continue };
-            let (up, low) = (&upper.2, &lower.2);
-            let point = |this: &Self, pool: &mut PrimitivePool, c: &Rational| {
-                let constant = this.constant_term(pool, c, sort);
-                pool.add(Term::Op(Equals, vec![bounds.poly.clone(), constant]))
-            };
-            let replacement = if op == And {
-                // `P <= up` and `P >= low`
-                if low > up || (low == up && (upper.1 || lower.1)) {
-                    Some(pool.add(Term::new_bool(false)))
-                } else if low == up {
-                    Some(point(self, pool, low))
-                } else {
-                    None
-                }
-            } else {
-                // `P <= up` or `P >= low`: everything when the half-lines meet
-                let covers = if integer {
-                    *low <= up.clone() + Rational::from(1)
-                } else {
-                    low < up || (low == up && !(upper.1 && lower.1))
-                };
-                if covers {
-                    Some(pool.add(Term::new_bool(true)))
-                } else if integer && *low == up.clone() + Rational::from(2) {
-                    let equality = point(self, pool, &(up.clone() + Rational::from(1)));
-                    Some(pool.add(Term::Op(Not, vec![equality])))
-                } else if !integer && low == up {
-                    let equality = point(self, pool, low);
-                    Some(pool.add(Term::Op(Not, vec![equality])))
-                } else {
-                    None
-                }
-            };
-            if let Some(term) = replacement {
-                removed[upper.0] = true;
-                removed[lower.0] = true;
-                added.push(term);
-                changed = true;
-            }
-        }
-        if !changed {
+        let Term::Op(op, args) = term.as_ref() else {
             return None;
+        };
+        let step = |rule, to: Rc<Term>| {
+            (to != *term).then(|| TopStep { rule, from: term.clone(), to, premise: None })
+        };
+        // `evaluate`: a ground term is its value.
+        if args.iter().all(|a| Value::from_term(a).is_some()) {
+            let value = term.evaluate(pool);
+            if value != *term {
+                return step("evaluate", value);
+            }
         }
-        let mut result: Vec<Rc<Term>> = args
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| !removed[*index])
-            .map(|(_, arg)| arg.clone())
-            .collect();
-        result.extend(added);
-        Some(result)
-    }
-
-    /// The sort a relation between `a` and `b` is normalized in: Real as soon as one side is
-    /// Real, since under Int/Real subtyping an integer numeral may stand on either side.
-    fn relation_sort(
-        &self,
-        pool: &mut PrimitivePool,
-        a: &Rc<Term>,
-        b: &Rc<Term>,
-    ) -> Option<ArithSort> {
-        match (self.arith_sort(pool, a)?, self.arith_sort(pool, b)?) {
-            (ArithSort::Int, ArithSort::Int) => Some(ArithSort::Int),
-            _ => Some(ArithSort::Real),
-        }
-    }
-
-    fn arith_sort(&self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Option<ArithSort> {
-        match pool.sort(term).as_ref() {
-            Sort::Int => Some(ArithSort::Int),
-            Sort::Real => Some(ArithSort::Real),
+        match op {
+            Add | Sub | Mult | RealDiv | ToReal => {
+                let sort = arith_sort(pool, term)?;
+                let poly = Polynomial::from_term(term);
+                let canonical = self.term_of_polynomial(pool, &poly, sort);
+                step("poly_simp", canonical)
+            }
+            LessThan | LessEq | GreaterThan | GreaterEq | Equals if args.len() == 2 => {
+                let sort = match (arith_sort(pool, &args[0])?, arith_sort(pool, &args[1])?) {
+                    (ArithSort::Int, ArithSort::Int) => ArithSort::Int,
+                    _ => ArithSort::Real,
+                };
+                self.relation_step(pool, term, *op, &args[0], &args[1], sort)
+            }
+            Distinct => step("distinct_elim", self.distinct_expansion(pool, args)),
+            _ if is_aci(*op) => step("aci_simp", self.aci_canonical(pool, *op, args)),
             _ => None,
         }
     }
 
-    /// The polynomial of an arithmetic term whose subterms are already in
-    /// normal form.
-    fn polynomial(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Polynomial {
-        if let Some(value) = term.as_signed_number() {
-            return Polynomial::constant(value);
-        }
-        match term.as_ref() {
-            Term::Op(Operator::Add, args) => {
-                let mut sum = Polynomial::default();
-                for arg in args {
-                    sum.add(&self.polynomial(pool, arg));
-                }
-                sum
-            }
-            Term::Op(Operator::Sub, args) if args.len() == 1 => {
-                let mut poly = self.polynomial(pool, &args[0]);
-                poly.scale(&Rational::from(-1));
-                poly
-            }
-            Term::Op(Operator::Sub, args) => {
-                let mut result = self.polynomial(pool, &args[0]);
-                for arg in &args[1..] {
-                    let mut poly = self.polynomial(pool, arg);
-                    poly.scale(&Rational::from(-1));
-                    result.add(&poly);
-                }
-                result
-            }
-            Term::Op(Operator::Mult, args) => {
-                let mut product = Polynomial::constant(Rational::from(1));
-                for arg in args {
-                    product = product.mul(&self.polynomial(pool, arg));
-                }
-                product
-            }
-            Term::Op(Operator::RealDiv, args) if args.len() == 2 => {
-                match args[1].as_signed_number() {
-                    Some(divisor) if divisor != 0 => {
-                        let mut poly = self.polynomial(pool, &args[0]);
-                        poly.scale(&(Rational::from(1) / divisor));
-                        poly
+    /// `(op x1 x2)` as `(op P c)`: the difference of the sides scaled by a
+    /// positive factor (integral coefficients of gcd 1 for Int, leading
+    /// coefficient of absolute value 1 for Real), its constant moved to the
+    /// right.  The `poly_simp` premise `(= (* s (- x1 x2)) (* 1 (- P c)))`
+    /// is what `poly_simp_rel` needs.
+    fn relation_step(
+        &mut self,
+        pool: &mut PrimitivePool,
+        term: &Rc<Term>,
+        op: Operator,
+        x1: &Rc<Term>,
+        x2: &Rc<Term>,
+        sort: ArithSort,
+    ) -> Option<TopStep> {
+        let difference = Polynomial::from_term(x1).sub(Polynomial::from_term(x2));
+        let constant = difference.1.clone();
+        let mut poly = difference;
+        poly.1 = Rational::new();
+        let scale = if poly.0.is_empty() {
+            Rational::from(1)
+        } else {
+            match sort {
+                ArithSort::Int => {
+                    let mut lcm = Integer::from(1);
+                    for c in poly.0.values() {
+                        lcm.lcm_mut(c.denom());
                     }
-                    _ => Polynomial::atom(term.clone()),
+                    let mut gcd = Integer::from(0);
+                    for c in poly.0.values() {
+                        let scaled = Rational::from(c.clone() * Rational::from(&lcm));
+                        gcd.gcd_mut(scaled.numer());
+                    }
+                    Rational::from((lcm, gcd))
+                }
+                ArithSort::Real => {
+                    let (_, leading) = Self::sorted_monomials(&poly)[0];
+                    Rational::from(1) / leading.clone().abs()
                 }
             }
-            Term::Op(Operator::ToReal, args) if args.len() == 1 => {
-                // `to_real` distributes over the sum: constants convert,
-                // atoms are wrapped.
-                let inner = self.polynomial(pool, &args[0]);
-                let mut result = Polynomial::default();
-                for (monomial, coefficient) in &inner.0 {
-                    let atoms: Vec<Rc<Term>> = monomial
-                        .0
-                        .iter()
-                        .map(|atom| pool.add(Term::Op(Operator::ToReal, vec![atom.clone()])))
-                        .collect();
-                    let mut atoms = atoms;
-                    atoms.sort_unstable_by_key(Rc::as_ptr);
-                    result.add_monomial(Monomial(atoms), coefficient.clone());
-                }
-                result
-            }
-            _ => Polynomial::atom(term.clone()),
+        };
+        // An equality may be scaled by a negative factor (`poly_simp_rel`
+        // allows it for `=` only), which fixes its orientation: a positive
+        // leading coefficient.
+        let scale = if op == Operator::Equals
+            && !poly.0.is_empty()
+            && *Self::sorted_monomials(&poly)[0].1 < 0
+        {
+            -scale
+        } else {
+            scale
+        };
+        for c in poly.0.values_mut() {
+            *c *= &scale;
         }
+        let y1 = self.term_of_polynomial(pool, &poly, sort);
+        let y2 = self.constant_term(pool, &Rational::from(-constant * &scale), sort);
+        if y1 == *x1 && y2 == *x2 {
+            return None;
+        }
+        let to = pool.add(Term::Op(op, vec![y1.clone(), y2.clone()]));
+        // the premise's sides, `(* s (- x1 x2))` and `(* 1 (- y1 y2))`
+        let s = self.constant_term(pool, &scale, sort);
+        let one = self.constant_term(pool, &Rational::from(1), sort);
+        let left = pool.add(Term::Op(Operator::Sub, vec![x1.clone(), x2.clone()]));
+        let left = pool.add(Term::Op(Operator::Mult, vec![s, left]));
+        let right = pool.add(Term::Op(Operator::Sub, vec![y1, y2]));
+        let right = pool.add(Term::Op(Operator::Mult, vec![one, right]));
+        Some(TopStep {
+            rule: "poly_simp_rel",
+            from: term.clone(),
+            to,
+            premise: Some((left, right)),
+        })
+    }
+
+    /// `distinct_elim`'s expansion: the disequality of two arguments, the
+    /// conjunction of the pairwise disequalities of more (`false` for more
+    /// than two Booleans).
+    fn distinct_expansion(&mut self, pool: &mut PrimitivePool, args: &[Rc<Term>]) -> Rc<Term> {
+        let disequality = |pool: &mut PrimitivePool, a: &Rc<Term>, b: &Rc<Term>| {
+            let equality = pool.add(Term::Op(Operator::Equals, vec![a.clone(), b.clone()]));
+            pool.add(Term::Op(Operator::Not, vec![equality]))
+        };
+        match args {
+            [a, b] => disequality(pool, a, b),
+            _ if pool.sort(&args[0]).as_ref() == &Sort::Bool => pool.add(Term::new_bool(false)),
+            _ => {
+                let mut conjuncts = Vec::with_capacity(args.len() * (args.len() - 1) / 2);
+                for i in 0..args.len() {
+                    for j in i + 1..args.len() {
+                        conjuncts.push(disequality(pool, &args[i], &args[j]));
+                    }
+                }
+                pool.add(Term::Op(Operator::And, conjuncts))
+            }
+        }
+    }
+
+    /// `aci_simp`'s canonical form: flattened, without the identity element,
+    /// deduplicated when the operator is idempotent, in pointer order.
+    fn aci_canonical(&mut self, pool: &mut PrimitivePool, op: Operator, args: &[Rc<Term>]) -> Rc<Term> {
+        let identity = identity_of(pool, op, &args[0]);
+        let mut flat: Vec<Rc<Term>> = Vec::new();
+        for arg in args {
+            match arg.as_ref() {
+                Term::Op(inner, inner_args) if *inner == op => flat.extend(inner_args.iter().cloned()),
+                _ => flat.push(arg.clone()),
+            }
+        }
+        if let Some(identity) = &identity {
+            flat.retain(|a| a != identity);
+        }
+        if is_idempotent(op) {
+            let set: IndexSet<Rc<Term>> = flat.into_iter().collect();
+            flat = set.into_iter().collect();
+        }
+        flat.sort_by_key(Rc::as_ptr);
+        match flat.len() {
+            0 => identity.unwrap_or_else(|| pool.add(Term::Op(op, Vec::new()))),
+            1 => flat.pop().unwrap(),
+            _ => pool.add(Term::Op(op, flat)),
+        }
+    }
+
+    /// The monomials in canonical order: fewer atoms first, then by the
+    /// atoms' pointers.
+    fn sorted_monomials(poly: &Polynomial) -> Vec<(&Monomial, &Rational)> {
+        let mut entries: Vec<_> = poly.0.iter().collect();
+        entries.sort_by(|(a, _), (b, _)| {
+            a.0.len()
+                .cmp(&b.0.len())
+                .then_with(|| a.0.iter().map(Rc::as_ptr).cmp(b.0.iter().map(Rc::as_ptr)))
+        });
+        entries
     }
 
     fn constant_term(&self, pool: &mut PrimitivePool, value: &Rational, sort: ArithSort) -> Rc<Term> {
@@ -740,128 +362,169 @@ impl Normalizer {
         }
     }
 
-    /// The canonical term of a polynomial: the monomials in order, each a
-    /// constant, an atom or a product `(* c a1 ... an)`, summed.
+    /// The canonical term of a polynomial: the monomials in order, each an
+    /// atom or a product `(* c a1 ... an)`, summed, the constant last.  In a
+    /// Real polynomial an Int atom is wrapped in `to_real`, which the
+    /// checker's polynomial sees through.
     fn term_of_polynomial(&self, pool: &mut PrimitivePool, poly: &Polynomial, sort: ArithSort) -> Rc<Term> {
         let mut terms: Vec<Rc<Term>> = Vec::new();
-        let mut constant: Option<Rational> = None;
-        for (monomial, coefficient) in poly.sorted() {
-            if monomial.0.is_empty() {
-                constant = Some(coefficient.clone());
-                continue;
-            }
+        for (monomial, coefficient) in Self::sorted_monomials(poly) {
             let mut factors: Vec<Rc<Term>> = Vec::new();
             if *coefficient != 1 {
                 factors.push(self.constant_term(pool, coefficient, sort));
             }
-            factors.extend(monomial.0.iter().cloned());
+            for atom in &monomial.0 {
+                let atom = if sort == ArithSort::Real && arith_sort(pool, atom) == Some(ArithSort::Int) {
+                    pool.add(Term::Op(Operator::ToReal, vec![atom.clone()]))
+                } else {
+                    atom.clone()
+                };
+                factors.push(atom);
+            }
             terms.push(if factors.len() == 1 {
                 factors.pop().unwrap()
             } else {
                 pool.add(Term::Op(Operator::Mult, factors))
             });
         }
-        if let Some(constant) = constant {
-            terms.push(self.constant_term(pool, &constant, sort));
+        if poly.1 != 0 || terms.is_empty() {
+            terms.push(self.constant_term(pool, &poly.1, sort));
         }
         match terms.len() {
-            0 => self.constant_term(pool, &Rational::new(), sort),
             1 => terms.pop().unwrap(),
             _ => pool.add(Term::Op(Operator::Add, terms)),
         }
     }
 
-    /// `(op lhs rhs)` over arithmetic terms as `(op' P c)`: the difference of
-    /// the sides as a polynomial with integral coefficients of gcd 1 (Int) or
-    /// a leading coefficient of 1 (Real), positive leading coefficient, the
-    /// constant on the right, tightened to an integer for Int.
-    fn normalize_relation(
-        &mut self,
-        pool: &mut PrimitivePool,
-        op: Operator,
-        lhs: &Rc<Term>,
-        rhs: &Rc<Term>,
-        sort: ArithSort,
-    ) -> Rc<Term> {
-        use Operator::*;
-        let mut difference = self.polynomial(pool, lhs);
-        let mut right = self.polynomial(pool, rhs);
-        right.scale(&Rational::from(-1));
-        difference.add(&right);
-        if difference.is_constant() {
-            let value = difference.constant_part();
-            let holds = match op {
-                LessThan => value < 0,
-                LessEq => value <= 0,
-                GreaterThan => value > 0,
-                GreaterEq => value >= 0,
-                _ => value == 0,
-            };
-            return pool.add(Term::new_bool(holds));
+    /// The certificate of `(= lhs rhs)` for a hole whose sides have the same
+    /// normal form: Alethe steps numbered `{id}.1`, `{id}.2`, ... whose last
+    /// step concludes the equality.  `None` when the sides differ.
+    pub fn certificate(&mut self, pool: &mut PrimitivePool, id: &str, lhs: &Rc<Term>, rhs: &Rc<Term>) -> Option<Vec<String>> {
+        let left = self.normalize(pool, lhs);
+        let right = self.normalize(pool, rhs);
+        if left != right {
+            return None;
         }
-        let mut op = op;
-        let constant = difference.constant_part();
-        difference.add_monomial(Monomial::one(), -constant.clone());
-        let sorted = difference.sorted();
-        let leading = sorted[0].1.clone();
-        let scale = match sort {
-            ArithSort::Int => {
-                let mut lcm = Integer::from(1);
-                for (_, c) in &sorted {
-                    lcm.lcm_mut(c.denom());
-                }
-                let mut gcd = Integer::from(0);
-                for (_, c) in &sorted {
-                    let scaled = Rational::from(c.clone() * Rational::from(&lcm));
-                    gcd.gcd_mut(scaled.numer());
-                }
-                Rational::from((lcm, gcd))
+        let mut emitter = Emitter { prefix: id.to_owned(), steps: Vec::new(), memo: HashMap::new() };
+        let left_step = self.emit(pool, &mut emitter, lhs);
+        let right_step = self.emit(pool, &mut emitter, rhs);
+        match (left_step, right_step) {
+            (None, None) => {
+                emitter.emit(pool, lhs, rhs, "refl", &[]);
             }
-            ArithSort::Real => Rational::from(1) / leading.clone().abs(),
+            (Some(_), None) => {}
+            (None, Some(r)) => {
+                emitter.emit(pool, lhs, rhs, "symm", &[r]);
+            }
+            (Some(l), Some(r)) => {
+                let flipped = emitter.emit(pool, &left, rhs, "symm", &[r]);
+                emitter.emit(pool, lhs, rhs, "trans", &[l, flipped]);
+            }
+        }
+        Some(emitter.steps)
+    }
+
+    /// The steps bridging `lhs` and `rhs` to their normal forms and egglog's
+    /// proof of the normal forms' equality (`inner`, steps concluding
+    /// `(= left right)` numbered from `{id}.1`): the combined certificate,
+    /// concluding `(= lhs rhs)`.
+    pub fn bridge(&mut self, pool: &mut PrimitivePool, id: &str, lhs: &Rc<Term>, rhs: &Rc<Term>, inner: Vec<String>) -> Vec<String> {
+        let left = self.normalize(pool, lhs);
+        let right = self.normalize(pool, rhs);
+        let inner_last = format!("{id}.{}", inner.len());
+        let mut emitter = Emitter { prefix: id.to_owned(), steps: inner, memo: HashMap::new() };
+        let mut chain: Vec<String> = Vec::new();
+        if let Some(l) = self.emit(pool, &mut emitter, lhs) {
+            chain.push(l);
+        }
+        chain.push(inner_last);
+        if let Some(r) = self.emit(pool, &mut emitter, rhs) {
+            chain.push(emitter.emit(pool, &right, rhs, "symm", &[r]));
+        }
+        if chain.len() > 1 {
+            emitter.emit(pool, lhs, rhs, "trans", &chain);
+        }
+        let _ = left;
+        emitter.steps
+    }
+
+    /// Emits the derivation of `term`'s normal form and returns the id of
+    /// the step concluding `(= term normal)`, or `None` when it is normal.
+    fn emit(&mut self, pool: &mut PrimitivePool, emitter: &mut Emitter, term: &Rc<Term>) -> Option<String> {
+        if let Some(known) = emitter.memo.get(term) {
+            return known.clone();
+        }
+        let derivation = match self.derivations.get(term) {
+            Some(d) => d.clone(),
+            None => {
+                self.normalize(pool, term);
+                self.derivations[term].clone()
+            }
         };
-        let scale = if leading < 0 { -scale } else { scale };
-        if leading < 0 {
-            op = match op {
-                LessThan => GreaterThan,
-                LessEq => GreaterEq,
-                GreaterThan => LessThan,
-                GreaterEq => LessEq,
-                other => other,
-            };
-        }
-        difference.scale(&scale);
-        // `P + k op 0` is `P op -k`.
-        let mut bound = Rational::from(-constant * &scale);
-        if sort == ArithSort::Int && !bound.is_integer() {
-            match op {
-                GreaterEq => bound = bound.ceil(),
-                LessEq => bound = bound.floor(),
-                GreaterThan => {
-                    op = GreaterEq;
-                    bound = bound.floor() + 1;
+        let result = derivation.result.clone();
+        let step = if result == *term {
+            None
+        } else {
+            let mut chain: Vec<String> = Vec::new();
+            let mut at = term.clone();
+            if let Some(congruent) = &derivation.cong {
+                let (Term::Op(_, args) | Term::App(_, args)) = term.as_ref() else {
+                    unreachable!("a cong derivation is over an application")
+                };
+                let (Term::Op(_, normal) | Term::App(_, normal)) = congruent.as_ref() else {
+                    unreachable!()
+                };
+                let mut premises = Vec::new();
+                for (arg, its_normal) in args.iter().zip(normal.iter()) {
+                    if arg != its_normal {
+                        premises.push(self.emit(pool, emitter, arg).expect("a changed argument has a derivation"));
+                    }
                 }
-                LessThan => {
-                    op = LessEq;
-                    bound = bound.ceil() - 1;
-                }
-                _ => return pool.add(Term::new_bool(false)),
+                chain.push(emitter.emit(pool, term, congruent, "cong", &premises));
+                at = congruent.clone();
             }
-        } else if sort == ArithSort::Int {
-            match op {
-                GreaterThan => {
-                    op = GreaterEq;
-                    bound += 1;
-                }
-                LessThan => {
-                    op = LessEq;
-                    bound -= 1;
-                }
-                _ => {}
+            for top in &derivation.tops {
+                let premises = match &top.premise {
+                    Some((left, right)) => vec![emitter.emit(pool, left, right, "poly_simp", &[])],
+                    None => Vec::new(),
+                };
+                chain.push(emitter.emit(pool, &top.from, &top.to, top.rule, &premises));
+                at = top.to.clone();
             }
-        }
-        let left = self.term_of_polynomial(pool, &difference, sort);
-        let right = self.constant_term(pool, &bound, sort);
-        pool.add(Term::Op(op, vec![left, right]))
+            if let Some(tail) = &derivation.tail {
+                if let Some(id) = self.emit(pool, emitter, tail) {
+                    chain.push(id);
+                }
+            }
+            let _ = at;
+            Some(if chain.len() == 1 {
+                chain.pop().unwrap()
+            } else {
+                emitter.emit(pool, term, &result, "trans", &chain)
+            })
+        };
+        emitter.memo.insert(term.clone(), step.clone());
+        step
+    }
+}
+
+/// Numbered Alethe steps under a hole's id.
+struct Emitter {
+    prefix: String,
+    steps: Vec<String>,
+    memo: HashMap<Rc<Term>, Option<String>>,
+}
+
+impl Emitter {
+    fn emit(&mut self, _pool: &mut PrimitivePool, lhs: &Rc<Term>, rhs: &Rc<Term>, rule: &str, premises: &[String]) -> String {
+        let id = format!("{}.{}", self.prefix, self.steps.len() + 1);
+        let premises = if premises.is_empty() {
+            String::new()
+        } else {
+            format!(" :premises ({})", premises.join(" "))
+        };
+        self.steps.push(format!("(step {id} (cl (= {lhs:#} {rhs:#})) :rule {rule}{premises})"));
+        id
     }
 }
 
@@ -870,12 +533,13 @@ mod tests {
     use super::*;
     use crate::parser;
 
-    /// Normalizes `lhs` and `rhs` parsed against `problem`, returning
-    /// whether they coincide and their printed normal forms.
-    fn same(problem: &str, lhs: &str, rhs: &str) -> (bool, String, String) {
+    const INTS: &str = "(declare-const x Int) (declare-const y Int) (declare-const z Int) (declare-const p Bool) (declare-const q Bool) (declare-fun f (Int) Int)";
+    const REALS: &str = "(declare-const a Real) (declare-const b Real) (declare-const x Int)";
+
+    fn parse(problem: &str, lhs: &str, rhs: &str) -> (crate::ast::Problem, Rc<Term>, Rc<Term>, PrimitivePool) {
         let problem_text = format!("{problem}\n(assert (= {lhs} {rhs}))\n");
         let proof = format!("(assume h0 (= {lhs} {rhs}))\n");
-        let (_, proof, _, mut pool) = parser::parse_instance(
+        let (problem, proof, _, pool) = parser::parse_instance(
             parser::Source::new(std::path::Path::new("<p>"), &problem_text),
             parser::Source::new(std::path::Path::new("<a>"), &proof),
             None,
@@ -886,78 +550,76 @@ mod tests {
             panic!("expected an assume");
         };
         let (_, l, r) = crate::rare::util::get_equational_terms(term).expect("equality");
-        let (l, r) = (l.clone(), r.clone());
+        (problem, l.clone(), r.clone(), pool)
+    }
+
+    /// Normalizes `lhs` and `rhs` parsed against `problem`, returning
+    /// whether they coincide and their printed normal forms.
+    fn same(problem: &str, lhs: &str, rhs: &str) -> (bool, String, String) {
+        let (_, l, r, mut pool) = parse(problem, lhs, rhs);
         let mut normalizer = Normalizer::new();
         let nl = normalizer.normalize(&mut pool, &l);
         let nr = normalizer.normalize(&mut pool, &r);
         (nl == nr, format!("{nl:#}"), format!("{nr:#}"))
     }
 
-    const INTS: &str = "(declare-const x Int) (declare-const y Int) (declare-const z Int) (declare-const p Bool) (declare-const q Bool) (declare-const z_bool Bool)";
-    const REALS: &str = "(declare-const a Real) (declare-const b Real) (declare-const x Int)";
+    /// The certificate of `(= lhs rhs)`, checked by the checker.
+    fn certified(problem: &str, lhs: &str, rhs: &str) -> Result<usize, String> {
+        let (problem_ast, l, r, mut pool) = parse(problem, lhs, rhs);
+        let mut normalizer = Normalizer::new();
+        let steps = normalizer
+            .certificate(&mut pool, "t1", &l, &r)
+            .ok_or_else(|| "sides differ".to_owned())?;
+        let negated = format!("(not (= {lhs} {rhs}))");
+        let proof = format!(
+            "(assume t1.h {negated})\n{}\n(step t1.{} (cl) :rule resolution :premises (t1.{} t1.h))\n",
+            steps.join("\n"),
+            steps.len() + 1,
+            steps.len()
+        );
+        let problem_text = format!("{problem}\n(assert {negated})\n");
+        let (problem_parsed, proof_parsed, _) = parser::parse_instance_with_pool(
+            parser::Source::new(std::path::Path::new("<p>"), &problem_text),
+            parser::Source::new(std::path::Path::new("<c>"), &proof),
+            None,
+            parser::Config::new().allow_int_real_subtyping(true),
+            &mut pool,
+        )
+        .map_err(|e| format!("certificate does not parse: {e}\n{proof}"))?;
+        let _ = problem_ast;
+        let rules = crate::ast::rare_rules::Rules::default();
+        let mut checker = crate::checker::ProofChecker::new(&mut pool, &rules, crate::checker::Config::new());
+        match checker.check(&problem_parsed, &proof_parsed) {
+            Ok(_) => Ok(steps.len()),
+            Err(e) => Err(format!("certificate rejected: {e}\n{proof}")),
+        }
+    }
 
     #[test]
     fn equivalent_sides_coincide() {
         for (problem, lhs, rhs) in [
-            (INTS, "(not (not (>= (+ x (* -1 y)) 1)))", "(>= (+ x (* -1 y)) 1)"),
             (INTS, "(* 4 256)", "1024"),
             (INTS, "(+ 0 1536 -1024 -1024 -512 -512 512 512 512)", "0"),
             (INTS, "(+ x y x)", "(+ (* 2 x) y)"),
             (INTS, "(- x y)", "(+ x (* (- 1) y))"),
             (INTS, "(* (+ x 1) (+ x 1))", "(+ (* x x) (* 2 x) 1)"),
-            (INTS, "(< x y)", "(>= (+ y (* -1 x)) 1)"),
-            (INTS, "(> (* 2 x) 3)", "(>= x 2)"),
-            (INTS, "(<= (* 2 x) 3)", "(<= x 1)"),
-            (INTS, "(= (* 2 x) 3)", "false"),
-            (INTS, "(>= (* -2 x) (* -4 y))", "(<= (+ x (* -2 y)) 0)"),
+            (INTS, "(< x y)", "(< (- x y) 0)"),
+            (INTS, "(> (* 2 x) 3)", "(> (* 2 x) 3)"),
+            (INTS, "(>= (* -2 x) (* -4 y))", "(>= (+ (* -1 x) (* 2 y)) 0)"),
+            (INTS, "(= x y)", "(= (- y x) 0)"),
             (INTS, "(and p true q p)", "(and q p)"),
-            (INTS, "(or p (not p))", "true"),
-            (INTS, "(and p (not p))", "false"),
-            (INTS, "(=> p q)", "(or (not p) q)"),
-            (INTS, "(ite true x y)", "x"),
-            (INTS, "(= x x)", "true"),
+            (INTS, "(or p (or q p) false)", "(or q p)"),
+            (INTS, "(and (and p q) (and q p))", "(and p q)"),
             (INTS, "(distinct x y)", "(not (= x y))"),
             (INTS, "(distinct x y z)", "(and (not (= y x)) (not (= z x)) (not (= z y)))"),
-            (INTS, "(distinct x y x)", "false"),
-            (INTS, "(= p true)", "p"),
-            (INTS, "(= false p)", "(not p)"),
-            (INTS, "(not (=> p q))", "(and p (not q))"),
-            (INTS, "(not (and p (not q)))", "(or (not p) q)"),
-            (INTS, "(not (=> (and p q) (=> (or p q) (or p q))))", "false"),
-            (INTS, "(and (or p q) (not p) (not q))", "false"),
-            (INTS, "(or (and p q) (not p) (not q))", "true"),
-            (INTS, "(not (<= x 3))", "(>= x 4)"),
-            (INTS, "(not (< x y))", "(>= x y)"),
-            (REALS, "(not (<= a 3.0))", "(> a 3.0)"),
-            (INTS, "(and (<= x y) (<= y x))", "(= x y)"),
-            (INTS, "(and p (<= (+ x 1) y) (<= y (+ x 1)) q)", "(and p q (= y (+ x 1)))"),
-            (INTS, "(or (< x y) (< y x))", "(not (= x y))"),
-            (INTS, "(not (and (<= x y) (<= y x)))", "(distinct x y)"),
-            (REALS, "(and (<= a (* 2.0 b)) (<= (* 2.0 b) a))", "(= a (* 2.0 b))"),
-            (REALS, "(or (not (<= a b)) (not (<= b a)))", "(not (= a b))"),
-            (INTS, "(or (<= x 0) (>= x 1))", "true"),
-            (INTS, "(or (not (>= x 1)) (>= x 1) p)", "true"),
-            (INTS, "(and (<= x 0) (>= x 1))", "false"),
-            (INTS, "(and (<= x 3) (<= x 5) (>= x 1))", "(and (<= x 3) (>= x 1))"),
-            (INTS, "(not (or (not (and (>= x 1) (>= y 1))) (and (>= x 1) (>= y 1)) (not (>= z 1))))", "false"),
-            (REALS, "(or (< a 1.0) (>= a 1.0))", "true"),
-            (INTS, "(and (>= x 1) (or (<= x 0) p) (not p))", "false"),
-            (INTS, "(and (= x 2) (or (<= x 1) (>= x 3)))", "false"),
-            (INTS, "(or (not (= x 2)) (and (<= x 2) (>= x 2)))", "true"),
-            (INTS, "(or p (and (not p) q))", "(or p q)"),
-            (INTS, "(and p (or (not p) q) (or (not q) (not p) z_bool))", "(and p q z_bool)"),
-            (INTS, "(or (<= x 1) (and (>= x 5) (>= x 7)))", "(or (<= x 1) (>= x 7))"),
-            (REALS, "(or (< a 1.0) (and (>= a 1.0) (>= b 1.0)))", "(or (< a 1.0) (>= b 1.0))"),
-            (REALS, "(and (< a 1.0) (>= a 1.0))", "false"),
-            (REALS, "(and (<= a 1.0) (< a 2.0))", "(<= a 1.0)"),
-            (REALS, "(or (<= a 1.0) (< a 2.0))", "(< a 2.0)"),
+            (INTS, "(f (+ x 0))", "(f x)"),
+            (INTS, "(<= 2 3)", "true"),
+            (INTS, "(and p (<= x x))", "p"),
             (REALS, "(>= 0.0 (/ (- 1) 1024))", "true"),
             (REALS, "(* (/ 1 2) (to_real (+ x (* 2 x))))", "(* (/ 3 2) (to_real x))"),
-            (REALS, "(< (* 2.0 a) b)", "(> (+ b (* (- 2.0) a)) 0.0)"),
-            (REALS, "(= a b)", "(= (+ a (* (- 1.0) b)) 0.0)"),
+            (REALS, "(< (* 2.0 a) b)", "(< (+ a (* (- 0.5) b)) 0.0)"),
             (REALS, "(= (- 1.0) (- 1))", "true"),
-            (REALS, "(= (+ (* 500.0 a) (* (- 1) b)) (- 300))", "(and (<= (+ (* 500.0 a) (* (- 1) b)) (- 300)) (<= (- 300) (+ (* 500.0 a) (* (- 1) b))))"),
-            (REALS, "(<= 1 a)", "(>= a 1.0)"),
+            (REALS, "(<= 1 a)", "(<= (- a) (- 1.0))"),
         ] {
             let (equal, nl, nr) = same(problem, lhs, rhs);
             assert!(equal, "{lhs} and {rhs} normalize to {nl} and {nr}");
@@ -971,19 +633,42 @@ mod tests {
             (INTS, "(+ x y)", "(+ x z)"),
             (INTS, "(and p q)", "(or p q)"),
             (INTS, "(* x y)", "(* x x)"),
+            (INTS, "(and p (not p))", "false"),
+            (INTS, "(=> p q)", "(or (not p) q)"),
+            (INTS, "(not (not p))", "p"),
+            (INTS, "(= p true)", "p"),
+            (INTS, "(not (<= x 3))", "(>= x 4)"),
+            (INTS, "(and (<= x y) (<= y x))", "(= x y)"),
             (REALS, "(>= a 1.0)", "(> a 1.0)"),
-            (INTS, "(and (or p q) (not p))", "false"),
-            (INTS, "(not (and p q))", "(and (not p) (not q))"),
-            (INTS, "(and (<= x y) (<= y (+ x 1)))", "(= x y)"),
-            (INTS, "(or (<= x 2) (>= x 3))", "(not (= x 3))"),
-            (INTS, "(or (<= x 0) (>= x 2))", "true"),
-            (REALS, "(and (<= a 1.0) (< a 2.0))", "(< a 2.0)"),
-            (REALS, "(or (< a 1.0) (> a 1.0))", "true"),
-            (INTS, "(and (>= x 1) (or (<= x 1) p) (not p))", "false"),
-            (REALS, "(or (< a 1.0) (and (> a 1.0) (>= b 1.0)))", "(or (< a 1.0) (>= b 1.0))"),
         ] {
             let (equal, nl, nr) = same(problem, lhs, rhs);
             assert!(!equal, "{lhs} and {rhs} both normalize to {nl}, {nr}");
+        }
+    }
+
+    #[test]
+    fn certificates_check() {
+        for (problem, lhs, rhs) in [
+            (INTS, "(* 4 256)", "1024"),
+            (INTS, "(+ x y x)", "(+ (* 2 x) y)"),
+            (INTS, "(< x y)", "(< (- x y) 0)"),
+            (INTS, "(>= (* -2 x) (* -4 y))", "(>= (+ (* -1 x) (* 2 y)) 0)"),
+            (INTS, "(= x y)", "(= (- y x) 0)"),
+            (INTS, "(and p true q p)", "(and q p)"),
+            (INTS, "(and (and p q) (and q p))", "(and p q)"),
+            (INTS, "(distinct x y z)", "(and (not (= y x)) (not (= z x)) (not (= z y)))"),
+            (INTS, "(f (+ x 0))", "(f x)"),
+            (INTS, "(and p (<= x x))", "p"),
+            (INTS, "(or (distinct x (+ y 0)) (= (f (* 1 x)) 0))", "(or (not (= x y)) (= (f x) 0))"),
+            (INTS, "x", "x"),
+            (REALS, "(* (/ 1 2) (to_real (+ x (* 2 x))))", "(* (/ 3 2) (to_real x))"),
+            (REALS, "(< (* 2.0 a) b)", "(< (+ a (* (- 0.5) b)) 0.0)"),
+            (REALS, "(<= 1 a)", "(<= (- a) (- 1.0))"),
+        ] {
+            match certified(problem, lhs, rhs) {
+                Ok(_) => {}
+                Err(e) => panic!("{lhs} = {rhs}: {e}"),
+            }
         }
     }
 }

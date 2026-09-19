@@ -465,9 +465,13 @@ impl<'e> Elaborator<'e> {
         // equality of the normal forms.
         let mut prenormalized: HashMap<String, (Result<Vec<String>, String>, Duration)> =
             HashMap::new();
-        if self.config.hole_check_only && self.config.hole_prenormalize {
+        // In the elaboration pass the certificate of a closed hole replaces
+        // it, and a rewritten goal's proof from egglog is bridged back to
+        // the original sides once it is in.
+        let mut normalizer = prenorm::Normalizer::new();
+        let mut rewritten_goals: HashMap<String, (Rc<Term>, Rc<Term>)> = HashMap::new();
+        if self.config.hole_prenormalize {
             let started = Instant::now();
-            let mut normalizer = prenorm::Normalizer::new();
             let mut rewritten = 0;
             for (_, step) in holes.iter_mut() {
                 let Some(conclusion) = step.clause.first().cloned() else {
@@ -483,12 +487,22 @@ impl<'e> Elaborator<'e> {
                 let right = normalizer.normalize(self.pool, &rhs);
                 if left == right {
                     log::debug!("hole {}: closed by normalization to {:#}", step.id, left);
-                    prenormalized.insert(step.id.clone(), (Ok(Vec::new()), Duration::ZERO));
+                    let steps = if self.config.hole_check_only {
+                        Vec::new()
+                    } else {
+                        normalizer
+                            .certificate(self.pool, &step.id, &lhs, &rhs)
+                            .unwrap_or_default()
+                    };
+                    prenormalized.insert(step.id.clone(), (Ok(steps), Duration::ZERO));
                 } else if left != lhs || right != rhs {
                     step.clause = vec![
                         self.pool
                             .add(Term::Op(crate::ast::Operator::Equals, vec![left, right])),
                     ];
+                    if !self.config.hole_check_only {
+                        rewritten_goals.insert(step.id.clone(), (lhs, rhs));
+                    }
                     rewritten += 1;
                 }
             }
@@ -703,6 +717,7 @@ impl<'e> Elaborator<'e> {
             self.check_holes_in_batches(&holes, &results);
             let mut results = results.into_inner().unwrap();
             results.extend(prenormalized.clone());
+            self.bridge_rewritten_goals(&mut results, &rewritten_goals, &mut normalizer);
             for (_, step) in &holes {
                 results.entry(step.id.clone()).or_insert_with(|| {
                     (
@@ -907,7 +922,28 @@ impl<'e> Elaborator<'e> {
             });
         }
         results.extend(prenormalized);
+        self.bridge_rewritten_goals(&mut results, &rewritten_goals, &mut normalizer);
         results
+    }
+
+    /// Wraps egglog's proof of a rewritten goal `(= left right)` in the
+    /// derivations of the normal forms, so the steps conclude the hole's
+    /// original equality.
+    fn bridge_rewritten_goals(
+        &mut self,
+        results: &mut HashMap<String, (Result<Vec<String>, String>, Duration)>,
+        rewritten_goals: &HashMap<String, (Rc<Term>, Rc<Term>)>,
+        normalizer: &mut prenorm::Normalizer,
+    ) {
+        for (id, (lhs, rhs)) in rewritten_goals {
+            if let Some((Ok(steps), _)) = results.get_mut(id) {
+                if steps.is_empty() {
+                    continue;
+                }
+                let inner = std::mem::take(steps);
+                *steps = normalizer.bridge(self.pool, id, lhs, rhs, inner);
+            }
+        }
     }
 
     /// See [`group_holes_into_batches`].

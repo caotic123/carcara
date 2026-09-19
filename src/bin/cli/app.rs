@@ -412,10 +412,11 @@ pub struct ElaborationOptions {
     #[clap(long, requires = "hole_check_only")]
     pub hole_reuse_subst: bool,
 
-    /// With `--hole-check-only`, normalize both sides of every hole with
-    /// Carcara's own normal forms before egglog; a hole whose sides
-    /// coincide is proved outright.
-    #[clap(long, requires = "hole_check_only")]
+    /// Normalize both sides of every hole with the procedures behind
+    /// Carcara's evaluate, poly_simp, aci_simp and distinct_elim rules before
+    /// egglog: a hole whose sides coincide is closed by the derivation
+    /// itself, the others reach egglog as the equality of the normal forms.
+    #[clap(long)]
     pub hole_prenormalize: bool,
 
     /// In the `fold` pass, the most steps a rewrite derivation folded into
