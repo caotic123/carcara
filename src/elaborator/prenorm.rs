@@ -21,11 +21,7 @@
 //! The polynomial is the checker's own (`checker::rules::polynomial`), so a
 //! `poly_simp` step the normalizer emits is one the checker accepts by
 //! construction.
-use crate::ast::{
-    Operator, Rc, Sort, Term,
-    Value,
-    pool::{PrimitivePool, TermPool},
-};
+use crate::ast::{Operator, Rc, Sort, Term, Value, pool::TermPool};
 use crate::checker::rules::polynomial::{Monomial, Polynomial};
 use indexmap::IndexSet;
 use rug::{Integer, Rational};
@@ -73,7 +69,7 @@ enum ArithSort {
     Real,
 }
 
-fn arith_sort(pool: &mut PrimitivePool, term: &Rc<Term>) -> Option<ArithSort> {
+fn arith_sort(pool: &mut dyn TermPool, term: &Rc<Term>) -> Option<ArithSort> {
     match pool.sort(term).as_ref() {
         Sort::Int => Some(ArithSort::Int),
         Sort::Real => Some(ArithSort::Real),
@@ -105,7 +101,7 @@ fn is_aci(op: Operator) -> bool {
     )
 }
 
-fn identity_of(pool: &mut PrimitivePool, op: Operator, sample: &Rc<Term>) -> Option<Rc<Term>> {
+fn identity_of(pool: &mut dyn TermPool, op: Operator, sample: &Rc<Term>) -> Option<Rc<Term>> {
     let term = match op {
         Operator::And => Term::new_bool(true),
         Operator::Or => Term::new_bool(false),
@@ -130,7 +126,7 @@ impl Normalizer {
     }
 
     /// `term` in normal form.
-    pub fn normalize(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Rc<Term> {
+    pub fn normalize(&mut self, pool: &mut dyn TermPool, term: &Rc<Term>) -> Rc<Term> {
         if let Some(known) = self.derivations.get(term) {
             return known.result.clone();
         }
@@ -143,7 +139,7 @@ impl Normalizer {
         result
     }
 
-    fn derive(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Derivation {
+    fn derive(&mut self, pool: &mut dyn TermPool, term: &Rc<Term>) -> Derivation {
         let same = |t: &Rc<Term>| Derivation { cong: None, tops: Vec::new(), tail: None, result: t.clone() };
         // 1. The arguments, under `cong`.
         let current = match term.as_ref() {
@@ -184,7 +180,7 @@ impl Normalizer {
     }
 
     /// One rule applied at the top of `term`, whose arguments are normal.
-    fn top_step(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Option<TopStep> {
+    fn top_step(&mut self, pool: &mut dyn TermPool, term: &Rc<Term>) -> Option<TopStep> {
         use Operator::*;
         let Term::Op(op, args) = term.as_ref() else {
             return None;
@@ -226,7 +222,7 @@ impl Normalizer {
     /// is what `poly_simp_rel` needs.
     fn relation_step(
         &mut self,
-        pool: &mut PrimitivePool,
+        pool: &mut dyn TermPool,
         term: &Rc<Term>,
         op: Operator,
         x1: &Rc<Term>,
@@ -297,8 +293,8 @@ impl Normalizer {
     /// `distinct_elim`'s expansion: the disequality of two arguments, the
     /// conjunction of the pairwise disequalities of more (`false` for more
     /// than two Booleans).
-    fn distinct_expansion(&mut self, pool: &mut PrimitivePool, args: &[Rc<Term>]) -> Rc<Term> {
-        let disequality = |pool: &mut PrimitivePool, a: &Rc<Term>, b: &Rc<Term>| {
+    fn distinct_expansion(&mut self, pool: &mut dyn TermPool, args: &[Rc<Term>]) -> Rc<Term> {
+        let disequality = |pool: &mut dyn TermPool, a: &Rc<Term>, b: &Rc<Term>| {
             let equality = pool.add(Term::Op(Operator::Equals, vec![a.clone(), b.clone()]));
             pool.add(Term::Op(Operator::Not, vec![equality]))
         };
@@ -319,7 +315,7 @@ impl Normalizer {
 
     /// `aci_simp`'s canonical form: flattened, without the identity element,
     /// deduplicated when the operator is idempotent, in pointer order.
-    fn aci_canonical(&mut self, pool: &mut PrimitivePool, op: Operator, args: &[Rc<Term>]) -> Rc<Term> {
+    fn aci_canonical(&mut self, pool: &mut dyn TermPool, op: Operator, args: &[Rc<Term>]) -> Rc<Term> {
         let identity = identity_of(pool, op, &args[0]);
         let mut flat: Vec<Rc<Term>> = Vec::new();
         for arg in args {
@@ -355,7 +351,7 @@ impl Normalizer {
         entries
     }
 
-    fn constant_term(&self, pool: &mut PrimitivePool, value: &Rational, sort: ArithSort) -> Rc<Term> {
+    fn constant_term(&self, pool: &mut dyn TermPool, value: &Rational, sort: ArithSort) -> Rc<Term> {
         match sort {
             ArithSort::Int if value.is_integer() => pool.add(Term::new_int(value.numer().clone())),
             _ => pool.add(Term::new_real(value.clone())),
@@ -366,7 +362,7 @@ impl Normalizer {
     /// atom or a product `(* c a1 ... an)`, summed, the constant last.  In a
     /// Real polynomial an Int atom is wrapped in `to_real`, which the
     /// checker's polynomial sees through.
-    fn term_of_polynomial(&self, pool: &mut PrimitivePool, poly: &Polynomial, sort: ArithSort) -> Rc<Term> {
+    fn term_of_polynomial(&self, pool: &mut dyn TermPool, poly: &Polynomial, sort: ArithSort) -> Rc<Term> {
         let mut terms: Vec<Rc<Term>> = Vec::new();
         for (monomial, coefficient) in Self::sorted_monomials(poly) {
             let mut factors: Vec<Rc<Term>> = Vec::new();
@@ -399,7 +395,7 @@ impl Normalizer {
     /// The certificate of `(= lhs rhs)` for a hole whose sides have the same
     /// normal form: Alethe steps numbered `{id}.1`, `{id}.2`, ... whose last
     /// step concludes the equality.  `None` when the sides differ.
-    pub fn certificate(&mut self, pool: &mut PrimitivePool, id: &str, lhs: &Rc<Term>, rhs: &Rc<Term>) -> Option<Vec<String>> {
+    pub fn certificate(&mut self, pool: &mut dyn TermPool, id: &str, lhs: &Rc<Term>, rhs: &Rc<Term>) -> Option<Vec<String>> {
         let left = self.normalize(pool, lhs);
         let right = self.normalize(pool, rhs);
         if left != right {
@@ -428,7 +424,7 @@ impl Normalizer {
     /// proof of the normal forms' equality (`inner`, steps concluding
     /// `(= left right)` numbered from `{id}.1`): the combined certificate,
     /// concluding `(= lhs rhs)`.
-    pub fn bridge(&mut self, pool: &mut PrimitivePool, id: &str, lhs: &Rc<Term>, rhs: &Rc<Term>, inner: Vec<String>) -> Vec<String> {
+    pub fn bridge(&mut self, pool: &mut dyn TermPool, id: &str, lhs: &Rc<Term>, rhs: &Rc<Term>, inner: Vec<String>) -> Vec<String> {
         let left = self.normalize(pool, lhs);
         let right = self.normalize(pool, rhs);
         let inner_last = format!("{id}.{}", inner.len());
@@ -450,7 +446,7 @@ impl Normalizer {
 
     /// Emits the derivation of `term`'s normal form and returns the id of
     /// the step concluding `(= term normal)`, or `None` when it is normal.
-    fn emit(&mut self, pool: &mut PrimitivePool, emitter: &mut Emitter, term: &Rc<Term>) -> Option<String> {
+    fn emit(&mut self, pool: &mut dyn TermPool, emitter: &mut Emitter, term: &Rc<Term>) -> Option<String> {
         if let Some(known) = emitter.memo.get(term) {
             return known.clone();
         }
@@ -516,7 +512,7 @@ struct Emitter {
 }
 
 impl Emitter {
-    fn emit(&mut self, _pool: &mut PrimitivePool, lhs: &Rc<Term>, rhs: &Rc<Term>, rule: &str, premises: &[String]) -> String {
+    fn emit(&mut self, _pool: &mut dyn TermPool, lhs: &Rc<Term>, rhs: &Rc<Term>, rule: &str, premises: &[String]) -> String {
         let id = format!("{}.{}", self.prefix, self.steps.len() + 1);
         let premises = if premises.is_empty() {
             String::new()
@@ -536,7 +532,7 @@ mod tests {
     const INTS: &str = "(declare-const x Int) (declare-const y Int) (declare-const z Int) (declare-const p Bool) (declare-const q Bool) (declare-fun f (Int) Int)";
     const REALS: &str = "(declare-const a Real) (declare-const b Real) (declare-const x Int)";
 
-    fn parse(problem: &str, lhs: &str, rhs: &str) -> (crate::ast::Problem, Rc<Term>, Rc<Term>, PrimitivePool) {
+    fn parse(problem: &str, lhs: &str, rhs: &str) -> (crate::ast::Problem, Rc<Term>, Rc<Term>, crate::ast::pool::PrimitivePool) {
         let problem_text = format!("{problem}\n(assert (= {lhs} {rhs}))\n");
         let proof = format!("(assume h0 (= {lhs} {rhs}))\n");
         let (problem, proof, _, pool) = parser::parse_instance(

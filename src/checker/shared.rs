@@ -190,6 +190,27 @@ fn check_hole_rewrite(
         );
         return false;
     };
+    // The normalizer first: a goal whose sides have the same normal form is
+    // checked without egglog, the others reach egglog as the equality of the
+    // normal forms.  The same procedures as the elaborator's hole pass.
+    let conclusion = match crate::rare::util::get_equational_terms(conclusion) {
+        Some((Operator::Equals, lhs, rhs)) => {
+            let (lhs, rhs) = (lhs.clone(), rhs.clone());
+            let mut normalizer = crate::elaborator::prenorm::Normalizer::new();
+            let left = normalizer.normalize(pool, &lhs);
+            let right = normalizer.normalize(pool, &rhs);
+            if left == right {
+                log::info!("theory rewrite '{}': closed by normalization", step.id);
+                return true;
+            }
+            if left != lhs || right != rhs {
+                pool.add(Term::Op(Operator::Equals, vec![left, right]))
+            } else {
+                conclusion.clone()
+            }
+        }
+        _ => conclusion.clone(),
+    };
     let premise_clauses = premises
         .iter()
         .map(|premise| premise.clause)
@@ -197,7 +218,7 @@ fn check_hole_rewrite(
     let (result, code) = check_hole_rewrite_with_context(
         pool,
         &step.id,
-        conclusion.clone(),
+        conclusion,
         &premise_clauses,
         rare_context,
         options,
