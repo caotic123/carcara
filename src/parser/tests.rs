@@ -930,3 +930,62 @@ fn test_datatypes() {
         ))",
     );
 }
+
+#[test]
+fn test_int_real_subtyping_at_polymorphic_positions() {
+    // Under `--allow-int-real-subtyping`, an integer term may stand where a real one is expected.
+    // Solvers do print such terms: veriT writes an integer literal on one side of an equality with
+    // a real-sorted term, and rejecting that at parse time made the whole proof unreadable. The
+    // relaxation applies to the positions whose sort is not fixed by the operator --- `=`,
+    // `distinct`, the branches of an `ite`, and the arguments of an uninterpreted function.
+    const SUBTYPING: Config = Config::new()
+        .apply_function_defs(true)
+        .allow_int_real_subtyping(true);
+    let definitions = "
+        (declare-fun x () Real)
+        (declare-fun n () Int)
+        (declare-fun f (Real) Real)
+    ";
+    let ok = [
+        "(= x 0)",
+        "(= 0 x)",
+        "(distinct x 0 1)",
+        "(ite true x 0)",
+        "(f 0)",
+        "(= n 0.0)",
+    ];
+    for term in ok {
+        let mut pool = PrimitivePool::new();
+        let mut parser = Parser::new(&mut pool, SUBTYPING, definitions.into()).unwrap();
+        parser.parse_problem().unwrap();
+        parser.reset(term.into()).unwrap();
+        parser
+            .parse_term()
+            .unwrap_or_else(|e| panic!("'{term}' should parse under subtyping, got {e}"));
+    }
+
+    // Without the flag the same terms are ill-sorted, ...
+    for term in ok {
+        let mut pool = PrimitivePool::new();
+        let mut parser = Parser::new(&mut pool, TEST_CONFIG, definitions.into()).unwrap();
+        parser.parse_problem().unwrap();
+        parser.reset(term.into()).unwrap();
+        assert!(
+            parser.parse_term().is_err(),
+            "'{term}' should be rejected without subtyping"
+        );
+    }
+
+    // ... and the positions that require a *specific* numeric sort stay strict even with it, so
+    // the relaxation does not admit an integer division of reals.
+    for term in ["(div 1.0 2.0)", "(mod 1.0 2.0)", "(to_int n)"] {
+        let mut pool = PrimitivePool::new();
+        let mut parser = Parser::new(&mut pool, SUBTYPING, definitions.into()).unwrap();
+        parser.parse_problem().unwrap();
+        parser.reset(term.into()).unwrap();
+        assert!(
+            parser.parse_term().is_err(),
+            "'{term}' should be rejected even under subtyping"
+        );
+    }
+}

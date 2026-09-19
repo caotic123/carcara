@@ -332,6 +332,39 @@ impl<'p, 's> Parser<'p, 's> {
         }
     }
 
+    /// Whether two sorts may be identified under Int/Real subtyping, i.e. whether an integer term
+    /// may stand where a real one is expected.
+    ///
+    /// This is only consulted at the *polymorphic* positions --- the arguments of `=`/`distinct`,
+    /// the two branches of an `ite`, and the arguments of an uninterpreted function --- where the
+    /// sort is not fixed by the operator but only required to agree. The positions that require a
+    /// specific numeric sort (`div`, `mod`, `to_int`, the trigonometric operators) stay strict, so
+    /// this does not admit e.g. `(div 1.0 2.0)`.
+    fn numerically_compatible(&self, a: &Sort, b: &Sort) -> bool {
+        self.config.allow_int_real_subtyping
+            && matches!(a, Sort::Int | Sort::Real)
+            && matches!(b, Sort::Int | Sort::Real)
+    }
+
+    /// `check_sort_eq` at a polymorphic position: under Int/Real subtyping the two sorts need only
+    /// be numeric, not equal. Solvers do print such terms --- veriT writes an integer literal on
+    /// one side of an equality with a real-sorted term --- and rejecting them at parse time made
+    /// the whole proof unreadable.
+    fn check_sort_eq_poly(&mut self, expected: &Sort, got: &Rc<Sort>) -> Result<(), SortError> {
+        if self.numerically_compatible(expected, got) {
+            return Ok(());
+        }
+        self.check_sort_eq(expected, got)
+    }
+
+    /// `check_sort_all_eq` at a polymorphic position.
+    fn check_sort_all_eq_poly(&mut self, sequence: &[Rc<Sort>]) -> Result<(), SortError> {
+        for i in 1..sequence.len() {
+            self.check_sort_eq_poly(&sequence[i - 1], &sequence[i])?;
+        }
+        Ok(())
+    }
+
     /// Makes sure all terms in `sequence` are equal to each other, otherwise returns an error.
     fn check_sort_all_eq(&mut self, sequence: &[Rc<Sort>]) -> Result<(), SortError> {
         // TODO: we are just checking if each sort is compatible with the previous. We could be more
@@ -442,12 +475,12 @@ impl<'p, 's> Parser<'p, 's> {
             }
             Operator::Equals | Operator::Distinct => {
                 assert_num_args(&args, 2..)?;
-                self.check_sort_all_eq(&sorts)?;
+                self.check_sort_all_eq_poly(&sorts)?;
             }
             Operator::Ite => {
                 assert_num_args(&args, 3)?;
                 self.check_sort_eq(&Sort::Bool, &sorts[0])?;
-                self.check_sort_eq(sorts[1].as_ref(), &sorts[2])?;
+                self.check_sort_eq_poly(sorts[1].as_ref(), &sorts[2])?;
             }
             Operator::Add | Operator::Sub | Operator::Mult => {
                 // The `-` operator, in particular, can be called with only one argument, in which
@@ -876,7 +909,7 @@ impl<'p, 's> Parser<'p, 's> {
                 }
                 continue;
             };
-            self.check_sort_eq(&sorts[i], &arg_sort_i)?;
+            self.check_sort_eq_poly(&sorts[i], &arg_sort_i)?;
         }
         Ok(self.pool.add(Term::App(function, args)))
     }
