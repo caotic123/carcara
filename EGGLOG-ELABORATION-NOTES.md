@@ -2106,3 +2106,48 @@ absence of `let`s and in numeral spelling), but the plan is to run the
 original benchmarks directly; `scratchpad/verit/gen-orig.sh` is producing
 their veriT proofs and checking each, to count how many the numeral issue
 affects.
+
+## 25. The normalizer, exactly (2026-09-19)
+
+**The normalizer, exactly** (`src/elaborator/prenorm.rs`, as of 9027d5ac).
+
+*Driver.* With `--hole-prenormalize`, before any hole is scheduled, one `Normalizer` (one memo shared by all holes of the proof) normalizes both sides of every hole `(= l r)`. If the two normal forms are the same pooled term the hole is closed without egglog; otherwise the hole's clause becomes `(= nl nr)` and that is what egglog sees. The log line `hole prenorm: A of B holes closed by normalization, C goals rewritten` counts the two outcomes.
+
+*Traversal.* Bottom-up and memoized per term (pointer identity in the term pool). An application `(f t1 .. tn)` gets its arguments normalized. An operator term gets its arguments normalized first, then one of the cases below applies to the already-normal arguments. Everything else is left as it is: constants, variables, and binders (`forall`, `exists`, `lambda`, `choice`, `let`), whose bodies are not entered.
+
+*Operator cases.*
+
+1. `not`: `(not (not p))` is `p`; `(not true)` is `false` and `(not false)` is `true`. `(not (rel P c))` for `rel` among `<`, `<=`, `>`, `>=` over Int or Real is the opposite relation, re-normalized as a relation (Int `(not (<= P c))` becomes `(>= P c+1)`, Real `(> P c)`). `(not (and a1 .. an))` is the `or` of the `(not ai)`, and `(not (or ..))` the `and` of them, each `(not ai)` going through this same case, then the connective through the `and`/`or` case: negation normal form. Any other `(not p)` stays (`(not (= a b))`, `(not (ite ..))`, `(not x)`).
+2. `and`, `or`: the ACI procedure below.
+3. `(=> a b)`: the `or` of `(not a)` (through case 1) and `b`, through the ACI procedure.
+4. `ite`: `(ite true a b)` is `a`, `(ite false a b)` is `b`, `(ite c a a)` is `a`; otherwise kept.
+5. `+`, `-`, `*`, `/`, `to_real` (term of sort Int or Real): the term is read as a polynomial and printed in canonical form. The polynomial has rational coefficients over *atoms*, the maximal subterms that are none of these operators: a numeral (also `(- 1)`) is a constant; `+` adds; unary `-` negates; n-ary `-` subtracts; `*` multiplies polynomials, so a product of atoms is a monomial and nonlinear terms are fine; `(/ p c)` with `c` a nonzero constant scales by `1/c`, any other division is an atom; `(to_real p)` is `p`'s polynomial with every atom wrapped in `to_real` and the constants converted. A monomial is the multiset of its atoms sorted by pointer. Canonical term: the monomials ordered by number of atoms, then by their atoms' pointers; each printed as the atom, `(* c a)` or `(* c a1 .. an)` with the coefficient omitted when it is 1; the constant last; a single monomial without the `+`; the zero of the sort when empty. Constants print as Int literals when the sort is Int and the value integral, else as Real literals (rationals).
+6. Relations `<`, `<=`, `>`, `>=` with two arguments, and `=` with two arguments of sort Int or Real. The sort is Real as soon as one side is Real (Int numerals may stand on either side under subtyping), else Int. The difference `lhs - rhs` is taken as a polynomial. If it is constant, the relation is decided: `true` or `false`. Otherwise the constant moves right (`P + k op 0` is `P op -k`) and `P` is scaled: Int, by the lcm of the coefficients' denominators over the gcd of the resulting numerators, so the coefficients are integers with gcd 1; Real, by the reciprocal of the absolute leading coefficient (the first monomial in canonical order), so it is 1. A negative leading coefficient negates both sides and flips `<` with `>` and `<=` with `>=` (`=` stays). Int bounds are tightened: a non-integer bound is rounded, `>=` up, `<=` down, `>` becomes `>=` of the floor plus one, `<` becomes `<=` of the ceiling minus one, and `=` becomes `false`; an integer bound turns `>` into `>=` of the bound plus one and `<` into `<=` of the bound minus one. The result is `(op' P c)`.
+7. `=` otherwise: `(= a a)` is `true`; `(= p true)` and `(= true p)` are `p`; `(= p false)` and `(= false p)` are `(not p)` through case 1; else the two sides are put in pointer order (one orientation per pair) and, when both are constants, evaluated.
+8. `distinct`: with two arguments, `(not (= a b))` through cases 6/7 and 1; with more, the `and` of the pairwise `(not (= ai aj))`, `i < j`, through the ACI procedure, so a repeated element gives `false`.
+9. Any other operator (`xor`, `div`, `mod`, `abs`, `select`, bit-vector operators, ...) is kept, evaluated when all its arguments are constants.
+
+*The ACI procedure* for `(op a1 .. an)`, `op` being `and` (identity `true`, absorbing `false`) or `or` (identity `false`, absorbing `true`), with the `ai` already normal:
+
+a. Arguments that are themselves `op` terms are flattened in (they are flat already, so one level suffices).
+b. Identity elements are dropped; an absorbing element makes the result absorbing.
+c. The rest is sorted by pointer and deduplicated.
+d. Complements make the result absorbing: a negated argument `(not p)` with `p` also present, and `(not (= P c))` with a bound on the same polynomial `P` that excludes the point `c` under `and` or that covers it under `or`. "Excludes" and "covers" are the interval tests below.
+e. An argument of the dual connective (an `or` inside an `and`, or the reverse) is examined member by member: a member is *complemented* if it has a literal complement among the arguments, or if it is a bound `(rel P c)` or a point `(= P c)` or `(not (= P c))` and some argument is a bound on the same `P` that excludes it (under `and`) or covers it (under `or`). If every member is complemented the result is absorbing; otherwise the complemented members are dropped from that argument (`(or p (and (not p) q))` is `(or p q)`), the argument is rebuilt through the ACI procedure for the dual connective, and the whole list is re-run through this procedure.
+f. Bounds are merged per polynomial (same pooled `P`). Under `and`, only the tightest upper and the tightest lower bound stay (at equal value the strict one); if they have no common value the result is `false`; if they meet at one non-strict point they are replaced by `(= P c)`. Under `or`, only the weakest upper and lower stay (at equal value the non-strict one); if they cover every value the result is `true`; if they leave out exactly one point they are replaced by `(not (= P c))`: Int `low = up + 2` gives `(not (= P (up+1)))`, Real `low = up` with both strict gives `(not (= P c))`. Int bounds are never strict after case 6. If anything changed, the list is re-run through the procedure.
+g. No argument left gives the identity, one gives that argument, more give `(op ..)` in pointer order.
+
+*Interval tests* (upper `u` from `<=`/`<`, lower `l` from `>=`/`>`, Int bounds non-strict): two bounds exclude each other when `l > u`, or `l = u` and one is strict; a point `c` is excluded by `(<= P u)` when `u < c`, by `(< P u)` when `u <= c`, by `(>= P l)` when `l > c`, by `(> P l)` when `l >= c`, and by `(not (= P c))`. Two bounds cover everything when, Int, `l <= u + 1`, or, Real, `l < u`, or `l = u` and not both strict; a bound covers a disequality `(not (= P c))` when it is implied by `(= P c)`: `(<= P u)` with `u >= c`, `(< P u)` with `u > c`, `(>= P l)` with `l <= c`, `(> P l)` with `l < c`.
+
+*What it is not.* No De Morgan below binders, no distribution of `and` over `or` (no DNF/CNF), no `ite` lifting, no reasoning across different polynomials, no theory reasoning beyond linear bounds on one polynomial. Canonical orders are pointer orders, so a normal form is canonical within one run's pool, which is all the check needs. Every step is an equivalence; the checker's rules that justify them (`poly_simp`, `poly_simp_rel`, `evaluate`, `aci_simp`, `not_not`, `distinct_elim`, plus the bound reasoning as `la_generic` instances) are what a certificate would cite, but only checking is wired up.
+
+**Two fixes on the way** (f841cd24, 9027d5ac).  The parser fix from wt-diff
+(92d8a42f) is ported: under `--allow-int-real-subtyping` the polymorphic
+positions (`=`/`distinct` arguments, `ite` branches, uninterpreted function
+arguments) accept an Int where a Real is expected, which is what rejected
+the original vpm2-0 proof (`(= (- 1.0) (- 1))`).  With it the original
+proof checks valid, folds to the same 3,164 holes as the round-tripped one
+at limit 100, and -- after the normalizer takes a mixed Int/Real relation's
+sort as Real rather than from its left side, which had kept
+`(<= (- 300) P)` as an Int bound and `(<= P (- 300))` as a Real one -- every
+one of them closes by normalization (hole time 0.047 s).
