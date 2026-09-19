@@ -71,6 +71,7 @@ impl fmt::Display for CliError {
             }
             CliError::CarcaraError(Error::Elaborator { inner, rule, step, pass, file }) => {
                 let pass = match pass {
+                    ElaborationPass::Fold => "fold",
                     ElaborationPass::Hoist => "hoist",
                     ElaborationPass::Prune => "prune",
                     ElaborationPass::Polyeq => "polyeq",

@@ -240,6 +240,7 @@ fn elaborate_command(
     let hole_reuse_proved = options.elaboration.hole_reuse_proved;
     let hole_reuse_subst = options.elaboration.hole_reuse_subst;
     let hole_prenormalize = options.elaboration.hole_prenormalize;
+    let fold_limit = options.elaboration.fold_limit.unwrap_or(0);
 
     let checker_config = (options.checking, options.tools.clone()).into_config();
     let (elab_config, pipeline) = (options.elaboration, options.tools).into_config();
@@ -259,6 +260,7 @@ fn elaborate_command(
         .hole_reuse_proved(hole_reuse_proved)
         .hole_reuse_subst(hole_reuse_subst)
         .hole_prenormalize(hole_prenormalize)
+        .fold_limit(fold_limit)
         .hole_rewrite_options(hole_rewrite_options)
         .allowed_rules(allowed_rules);
 

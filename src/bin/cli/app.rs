@@ -306,6 +306,7 @@ pub struct CheckingOptions {
 
 #[derive(ValueEnum, Clone)]
 pub enum ElaborationPass {
+    Fold,
     Hoist,
     Prune,
     Polyeq,
@@ -416,6 +417,13 @@ pub struct ElaborationOptions {
     /// coincide is proved outright.
     #[clap(long, requires = "hole_check_only")]
     pub hole_prenormalize: bool,
+
+    /// In the `fold` pass, the most steps a rewrite derivation folded into
+    /// one hole may have (as a tree); a larger derivation keeps its top
+    /// steps and folds the derivations below.  1 makes every rewrite step
+    /// its own hole.  Default: no limit.
+    #[clap(long, value_name = "STEPS")]
+    pub fold_limit: Option<usize>,
 
     /// The pipeline of elaboration passes to use.
     #[clap(
@@ -701,6 +709,7 @@ impl IntoConfig for (ElaborationOptions, ToolOptions) {
             .pipeline
             .into_iter()
             .map(|p| match p {
+                ElaborationPass::Fold => elaborator::ElaborationPass::Fold,
                 ElaborationPass::Hoist => elaborator::ElaborationPass::Hoist,
                 ElaborationPass::Prune => elaborator::ElaborationPass::Prune,
                 ElaborationPass::Polyeq => elaborator::ElaborationPass::Polyeq,

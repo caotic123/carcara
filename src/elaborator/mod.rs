@@ -1,6 +1,7 @@
 //! An elaborator for Alethe proofs
 
 pub mod error;
+pub mod fold;
 mod hoist;
 pub mod prenorm;
 mod hole;
@@ -135,6 +136,12 @@ pub struct Config {
     /// a hole whose sides coincide is proved outright, the others are checked as the equality of
     /// their normal forms.
     hole_prenormalize: bool,
+
+    /// In the fold pass, the most steps a derivation folded into one hole may have, counted as a
+    /// tree (a shared step counts once per use); 0 for no limit.  A larger derivation keeps its
+    /// top `cong`/`trans` steps and folds the derivations below them, so the limit sets the
+    /// granularity of the holes: 1 makes every rewrite step its own hole.
+    fold_limit: usize,
 }
 
 impl Config {
@@ -147,6 +154,10 @@ impl Config {
 /// An elaboration pass, to be applied to a proof.
 #[derive(Debug, Clone, Copy)]
 pub enum ElaborationPass {
+    /// Folds every derivation of `*_simplify`, `ac_simp`, ... steps assembled by `cong`, `trans`,
+    /// `refl` and `symm` into one `TRUST_THEORY_REWRITE` hole concluding its equality, so that a
+    /// veriT proof's rewrites go through the same hole checking and elaboration as cvc5's.
+    Fold,
     /// Lifts every repeated closed derivation, holes included, to the top level and re-points
     /// its other uses at it, so that a `TRUST_THEORY_REWRITE` equality cvc5 printed once per
     /// subproof becomes one hole.
@@ -359,6 +370,9 @@ impl<'e> Elaborator<'e> {
         for pass in pipeline {
             let time = Instant::now();
             let result = match pass {
+                ElaborationPass::Fold => {
+                    Ok(fold::fold(self.pool, current, self.config.fold_limit))
+                }
                 ElaborationPass::Hoist => {
                     Ok(hoist::hoist(self.pool, current, &self.config.allowed_rules, true))
                 }
