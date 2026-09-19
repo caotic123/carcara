@@ -18,15 +18,19 @@ pub enum Computation {
     ArithPolyNorm,
     /// Canonical relation keys agree (cvc5's ARITH_POLY_NORM_REL).
     ArithPolyNormRel,
+    /// An `and`/`or` holding a literal and its negation is the operator's
+    /// absorbing element (Alethe's `and_simplify`/`or_simplify`).
+    AciComplement,
 }
 
 /// The term-to-term solvers, proposed as edges by the in-class search.
 /// The arithmetic kinds judge both sides at once and are proposed by the
 /// cross-class strategy instead.
-pub const COMPUTATIONS: [Computation; 3] = [
+pub const COMPUTATIONS: [Computation; 4] = [
     Computation::DistinctElim,
     Computation::Evaluation,
     Computation::AciNorm,
+    Computation::AciComplement,
 ];
 
 /// Flatten a term through an ACI operator: nested same-operator
@@ -44,6 +48,32 @@ pub fn flatten_aci(term: &Term, operator: &str, identity: bool, out: &mut Vec<Te
         return;
     }
     out.push(term.clone());
+}
+
+/// The absorbing element of an `and`/`or` term that holds a literal and its
+/// negation, `None` when it holds no such pair.
+pub fn aci_complement(term: &Term) -> Option<Term> {
+    let (operator, identity) = match encoded_application(term) {
+        Some(("@and", _)) => ("@and", true),
+        Some(("@or", _)) => ("@or", false),
+        _ => return None,
+    };
+    let mut literals = Vec::new();
+    flatten_aci(term, operator, identity, &mut literals);
+    let set: HashSet<&Term> = literals.iter().collect();
+    let complemented = literals.iter().any(|literal| {
+        let negation = encoded_app("@not", vec![literal.clone()]);
+        set.contains(&negation)
+    });
+    complemented.then(|| encoded_bool(!identity))
+}
+
+/// One side is an `and`/`or` with a complementary pair and the other its
+/// absorbing element.  Through `apply`, so that an obligation that
+/// descended through the `Mk` wrapper by congruence is judged too.
+pub fn aci_complement_equal(lhs: &Term, rhs: &Term) -> bool {
+    Computation::AciComplement.apply(lhs).as_ref() == Some(rhs)
+        || Computation::AciComplement.apply(rhs).as_ref() == Some(lhs)
 }
 
 /// Associative-commutative-idempotent equality for `and`/`or`: both sides
@@ -530,6 +560,7 @@ impl Computation {
             // rewrites: singleton and idempotency collapse, identity
             // elimination (identity as the second element, as the rule has
             // it).
+            Self::AciComplement => aci_complement(term),
             Self::AciNorm => {
                 let (operator, elements) = encoded_application(term)?;
                 let identity = match operator {

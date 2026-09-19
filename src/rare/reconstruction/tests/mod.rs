@@ -2221,6 +2221,51 @@ fn elaborates_mirrored_bounds_in_a_conjunction() {
     assert!(printed.contains("poly_simp_rel"), "{printed}");
 }
 
+/// An `and`/`or` holding a literal and its negation is the connective's
+/// absorbing element, whatever the arity.  The RARE rules for it
+/// (`bool-or-taut`, `bool-and-conf`) carry `:list` parameters, which the
+/// engine compiles as one argument slot each and which therefore only match
+/// when every list is non-empty; the ACI set machinery finds the pair
+/// instead, and the certificate cites `or_simplify`/`and_simplify`.
+#[test]
+fn elaborates_complementary_pairs() {
+    use crate::elaborator::{self, ElaborationPass};
+
+    let problem_path = Path::new("tests/rare/elaborate/complement.smt2");
+    let proof_path = Path::new("tests/rare/elaborate/complement.smt2.alethe");
+    let rare_path = Path::new("tests/rare/big.rare");
+    let parser_config = parser::Config::default()
+        .expand_lets(true)
+        .allow_int_real_subtyping(true)
+        .parse_hole_args(true);
+    let (mut problem_text, mut proof_text, mut rare_text) =
+        (String::new(), String::new(), String::new());
+    let (_, problem, elaborated, mut pool) = crate::check_and_elaborate(
+        parser::Source::file(problem_path, &mut problem_text).expect("problem should exist"),
+        parser::Source::file(proof_path, &mut proof_text).expect("proof should exist"),
+        Some(parser::Source::file(rare_path, &mut rare_text).expect("RARE database should exist")),
+        parser_config,
+        crate::checker::Config::new(),
+        elaborator::Config::new().elaborate_hole_rewrites(true),
+        vec![ElaborationPass::Hole],
+        false,
+    )
+    .expect("the proof should check and elaborate");
+    let mut printed = Vec::new();
+    crate::ast::printer::write_proof_to_dest(
+        &mut pool,
+        &problem.prelude,
+        &elaborated,
+        &mut printed,
+        false,
+    )
+    .expect("the elaborated proof should print");
+    let printed = String::from_utf8(printed).expect("printed proof should be UTF-8");
+    assert!(!printed.contains(":rule hole"), "{printed}");
+    assert!(printed.contains("or_simplify"), "{printed}");
+    assert!(printed.contains("and_simplify"), "{printed}");
+}
+
 /// cvc5 #12639 renamed the printed tag of `TRUST_THEORY_REWRITE` holes to
 /// `"untranslated rewrite"`; both spellings must be elaborated.
 #[test]

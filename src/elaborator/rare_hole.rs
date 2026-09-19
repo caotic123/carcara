@@ -315,6 +315,26 @@ impl AletheElaborator {
                 // and/or, `poly_simp` compares polynomial normal forms.
                 Computation::Evaluation => self.emit(lhs, rhs, "evaluate", ""),
                 Computation::AciNorm => self.emit(lhs, rhs, "aci_simp", ""),
+                // A complementary pair short-circuits the connective, which
+                // is what `and_simplify`/`or_simplify` decide.
+                Computation::AciComplement => {
+                    // The side may have lost its `Mk` wrapper to a congruence
+                    // above it, so the connective is read off either form.
+                    let connective = |side: &Term| {
+                        let inner = if side.op == "Mk" {
+                            side.children.first()?
+                        } else {
+                            side
+                        };
+                        match inner.op.as_str() {
+                            "@and" => Some("and_simplify"),
+                            "@or" => Some("or_simplify"),
+                            _ => None,
+                        }
+                    };
+                    let rule = connective(lhs).or_else(|| connective(rhs))?;
+                    self.emit(lhs, rhs, rule, "")
+                }
                 Computation::ArithPolyNorm => self.emit(lhs, rhs, "poly_simp", ""),
                 // `poly_simp_rel` states one relation as another under a
                 // scaled-difference premise, but only between the same

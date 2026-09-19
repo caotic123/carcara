@@ -101,8 +101,25 @@ pub fn aci_rules(
     decls.push(EggStatement::Rule {
         ruleset: Some("list-ruleset".to_owned()),
         body: vec![
-            egg_expr!((= {set_call} "result")),
+            egg_expr!((= {set_call.clone()} "result")),
             egg_expr!(("set-contains" "s" {absorbing.clone()})),
+        ],
+        head: vec![egg_expr!((union "result" {absorbing.clone()}))],
+    });
+
+    // 9. A complementary pair does too: `(or x p (not p))` is true and
+    // `(and x p (not p))` is false, whatever the other elements are.  The
+    // same fact is a RARE rule (`bool-or-taut`, `bool-and-conf`), but those
+    // carry `:list` parameters, which the engine compiles as one argument
+    // slot each, so they only match when every list is non-empty; on the set
+    // form the pair is found whatever the arity and the positions.
+    let negated = egg_expr!((mk (_not (args (mk "w") ()))));
+    decls.push(EggStatement::Rule {
+        ruleset: Some("list-ruleset".to_owned()),
+        body: vec![
+            egg_expr!((= {set_call} "result")),
+            egg_expr!(("set-contains" "s" (mk "w"))),
+            egg_expr!(("set-contains" "s" {negated})),
         ],
         head: vec![egg_expr!((union "result" {absorbing}))],
     });

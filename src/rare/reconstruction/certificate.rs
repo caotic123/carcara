@@ -120,6 +120,9 @@ impl Certificate {
             // flatten-and-compare, which subsumes the collapse edges the
             // proposer generates.
             Self::Computational { kind: Computation::AciNorm, lhs, rhs } => aci_equal(lhs, rhs),
+            Self::Computational { kind: Computation::AciComplement, lhs, rhs } => {
+                aci_complement_equal(lhs, rhs)
+            }
             Self::Computational { kind: Computation::ArithPolyNorm, lhs, rhs } => {
                 poly_equal(lhs, rhs)
             }

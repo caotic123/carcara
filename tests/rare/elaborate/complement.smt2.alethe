@@ -1,0 +1,6 @@
+(assume h1 p)
+(assume h2 (not p))
+(step t1 (cl (= (or p (not p)) true)) :rule hole :args ("TRUST_THEORY_REWRITE" "bool-or-taut"))
+(step t2 (cl (= (or q p (not p)) true)) :rule hole :args ("TRUST_THEORY_REWRITE" "bool-or-taut"))
+(step t3 (cl (= (and q p (not p)) false)) :rule hole :args ("TRUST_THEORY_REWRITE" "bool-and-conf"))
+(step t9 (cl) :rule resolution :premises (h1 h2))

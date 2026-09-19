@@ -2778,6 +2778,37 @@ mod tests {
         assert!(result.is_ok(), "check failed: {:?}", result.err());
     }
 
+    /// A literal and its negation in an `and`/`or` make the connective's
+    /// absorbing element, whatever the arity and the positions.  The RARE
+    /// rules that state this (`bool-or-taut`, `bool-and-conf`) have `:list`
+    /// parameters, which compile to one argument slot each, so they only
+    /// match when every list is non-empty; the ACI set machinery is what
+    /// closes the two-element case.
+    #[test]
+    fn a_complementary_pair_absorbs_its_connective() {
+        for (operator, absorbing) in [(Operator::Or, true), (Operator::And, false)] {
+            let mut pool = PrimitivePool::new();
+            let bool_sort = pool.add_sort(Sort::Bool);
+            let p = pool.add(Term::Var("p".to_owned(), bool_sort));
+            let not_p = pool.add(Term::Op(Operator::Not, vec![p.clone()]));
+            let formula = pool.add(Term::Op(operator, vec![p, not_p]));
+            let constant = pool.add(Term::new_bool(absorbing));
+            let goal = pool.add(Term::Op(Operator::Equals, vec![formula, constant]));
+            let database = RareStatements::default();
+            let context = RareCtx::new(&database);
+
+            let (result, _) = check_hole_rewrite_with_context(
+                &mut pool,
+                "complement",
+                goal,
+                &[],
+                &context,
+                RunEgglogOptions::default(),
+            );
+            assert!(result.is_ok(), "check failed: {:?}", result.err());
+        }
+    }
+
     /// A distinct without repeats is not false; the solver must say so
     /// instead of aborting once the argument lists are re-associated.
     #[test]
