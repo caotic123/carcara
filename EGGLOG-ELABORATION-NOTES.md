@@ -2433,9 +2433,35 @@ before: checking proves 6 of 6 in under 0.1 s each, elaboration justifies
 chain the step onto `bool-not-true` yet).  Two tests cover it, at the
 engine and end to end.
 
-**What is still open.**  The general fix is to compile a `:list` rule into
-the 2^k variants, one per emptiness pattern, and to give `rare_rewrite` a
-form for an empty list argument; that would revive `bool-and-conf`,
-`distinct` list rules and the rest, of which the complement pair is only
-the most common instance.  It is the largest known gap in the engine's
-coverage of the RARE database.
+**The general fix** (commit ef1d4d8d) followed.  The compiler emits one
+variant of a rule per subset of its `:list` parameters, with those dropped
+from the argument chains; a variant that would leave an operator without
+arguments is not emitted, and the count is capped at four list parameters.
+For the three logics this turns 322 rules into 366.
+
+Two things were needed for the certificates.  Every variant carries the
+rule's name, so the verifier now accepts a certificate that *some* rule of
+that name states rather than the first one found -- several sort
+instantiations of a rule already shared a name, so this was a latent bug.
+And a `rare_rewrite` step has no form for an absent argument, so an
+instance whose list parameters were dropped is stated on the terms padded
+with the connective's identity (`false` in an `or`, `true` in an `and`, `0`
+in a sum, `1` in a product), which is exactly what the checker recomputes
+from the rule's declaration, with an `aci_simp` step on each side bridging
+the padding.  The padded terms come from instantiating the full variant's
+pattern, so they agree with the checker by construction.
+
+With the ACI set rule switched off, so that only this path can prove them,
+the six complement shapes give 6 of 6 proved in checking and 5 of 6
+justified in elaboration -- the same as the set rule, at about 1.4 times
+the time and three steps per certificate instead of one.  Both are kept:
+the set rule is the cheaper route for the shape that dominates, and the
+variants cover every other list rule (`distinct-false`, the bit-vector and
+string ones).  `tests/rare/list-empty.rare` holds a rule that only an
+empty-list variant can apply, so the general path is pinned by a test of
+its own rather than by the complement family.
+
+**What is still open.**  A list parameter that binds *several* arguments
+still cannot be written in a `rare_rewrite` step, so such an instance is
+proved but not certified; that needs a form for a list argument in the
+step's `:args`, which is a proof-format decision.
