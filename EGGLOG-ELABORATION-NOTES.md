@@ -1944,3 +1944,127 @@ needing further normalization -- would let the normalizer run once before
 and once after egglog; today the engine's own normalizers cover the
 in-between.  Next: the same measurement on the QF_UF families with kept
 holes, then a cluster run with `--hole-prenormalize`.
+
+## 24. Holes from another producer: folding veriT's rewrite derivations (2026-09-19)
+
+The hole checking so far only sees cvc5 proofs, because only cvc5 prints
+`TRUST_THEORY_REWRITE` holes.  veriT justifies the same rewrites with a
+derivation: `*_simplify`, `ac_simp`, `la_rw_eq`, ... steps rewrite subterms
+and `cong`, `trans`, `refl`, `symm` assemble them into the rewrite of the
+term.  A new pass, `fold` (`src/elaborator/fold.rs`, `--pipeline fold`),
+turns those derivations into cvc5-shaped holes so a veriT proof goes through
+the same checking and elaboration.
+
+**What is folded.**  A *rewrite derivation* is a closed sub-DAG of steps
+whose rules are the 20 Alethe rewrite rules (`REWRITE_RULES`: the
+`*_simplify` family, `ac_simp`, `la_rw_eq`, `distinct_elim`, `nary_elim`,
+`connective_def`; quantifier rules, `ite_intro` and `bfun_elim` left out) or
+the four glue rules, each concluding a unit `(= l r)` with no arguments, no
+discharge and premises only inside the derivation.  Membership is decided
+bottom-up; the roots -- members some outside step uses -- become
+`(step id (cl (= l r)) :rule hole :args ("TRUST_THEORY_REWRITE" "<rules>"))`
+with the same id, depth and clause, the second argument listing the rewrite
+rules folded in (`ac_simp:3,and_simplify:1`); the other members are dropped
+when nothing kept reaches them.  Glue-only derivations (a `cong` over
+`refl`s) are left alone, and so is any `cong`/`trans` with a premise outside
+a derivation -- an assumed equality, a congruence-closure argument -- which
+is what keeps the pass from folding theory reasoning.
+
+**Granularity.**  veriT rewrites a whole assertion in one derivation, a
+`cong` at the top over the rewrites of every conjunct: on vpm2-0 (QF_LRA,
+11,628 steps) unlimited folding gives 3 holes covering 9,052 steps, each an
+equality of the entire assertion, and every one exhausts the 8 GB worker
+limit.  `--fold-limit N` bounds the steps of a folded derivation (counted as
+a tree): a step whose derivation would be larger is not a member, so it
+stays and the derivations of its premises are folded instead.  On vpm2-0,
+plain checking (8 workers, 60 s and 8 GB per hole, sort guards, growth
+caps):
+
+| limit | holes | steps folded | proof lines | proved | kept | pass time |
+|---|---|---|---|---|---|---|
+| 1 | 3,854 | 3,854 | 11,628 | 3,854 | 0 | 100 s |
+| 10 | 3,547 | 9,641 | 6,938 | 3,547 | 0 | 201 s |
+| 100 | 3,164 | 10,457 | 5,879 | 3,163 | 1 | 248 s |
+| 1000 | 3,127 | 10,592 | 5,706 | 3,126 | 1 | 250 s |
+| none | 3 | 9,052 | 2,580 | 0 | 3 (memory) | -- |
+
+The hole count barely moves past limit 10 because most of veriT's rewrite
+steps are leaves feeding a `cong` at the top; the kept hole at 100 and
+above is a 49-summand `(* 1.0 x)` elimination that exhausts 60 s in egglog
+(the prenormalizer closes it).  With `--hole-prenormalize` at limit 1: 2,960
+of 3,854 holes closed by normalization, the 894 `la_rw_eq` goals rewritten
+and proved, pass 34 s.
+
+**Inputs.**  veriT 2026.05 (the tarball in the worktree, built copy from
+wt-corealethe), `--proof-prune --proof-merge`.  Benchmarks are first
+expanded with `cvc5 -o raw-benchmark --parse-only --dag-thresh=0`: a `let`
+in the input makes veriT prove under `:=` anchors (`let` steps), the hole
+checker does not apply anchor assignments, and Carcara's `let` checker
+rejected the unexpanded proofs anyway (tgc_io-safe-6, step t2....t27).
+Let-free veriT proofs check valid.  Corpus: 40 random unsat benchmarks under
+400 KB per logic (QF_UF 40, QF_LIA 30 proved, QF_LRA 4 proved), in
+`scratchpad/verit/corpus`; the runner `scratchpad/verit/corpus-run.sh`
+folds (`fold hoist prune`, limit 100), checks the folded proof, then
+hole-checks it plain and prenormalized.
+
+**What the corpus shows so far** (26 of 106 proofs, smallest first per
+logic, interleaved; binary d44e0c81 with the §23 normalizer):
+
+| logic | proofs | steps before -> after | holes | plain proved / kept / skipped | plain hole-free | plain time | prenorm closed / proved / kept | prenorm hole-free | prenorm time |
+|---|---|---|---|---|---|---|---|---|---|
+| QF_UF | 9 | 10,025 -> 8,815 | 312 | 215 / 97 / 0 | 1 | 173 s | 312 / 312 / 0 | 9 | 0 s |
+| QF_LIA | 9 | 288 -> 216 | 40 | 36 / 4 / 0 | 5 | 90 s | 23 / 40 / 0 | 9 | 1 s |
+| QF_LRA | 8 | 948 -> 295 | 86 | 21 / 60 / 5 | 1 | 565 s | 19 / 39 / 47 | 5 | 404 s |
+
+Every folded proof checks `holey` (the holes are the only unchecked
+steps).  The plain engine does much worse on veriT's holes than on cvc5's,
+for three reasons that are all about term shape, not rewrite content:
+
+1. **`ac_simp` over nested binary `and`/`or`** (QF_UF, `iso_*`: 87 of 97
+   kept in seconds): the flattening of a deep binary tree of `or`s inside
+   `and`s hits the 500k growth cap.  cvc5 flattens in its own printer, so
+   its holes never ask this.
+2. **Relations under Boolean connectives** (QF_LRA `cbrt`, `Chua`): the
+   engine's arithmetic normalization is a goal-level fallback, so
+   `(* x (- 1.0))` = `(* (- 1.0) x)` proves as a relation or a negated
+   relation (`scratchpad/verit/diag/d1`, 0.7 s each) but not one level
+   down, inside an `and` (guard `arithRelBoolCanMatch` fails).  With
+   `--fold-limit 1` such holes are leaves and prove.
+3. **`bool_simplify` and buried `la_rw_eq`** (QF_LRA): a five-symbol
+   `(not (=> A (=> B B)))` = `(and A B (not B))` exhausts 60 s or 8 GB in
+   egglog (`diag/d2`), and a single `la_rw_eq` deep inside a 4 KB DNF
+   (`windowreal-safe2-2`) exhausts 60 s: the Boolean rules explode on the
+   surrounding term.
+
+**Normalizer additions** (d72ba1bd), each an equivalence: negation normal
+form; a negated bound is the opposite bound (Int tightened); two bounds on
+one polynomial that make an equality (`(and (<= P c) (>= P c))` is
+`(= P c)`) or, under `or`, a disequality are replaced by it -- the inverse
+of `la_rw_eq`; and a conjunct that is a disjunction whose every member is
+complemented among the conjuncts makes the conjunction false (dually for
+`or`), which the flattening had hidden (`(not (=> (and A C) (=> (or B C)
+(or B C))))` is false).  The dual-complement rule matters because NNF
+pushes `not` through the compound literal the old complement test matched.
+Unit tests: 41 equivalences, 9 non-equivalences.  With these, all three
+`diag/d2` shapes, all 14 `windowreal-safe2-2` holes and all 3
+`intersection-example` holes close without egglog.
+
+**And on cvc5's holes: every one.**  Re-running the ten §23 sample proofs
+with the final normalizer (`scratchpad/prenorm3`): 100% of the holes of
+every proof are closed by normalization alone -- gensys 1,395/1,395, RF-09
+2,693/2,693, 30_30_18 822/822, ex4880 1,347/1,347, MULTIPLIER_3 891/891,
+cut_lemma 1,303 -> 1,370/1,370, FISCHER9 1,697/1,697, ring 911/911,
+clock_synchro 1,120/1,120, vpm2 1,838/1,838 -- egglog is never called and
+the passes take 0.01–0.04 s of hole time (0.3–3 s wall, 37 s for FISCHER9's
+parse).  What was left to egglog before were negated bounds and
+equality-to-bounds rewrites, which the additions cover.  The cross-check
+(no hole newly kept; every hole egglog kept is closed) and the cvc5 oracle
+(400 of 400 sampled closed holes unsat) both pass, as they did for the
+NNF-only intermediate (`scratchpad/prenorm2`, same closed counts as §23).
+The chk1200p run in progress uses the §23 normalizer; the natural next
+cluster run is the same comparison with this one.
+
+Pending: the rest of the corpus (the runner continues; its prenormalized
+column is redone with the final binary by `scratchpad/verit/corpus-prenorm.sh`
+once it ends), the same at `--fold-limit 1` for the granularity
+comparison, and a cluster run over veriT proofs of the three sets.
