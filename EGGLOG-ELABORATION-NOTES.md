@@ -2335,3 +2335,60 @@ no isolation and no hard per-hole limit (only the cooperative
 `--rare-check-timeout`), which is why the evaluation keeps using the
 elaborator's pass.  A plain `carcara check` without the flag leaves holes
 as holes, as before.
+
+## 28. Relations below the goal: the all-relations fallback (2026-09-19)
+
+veriT's `la_rw_eq` rewrites an arithmetic equality into the conjunction of
+its two bounds (`arith/LA-pre.c`, one of the preprocessing rules the
+`fold` pass turns into holes), so a hole's goal is
+`(= (= a b) (and (<= a b) (<= b a)))`.  Both the normalizer and egglog
+failed on it, for the same reason: a relation and its mirror image have
+the same content but different terms, and nothing identified them below
+the goal.  The normalizer cannot: `poly_simp_rel` scales by a positive
+factor (a negative one is allowed for `=` only), so `(<= a b)` and
+`(<= b a)` become `(<= P c)` and `(<= -P -c)`.  egglog could not either:
+`arithRelBoolKeyOf` is demanded for the goal's two sides only, so the
+canonical keys were never computed for an atom inside an `and`.
+
+**The fallback** (`arith_rel_all`/`arith_rel_merge` in
+`arith_poly_norm_rel.egglog`, plan `arithRelAll` in the engine).  A third
+goal fallback, tried only after the goal check and the two goal-level
+arithmetic checks have failed: demand the key of every relation atom in
+the e-graph (the nine shapes the key rules cover), run the guard and
+`arith_poly` rulesets, union the atoms whose keys agree, then run the main
+schedule once more and check the goal as it is.  A goal the earlier checks
+prove never reaches it, so cvc5's holes pay nothing; the cost falls only on
+goals that would otherwise be kept.
+
+**Reconstruction.**  The unions the fallback makes are not rewrites, so the
+certificate search had to learn them: a relation pair with equal keys is
+one `poly_simp_rel` computation (`prove_by_arith`, in-class), and `and`/`or`
+sides whose literal sets differ only in unioned literals are proved by
+`aci_simp` on the matching literals plus in-class proofs of the pairs
+(`prove_by_aci_modulo`, also a candidate edge of the path search).  The
+computational strategies run after the rule search, so a checkable rule
+path is still preferred.
+
+**A soundness fix on the way.**  `rules_from_generated_program` stripped the
+sort guards from the generated rules, so the search would ground
+`arith-eq-elim-real` on an integer equality and emit a `rare_rewrite` step
+the checker rejects ("trying to substitute term 's1' with a term of a
+different sort"); the guards are now kept and checked when a rule is
+grounded, with `encoded_sort` recomputing an encoded term's sort.
+
+**Policy.**  In the elaboration pass the normalizer no longer rewrites the
+goals it cannot close: the certificate search works on the e-graph of the
+goal it was given, and on a normalized goal egglog proves more while the
+reconstruction replays less (the `arith-eq-elim-int` instance it needs is
+not a stored node, since the normalized sides are terms the rules were not
+compiled around).  Closing a hole outright still applies, with the
+normalizer's certificate.  Trying the normalized goal first and the
+original on a reconstruction failure would get both, at one extra child run
+per lost hole; not done.
+
+**Measured** on the three `la_rw_eq` shapes (`scratchpad/verit/diag/d4`),
+which were kept by both passes before: checking proves 3 of 3, elaboration
+justifies 3 of 3, and the elaborated proof checks **valid** with no hole
+left.  The unit tests cover the e-graph side
+(`mirrored_inequalities_meet_inside_a_conjunction`) and the certificate
+side end to end (`elaborates_mirrored_bounds_in_a_conjunction`).
