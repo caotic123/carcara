@@ -192,6 +192,34 @@ impl Normalizer {
                 if arg.is_bool_false() {
                     return pool.add(Term::new_bool(true));
                 }
+                // A negated bound is the opposite bound.
+                if let Term::Op(rel @ (LessThan | LessEq | GreaterThan | GreaterEq), rel_args) =
+                    arg.as_ref()
+                {
+                    if rel_args.len() == 2 {
+                        if let Some(sort) = self.arith_sort(pool, &rel_args[0]) {
+                            let negated = match rel {
+                                LessThan => GreaterEq,
+                                LessEq => GreaterThan,
+                                GreaterThan => LessEq,
+                                _ => LessThan,
+                            };
+                            let (lhs, rhs) = (rel_args[0].clone(), rel_args[1].clone());
+                            return self.normalize_relation(pool, negated, &lhs, &rhs, sort);
+                        }
+                    }
+                }
+                // Negation normal form: a negated conjunction or disjunction is
+                // the dual connective over the negated arguments.
+                if let Term::Op(inner_op @ (And | Or), inner) = arg.as_ref() {
+                    let dual = if *inner_op == And { Or } else { And };
+                    let inner = inner.clone();
+                    let negated: Vec<Rc<Term>> = inner
+                        .iter()
+                        .map(|x| self.normalize_op(pool, original, Not, vec![x.clone()]))
+                        .collect();
+                    return self.normalize_aci(pool, dual, negated);
+                }
                 pool.add(Term::Op(Not, args))
             }
             And | Or => self.normalize_aci(pool, op, args),
@@ -311,18 +339,135 @@ impl Normalizer {
         kept.sort_unstable_by_key(Rc::as_ptr);
         kept.dedup();
         // `p` and `(not p)` together make the absorbing element.
-        for arg in &kept {
-            if let Term::Op(Operator::Not, inner) = arg.as_ref() {
-                if kept.binary_search_by_key(&Rc::as_ptr(&inner[0]), Rc::as_ptr).is_ok() {
-                    return pool.add(Term::new_bool(absorbing));
-                }
+        let negated: std::collections::HashSet<usize> = kept
+            .iter()
+            .filter_map(|arg| match arg.as_ref() {
+                Term::Op(Operator::Not, inner) => Some(Rc::as_ptr(&inner[0]) as *const () as usize),
+                _ => None,
+            })
+            .collect();
+        let complemented = |x: &Rc<Term>| match x.as_ref() {
+            Term::Op(Operator::Not, inner) => {
+                kept.binary_search_by_key(&Rc::as_ptr(&inner[0]), Rc::as_ptr).is_ok()
             }
+            _ => negated.contains(&(Rc::as_ptr(x) as *const () as usize)),
+        };
+        if kept.iter().any(|arg| {
+            matches!(arg.as_ref(), Term::Op(Operator::Not, _)) && complemented(arg)
+        }) {
+            return pool.add(Term::new_bool(absorbing));
+        }
+        // So does an argument of the dual connective whose every argument is
+        // complemented here: `(and (or p q) (not p) (not q))` is false.
+        let dual = if op == Operator::And { Operator::Or } else { Operator::And };
+        if kept.iter().any(|arg| match arg.as_ref() {
+            Term::Op(inner_op, inner) if *inner_op == dual => inner.iter().all(complemented),
+            _ => false,
+        }) {
+            return pool.add(Term::new_bool(absorbing));
+        }
+        // Two bounds on one polynomial that make an equality (or, in a
+        // disjunction, a disequality) are that: `(and (<= P c) (>= P c))` is
+        // `(= P c)`, which meets veriT's `la_rw_eq` from the other side.
+        if let Some(merged) = self.merge_bounds(pool, op, &kept) {
+            return self.normalize_aci(pool, op, merged);
         }
         match kept.len() {
             0 => pool.add(Term::new_bool(identity)),
             1 => kept.pop().unwrap(),
             _ => pool.add(Term::Op(op, kept)),
         }
+    }
+
+    /// `args` with every pair of bounds on the same polynomial that amounts to
+    /// an equality (under `and`) or a disequality (under `or`) replaced by it;
+    /// `None` when there is no such pair.  Bounds are in normal form, `(rel P c)`
+    /// with `c` a constant.
+    fn merge_bounds(
+        &mut self,
+        pool: &mut PrimitivePool,
+        op: Operator,
+        args: &[Rc<Term>],
+    ) -> Option<Vec<Rc<Term>>> {
+        use Operator::*;
+        let bound_of = |term: &Rc<Term>| -> Option<(Operator, Rc<Term>, Rational)> {
+            match term.as_ref() {
+                Term::Op(rel @ (LessThan | LessEq | GreaterThan | GreaterEq), rel_args)
+                    if rel_args.len() == 2 =>
+                {
+                    Some((*rel, rel_args[0].clone(), rel_args[1].as_signed_number()?))
+                }
+                _ => None,
+            }
+        };
+        let mut by_poly: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (index, arg) in args.iter().enumerate() {
+            if let Some((_, poly, _)) = bound_of(arg) {
+                by_poly
+                    .entry(Rc::as_ptr(&poly) as *const () as usize)
+                    .or_default()
+                    .push(index);
+            }
+        }
+        let mut removed = vec![false; args.len()];
+        let mut added: Vec<Rc<Term>> = Vec::new();
+        for indices in by_poly.into_values() {
+            for a in 0..indices.len() {
+                for b in a + 1..indices.len() {
+                    let (i, j) = (indices[a], indices[b]);
+                    if removed[i] || removed[j] {
+                        continue;
+                    }
+                    let (Some((oi, poly, ci)), Some((oj, _, cj))) =
+                        (bound_of(&args[i]), bound_of(&args[j]))
+                    else {
+                        continue;
+                    };
+                    let Some(sort) = self.arith_sort(pool, &poly) else { continue };
+                    let equality = |this: &Self, pool: &mut PrimitivePool, c: &Rational| {
+                        let constant = this.constant_term(pool, c, sort);
+                        pool.add(Term::Op(Equals, vec![poly.clone(), constant]))
+                    };
+                    let merged = match (op, oi, oj) {
+                        (And, LessEq, GreaterEq) | (And, GreaterEq, LessEq) if ci == cj => {
+                            Some(equality(self, pool, &ci))
+                        }
+                        (Or, LessThan, GreaterThan) | (Or, GreaterThan, LessThan) if ci == cj => {
+                            let equality = equality(self, pool, &ci);
+                            Some(pool.add(Term::Op(Not, vec![equality])))
+                        }
+                        (Or, LessEq, GreaterEq) | (Or, GreaterEq, LessEq)
+                            if sort == ArithSort::Int =>
+                        {
+                            let (low, high) = if oi == LessEq { (ci, cj) } else { (cj, ci) };
+                            if high == low.clone() + Rational::from(2) {
+                                let equality = equality(self, pool, &(low + Rational::from(1)));
+                                Some(pool.add(Term::Op(Not, vec![equality])))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(term) = merged {
+                        removed[i] = true;
+                        removed[j] = true;
+                        added.push(term);
+                    }
+                }
+            }
+        }
+        if added.is_empty() {
+            return None;
+        }
+        let mut result: Vec<Rc<Term>> = args
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !removed[*index])
+            .map(|(_, arg)| arg.clone())
+            .collect();
+        result.extend(added);
+        Some(result)
     }
 
     fn arith_sort(&self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Option<ArithSort> {
@@ -587,6 +732,20 @@ mod tests {
             (INTS, "(distinct x y x)", "false"),
             (INTS, "(= p true)", "p"),
             (INTS, "(= false p)", "(not p)"),
+            (INTS, "(not (=> p q))", "(and p (not q))"),
+            (INTS, "(not (and p (not q)))", "(or (not p) q)"),
+            (INTS, "(not (=> (and p q) (=> (or p q) (or p q))))", "false"),
+            (INTS, "(and (or p q) (not p) (not q))", "false"),
+            (INTS, "(or (and p q) (not p) (not q))", "true"),
+            (INTS, "(not (<= x 3))", "(>= x 4)"),
+            (INTS, "(not (< x y))", "(>= x y)"),
+            (REALS, "(not (<= a 3.0))", "(> a 3.0)"),
+            (INTS, "(and (<= x y) (<= y x))", "(= x y)"),
+            (INTS, "(and p (<= (+ x 1) y) (<= y (+ x 1)) q)", "(and p q (= y (+ x 1)))"),
+            (INTS, "(or (< x y) (< y x))", "(not (= x y))"),
+            (INTS, "(not (and (<= x y) (<= y x)))", "(distinct x y)"),
+            (REALS, "(and (<= a (* 2.0 b)) (<= (* 2.0 b) a))", "(= a (* 2.0 b))"),
+            (REALS, "(or (not (<= a b)) (not (<= b a)))", "(not (= a b))"),
             (REALS, "(>= 0.0 (/ (- 1) 1024))", "true"),
             (REALS, "(* (/ 1 2) (to_real (+ x (* 2 x))))", "(* (/ 3 2) (to_real x))"),
             (REALS, "(< (* 2.0 a) b)", "(> (+ b (* (- 2.0) a)) 0.0)"),
@@ -605,6 +764,10 @@ mod tests {
             (INTS, "(and p q)", "(or p q)"),
             (INTS, "(* x y)", "(* x x)"),
             (REALS, "(>= a 1.0)", "(> a 1.0)"),
+            (INTS, "(and (or p q) (not p))", "false"),
+            (INTS, "(not (and p q))", "(and (not p) (not q))"),
+            (INTS, "(and (<= x y) (<= y (+ x 1)))", "(= x y)"),
+            (INTS, "(or (<= x 2) (>= x 3))", "(not (= x 3))"),
         ] {
             let (equal, nl, nr) = same(problem, lhs, rhs);
             assert!(!equal, "{lhs} and {rhs} both normalize to {nl}, {nr}");
