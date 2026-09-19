@@ -96,3 +96,54 @@ Before committing to the port, two cheap measurements decide it:
 If both come out favourably, the port is worth doing; otherwise the
 remaining losses are better attacked on the RARE side (rule ordering,
 smaller rulesets per hole kind), which needs no engine change.
+
+## Is 3.0's core engine faster than 0.4's?
+
+Yes, and by more than an increment: at 1.0 the entire matching/storage core was
+replaced, so 0.4 and 3.0 share almost no engine code. But the release notes
+never state a 0.4-to-3.0 number, and none of the published figures is a
+before/after across the switch.
+
+**The core is a different program.** 0.4's engine is the crate's own
+`gj.rs` (1,004 lines of generic join over lazy tries), `function/table.rs`
+(insertion-ordered table, removals mark rows stale until an explicit rehash),
+`function/index.rs` (`HashMap<u64, SmallVec<[u32; 8]>>` per column) and
+`unionfind.rs` — about 15k lines total, with no occurrence of `rayon`,
+`par_iter` or `thread` anywhere in the source. 3.0 keeps only the frontend:
+`gj.rs`, `unionfind.rs`, `actions.rs` and `function/` are gone from
+`egglog-3.0.0/src`, and the work happens in `egglog-core-relations` +
+`egglog-bridge` + `egglog-concurrency` (~27k lines) — free join
+(`free_join/{plan,execute}.rs`), sharded hash tables, columnar pooled row
+buffers, sorted-offset subsets, a parallel rebuild, and per-operation
+parallelism gated by size cutoffs in `parallel_heuristics.rs`.
+
+Three differences bear directly on our saturation losses:
+
+* **Query planning.** 0.4 picks a variable order by size guess and runs generic
+  join. 3.0's planner (`free_join/plan.rs`) does hypertree decomposition with a
+  min-fill heuristic and Yannakakis-style bag materialization before choosing a
+  join strategy, and caches/shares plan tries. That is the part that attacks
+  intermediate-result blow-up, which is what our 30 s and 5 GB kills are.
+* **Row width.** `Value` is `u32` in core-relations against `u64` (plus a
+  `Symbol` tag in debug builds) in 0.4. Base values are interned in a side
+  table. Rows are roughly half as wide, which is the one structural reason to
+  expect the 5 GB kills to move.
+* **Parallelism is opt-in.** `egglog_bridge::EGraph::default()` is
+  `new(1)` — serial, no pool allocated; threads come only from
+  `set_num_threads`. With `--hole-isolate` already forking a child per hole,
+  the threaded path would oversubscribe, so the realistic comparison for us is
+  3.0 single-threaded against 0.4.
+
+**What the changelog quantifies** is all within the new backend: 2.0 lists
+index-catalog and rebuild optimizations, 3.0 lists "about 33% on `gemma` from
+sorted indexes" and "15% on `whisper`, 12% on `gemma`, 8% on `qwen3_moe` from
+trie sharing" (#948, #949). 1.0, the release that swapped the backend, lists
+the swap as a feature and gives no comparison against 0.5.
+
+So the engine is faster, but by an unknown factor on our programs, and a faster
+engine does not by itself convert a killed hole into a proved one: it moves
+where the 30 s wall falls and, via the narrower rows, where the 5 GB wall
+falls. The lever that changes the shape of the loss is still the scheduler, as
+above. Measurement 1 of the previous section remains the one that decides the
+port; this section only removes "maybe 3.0's engine is not actually better" as
+a reason to hesitate.
