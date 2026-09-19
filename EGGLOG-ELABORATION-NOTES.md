@@ -2068,3 +2068,15 @@ Pending: the rest of the corpus (the runner continues; its prenormalized
 column is redone with the final binary by `scratchpad/verit/corpus-prenorm.sh`
 once it ends), the same at `--fold-limit 1` for the granularity
 comparison, and a cluster run over veriT proofs of the three sets.
+
+**Bound-aware complements** (commit after d72ba1bd).  The negated-bound
+normal form hid a complement: `(or (not (>= x 1)) (>= x 1))` became
+`(or (<= x 0) (>= x 1))`, and a `comp_simplify` hole of RF-01 (QF_LIA)
+went to egglog and failed.  The complement checks now reason about bounds
+per polynomial: under `and`, bounds with no common value (or a point
+outside a bound) are a complement pair and the tightest lower and upper
+bound are the only ones kept; under `or`, bounds covering every value are
+one and the weakest are kept; a member of a dual argument that is
+complemented is dropped from it (`(or p (and (not p) q))` is `(or p q)`).
+Unit tests 56 / 14.  The ten cvc5 sample proofs still close completely,
+cross-check and oracle clean (`scratchpad/prenorm4`).
