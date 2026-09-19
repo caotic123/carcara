@@ -1835,3 +1835,112 @@ peg_solitaire.5: 46,042 equalities for 2,256 holes, 124 s -> 1,063 s, kept 11
 -> 114.  The variant that would give the intended effect substitutes each
 proved `l` by its normal form `r` in the goal before translation, so `l`
 never enters the e-graph; not implemented.
+
+## 23. Reuse across holes: substitution, and Carcara's normalizers as a preprocessor (2026-09-19)
+
+### Why premise reuse lost
+
+`chk1200h2` measured `--hole-reuse-proved` as a loss on every set.  A premise
+`l = r` becomes `(union l r)` plus `Avaliable` facts for every subterm of
+both sides; an e-graph union adds and never replaces, so the normalizer and
+every other rule still fire on `l`, and additionally on `r`; the
+pair-equality seeding grows with the square of the available terms; and the
+selection (any proved equality with a side occurring in the goal, up to 64
+per hole) is loose.  peg_solitaire.5: 46,042 equalities for 2,256 holes,
+124 s -> 1,063 s.
+
+### Substitution-based reuse (`--hole-reuse-subst`, check-only)
+
+The variant that replaces instead of adding.  Every hole's compound subterms
+are hashed structurally (`structural_hash`, the same in every process and
+pool); the owner of a subterm is the smallest hole holding it and a hole
+depends on the owners of its subterms; owners run first (smallest first),
+the other holes keep the proof's order, and a worker takes the first hole
+whose owners are done (window 512), else the first hole left.  After a
+proved owner the child snapshots its e-graph, aligns the goal's compound
+subterms with the encoded goal tree, and reports `nf <hash> <term>` for each
+subterm whose class holds a strictly smaller decodable term (premise-only
+variables rejected).  A later hole receives up to 64 such normal forms as
+`(step nfK (cl (= t t)) :rule nf-hint :args (H))` lines in its input and the
+child substitutes them into the goal (outermost first) before translation.
+Interleaved measurement (plain / subst, two rounds each, 8 workers, 60 s and
+8 GB per hole, hoisted proofs; the CPU throttles under sustained load, so
+only back-to-back pairs compare):
+
+| proof | plain s | subst s | substitutions |
+|---|---|---|---|
+| vpm2 | 114 / 110 | 100 / 105 | 2,179 |
+| ring | 57 / 59 | 61 / 61 | 894 |
+| c_inference | 39 / 39 | 41 / 41 | 197 |
+| FISCHER9 (hole pass) | 37 / 38 | 40 / 41 | 63 |
+| clock_synchro | 68 / 64 | 73 / 72 | 350 |
+| MULTIPLIER_3 | 166 / 166 | 188 / 183 | 1,202 |
+
+Verdicts unchanged (one more kept hole on cut_lemma in one run).  Gains only
+where genuine normalization is shared (vpm2, −8%); 5–12% losses elsewhere:
+after hoisting the holes share few subterms, the shared ones are constant
+folds or sums already in cvc5's normal form, and the export snapshots cost
+more than the substitutions save.  A double-negation hole over an
+arithmetic atom takes 0.15 s in-process (0.11 s over a Boolean atom) while
+RF-09 costs 0.47 s per hole in the isolated parallel run: the per-child
+fixed cost (spawn, RARE load, prelude parse) dominates the cheap holes.  Kept
+as an option, off by default.
+
+### Carcara's normalizers first (`--hole-prenormalize`, check-only)
+
+The trailing arguments of a hole are cvc5's (theory, method) ids: `3 7` and
+`3 6` are the arithmetic rewriter's post- and pre-rewrites, `1 6`/`1 7` the
+Boolean rewriter's, `2 7` UF's.  In the nine arithmetic samples 60–95% of the
+holes are arithmetic rewrites, i.e. the rewriter's normal forms: polynomial
+normalization, constant evaluation, canonical linear relations.  Carcara has
+the decision procedures (`poly_simp`, `evaluate`, `aci_simp`) but not as
+term normalizers, so `src/elaborator/prenorm.rs` is a bottom-up normalizer
+in the proof's pool: constants evaluated; `not-not`; `and`/`or` flattened,
+identity and absorbing elements and complementary pairs handled, arguments
+sorted by pointer and deduplicated; `=>` to `or`; `ite` on constants and on
+equal branches; `(= p true)`/`(= p false)`; `(= x x)`; symmetric `=` in one
+order; `distinct` expanded to the pairwise disequalities (so a repeated
+element gives false); `+ - * / to_real` to a canonical polynomial term
+(monomials sorted, `(* c a1 .. an)`, constant last, `to_real` distributed);
+relations `(op a b)` to `(op' P c)` with the difference polynomial scaled to
+integral coefficients of gcd 1 (Int) or leading coefficient 1 (Real), a
+positive leading coefficient with the relation flipped, the constant on the
+right, Int bounds tightened (`>` to `>=` plus one, non-integer `=` false).
+Before scheduling, both sides of every hole are normalized: equal sides
+close the hole without egglog, otherwise the goal becomes the equality of
+the normal forms.  Every step is an equivalence Carcara's rules justify
+(`poly_simp`, `poly_simp_rel`, `evaluate`, `aci_simp`, `not_not`,
+`distinct_elim`, `cong`), so certificates can cite them; only checking is
+wired up.
+
+Measurement (plain / prenorm, interleaved, same settings), pass time in s:
+
+| proof | plain | prenorm | closed by normalization | kept plain -> prenorm |
+|---|---|---|---|---|
+| gensys_icl072 (QF_UF) | 29.3 | 0.04 | 1,395 / 1,395 | 18 -> 0 |
+| RF-09 | 121.8 | 27.6 | 1,666 / 2,693 | 4 -> 0 |
+| c_inference | 44.8 | 11.9 | 554 / 822 | 0 -> 0 |
+| bofill ex4880 | 113.2 | 21.3 | 1,080 / 1,347 | 5 -> 0 |
+| MULTIPLIER_3 | 220.0 | 2.9 | 802 / 891 | 0 -> 0 |
+| cut_lemma_01_008 | 615.7 | 10.8 | 1,303 / 1,370 | 63 -> 0 |
+| FISCHER9 | 47.7 | 12.4 | 1,394 / 1,697 | 0 -> 0 |
+| ring | 70.5 | 3.3 | 830 / 911 | 0 -> 0 |
+| clock_synchro | 68.3 | 0.8 | 1,054 / 1,120 | 1 -> 0 |
+| vpm2 | 116.9 | 4.4 | 1,502 / 1,838 | 7 -> 0 |
+
+Normalization itself takes 7–53 ms per proof.  Every hole egglog kept in
+these proofs (98) is closed by normalization: the large `or`/`and` chains
+of gensys, the arithmetic holes that exhausted 60 s in cut_lemma.  The
+remaining holes reach egglog in normal form and prove quickly.  Soundness
+checks: 27 equivalences and 5 non-equivalences as unit tests; a cross-check
+of every closed hole against egglog's plain verdicts (no hole newly kept);
+and an independent oracle, 60 random closed holes per proof sent to cvc5 as
+the negation of the hole's equality over the benchmark's declarations
+(`scratchpad/prenorm/oracle.py`): 600 of 600 unsat.
+
+What is left for egglog after normalization is the RARE rewriting proper;
+the guarantee the user asked about -- rewrites that never produce terms
+needing further normalization -- would let the normalizer run once before
+and once after egglog; today the engine's own normalizers cover the
+in-between.  Next: the same measurement on the QF_UF families with kept
+holes, then a cluster run with `--hole-prenormalize`.
