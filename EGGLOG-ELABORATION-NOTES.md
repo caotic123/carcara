@@ -1956,8 +1956,8 @@ turns those derivations into cvc5-shaped holes so a veriT proof goes through
 the same checking and elaboration.
 
 **What is folded.**  A *rewrite derivation* is a closed sub-DAG of steps
-whose rules are the 20 Alethe rewrite rules (`REWRITE_RULES`: the
-`*_simplify` family, `ac_simp`, `la_rw_eq`, `distinct_elim`, `nary_elim`,
+whose rules are the 19 Alethe rewrite rules (`REWRITE_RULES`: the
+`*_simplify` family, `ac_simp`, `distinct_elim`, `nary_elim`,
 `connective_def`; quantifier rules, `ite_intro` and `bfun_elim` left out) or
 the four glue rules, each concluding a unit `(= l r)` with no arguments, no
 discharge and premises only inside the derivation.  Membership is decided
