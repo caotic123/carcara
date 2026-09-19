@@ -2178,3 +2178,100 @@ This is the last measurement of the normalizer in this form: the design is
 being redone as the composition of Carcara's own rule procedures
 (`evaluate`, `poly_simp`/`poly_simp_rel`, `aci_simp`), so that elaboration
 can emit the same steps, with everything else left to RARE rules.
+
+## 26. The normalizer as four checker procedures, with certificates (2026-09-19)
+
+The §23–25 normalizer was a general-purpose decision procedure for the
+holes; that was not the point.  The point is one machinery for checking
+and elaboration: normalization steps that are Carcara rule applications,
+so that the same derivation that closes a hole in the checking pass is the
+certificate that replaces it in the elaboration pass, and whatever the
+normalizer does not reach is egglog's job through RARE rules (with a rule
+file per producer, cvc5's and veriT's, as needed).
+
+**What it is now** (`src/elaborator/prenorm.rs`, commit 013405c6).
+Bottom-up and memoized; at each operator term, after the arguments, at
+most one of the four procedures applies at the top, and its result is
+normalized again (a `distinct` expands to equalities that `poly_simp_rel`
+then canonicalizes, under an `and` that `aci_simp` then sorts):
+
+- `evaluate`: a term whose arguments are all values is its value
+  (`Term::evaluate`).
+- `poly_simp`: `+`, `-`, `*`, `/`, `to_real` terms of sort Int or Real are
+  printed as the canonical term of the checker's own polynomial
+  (`checker::rules::polynomial::Polynomial`, now `pub(crate)`): monomials
+  by size then atom pointers, `(* c a1 .. an)`, constant last, Int atoms
+  in a Real polynomial wrapped in `to_real` (the checker's polynomial sees
+  through it).  Bit-vectors not yet.
+- `poly_simp_rel`: `(op x1 x2)` for `<`, `<=`, `>`, `>=`, `=` over Int/Real
+  (Real when either side is) becomes `(op P c)`: the difference of the
+  sides scaled by a positive factor (integral coefficients of gcd 1 for
+  Int, leading coefficient of absolute value 1 for Real), constant on the
+  right.  An equality is additionally oriented to a positive leading
+  coefficient, which `poly_simp_rel` allows for `=` only.  No flipping of
+  order relations and no Int tightening: those are RARE rules.  The step
+  carries its `poly_simp` premise `(= (* s (- x1 x2)) (* 1 (- P c)))`.
+- `aci_simp`: `and`, `or`, `bvand`, `bvor`, `bvxor`, `bvadd`, `bvmul`
+  flattened, identity element removed, deduplicated when idempotent, sorted
+  by pointer.  No absorbing element, no complements.
+- `distinct_elim`: two arguments to `(not (= a b))`, more to the `and` of
+  the pairwise disequalities in the checker's order, more than two
+  Booleans to `false`.
+
+Nothing else: NNF, negated bounds, bound merging, complements, absorbing
+elements, `=>`, `ite`, `(= p true)`, `(= x x)` are gone.
+
+**Certificates.**  Every step is one rule on one subterm, so the
+derivation of a normal form is `cong` over the arguments' derivations,
+the top step(s), the tail's derivation, joined by `trans`; a closed hole
+`(= l r)` gets the two derivations joined by `symm` and `trans` (or
+`refl`), a rewritten goal gets egglog's proof of `(= nl nr)` bridged to
+`(= l r)` the same way.  `--hole-prenormalize` therefore works in the
+elaboration pass too.  The unit tests check every certificate with the
+checker (`certificates_check`).
+
+**Two checker fixes on the way** (1d3cdec4): the evaluator compared an
+Integer and a Real value structurally, so `evaluate` accepted
+`(= (= 1.0 1) false)` under subtyping; and `aci_simp` deduplicated the
+arguments of every associative operator, accepting `(= (+ a a) a)` and
+`(= (* a a) a)`; deduplication is now confined to `and`, `or`, `bvand`,
+`bvor`.
+
+**Measured on the ten cvc5 sample proofs** (4 workers, 4 GB, 60 s per
+hole; `scratchpad/prenorm5`, `scratchpad/elab5`):
+
+| proof | holes | closed by normalization | rewritten for egglog | check-only: kept / pass | elaboration: justified / kept / pass | elaborated proof |
+|---|---|---|---|---|---|---|
+| gensys_icl072 | 1,395 | 462 | 6 | 0 / 8.5 s | 1,395 / 0 / 20 s | valid |
+| RF-09 | 2,693 | 1,163 | 59 | 0 / 36 s | 2,693 / 0 / 72 s | holey (23 other holes) |
+| 30_30_18 | 822 | 450 | 292 | 0 / 10 s | 822 / 0 / 24 s | valid |
+| ex4880 | 1,347 | 911 | 252 | 0 / 22 s | 1,345 / 2 / 40 s | holey (108) |
+| MULTIPLIER_3 | 891 | 766 | 36 | 0 / 3 s | 891 / 0 / 6 s | holey (217) |
+| cut_lemma | 1,370 | 1,258 | 76 | 0 / 4 s | 1,370 / 0 / 8 s | holey (142) |
+| FISCHER9 | 1,697 | 1,191 | 321 | 0 / 12 s | 1,697 / 0 / 22 s | holey (122) |
+| ring | 911 | 747 | 95 | 0 / 6 s | 911 / 0 / 8 s | holey (116) |
+| clock_synchro | 1,120 | 782 | 271 | 0 / 14 s | 1,119 / 1 / 22 s | holey (79) |
+| vpm2 | 1,838 | 739 | 3 | 1 / 75 s | 1,837 / 1 / 82 s | holey (256) |
+
+Normalization alone closes 33–92% of the holes per proof; the rest go to
+egglog, either as rewritten goals or untouched (the Boolean shapes:
+`(= p true)`, `not_not`, absorbing elements, complements, which are
+`bool-*` RARE rules), and egglog proves all of them but one: `ho27` of
+vpm2, a `(<= ...)` over a 49-summand sum whose sides normalize to
+different relations (a flip), which egglog then cannot handle at that
+size in 60 s.  Every hole the plain engine kept in §23 (98) is closed or
+proved.  Pass times sit between the plain engine's (29–616 s) and the
+§23 normalizer's (0.04–28 s).  Oracle: 400 of 400 sampled closed holes
+unsat; cross-check: no hole newly kept.  In the elaboration pass every
+certificate was accepted by the checker at insertion (no "checker
+rejected" hole); the four kept holes are three egglog snapshots without
+a certificate and the vpm2 timeout.  The "holey" verdicts of the
+elaborated proofs are cvc5's other hole kinds (`ARITH_PRED_CAST_TYPE`,
+`THEORY_INFERENCE_ARITH`, `THEORY_BV`), which were never in scope; gensys
+and 30_30_18, which have none, come out valid.
+
+**veriT.**  The corpus's prenormalized column is being redone with this
+normalizer (`results-prenorm.txt`; the §24 column is kept as
+`results-prenorm-old-normalizer.txt`).  What the old normalizer closed and
+this one does not (veriT's `bool_simplify`, `la_rw_eq`, `comp_simplify`
+shapes) is what a `verit.rare` file has to supply.
