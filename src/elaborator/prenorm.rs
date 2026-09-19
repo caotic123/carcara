@@ -304,7 +304,7 @@ impl Normalizer {
                 self.term_of_polynomial(pool, &poly, sort)
             }
             LessThan | LessEq | GreaterThan | GreaterEq if args.len() == 2 => {
-                match self.arith_sort(pool, &args[0]) {
+                match self.relation_sort(pool, &args[0], &args[1]) {
                     Some(sort) => self.normalize_relation(pool, op, &args[0], &args[1], sort),
                     None => self.evaluated(pool, Term::Op(op, args)),
                 }
@@ -313,7 +313,7 @@ impl Normalizer {
                 if args[0] == args[1] {
                     return pool.add(Term::new_bool(true));
                 }
-                if let Some(sort) = self.arith_sort(pool, &args[0]) {
+                if let Some(sort) = self.relation_sort(pool, &args[0], &args[1]) {
                     return self.normalize_relation(pool, Equals, &args[0], &args[1], sort);
                 }
                 // `(= p true)` is `p`, `(= p false)` is `(not p)`.
@@ -645,6 +645,20 @@ impl Normalizer {
         Some(result)
     }
 
+    /// The sort a relation between `a` and `b` is normalized in: Real as soon as one side is
+    /// Real, since under Int/Real subtyping an integer numeral may stand on either side.
+    fn relation_sort(
+        &self,
+        pool: &mut PrimitivePool,
+        a: &Rc<Term>,
+        b: &Rc<Term>,
+    ) -> Option<ArithSort> {
+        match (self.arith_sort(pool, a)?, self.arith_sort(pool, b)?) {
+            (ArithSort::Int, ArithSort::Int) => Some(ArithSort::Int),
+            _ => Some(ArithSort::Real),
+        }
+    }
+
     fn arith_sort(&self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Option<ArithSort> {
         match pool.sort(term).as_ref() {
             Sort::Int => Some(ArithSort::Int),
@@ -941,6 +955,9 @@ mod tests {
             (REALS, "(* (/ 1 2) (to_real (+ x (* 2 x))))", "(* (/ 3 2) (to_real x))"),
             (REALS, "(< (* 2.0 a) b)", "(> (+ b (* (- 2.0) a)) 0.0)"),
             (REALS, "(= a b)", "(= (+ a (* (- 1.0) b)) 0.0)"),
+            (REALS, "(= (- 1.0) (- 1))", "true"),
+            (REALS, "(= (+ (* 500.0 a) (* (- 1) b)) (- 300))", "(and (<= (+ (* 500.0 a) (* (- 1) b)) (- 300)) (<= (- 300) (+ (* 500.0 a) (* (- 1) b))))"),
+            (REALS, "(<= 1 a)", "(>= a 1.0)"),
         ] {
             let (equal, nl, nr) = same(problem, lhs, rhs);
             assert!(equal, "{lhs} and {rhs} normalize to {nl} and {nr}");
