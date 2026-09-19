@@ -101,30 +101,60 @@ pub fn aci_rules(
     decls.push(EggStatement::Rule {
         ruleset: Some("list-ruleset".to_owned()),
         body: vec![
-            egg_expr!((= {set_call.clone()} "result")),
-            egg_expr!(("set-contains" "s" {absorbing.clone()})),
-        ],
-        head: vec![egg_expr!((union "result" {absorbing.clone()}))],
-    });
-
-    // 9. A complementary pair does too: `(or x p (not p))` is true and
-    // `(and x p (not p))` is false, whatever the other elements are.  The
-    // same fact is a RARE rule (`bool-or-taut`, `bool-and-conf`), but those
-    // carry `:list` parameters, which the engine compiles as one argument
-    // slot each, so they only match when every list is non-empty; on the set
-    // form the pair is found whatever the arity and the positions.
-    let negated = egg_expr!((mk (_not (args (mk "w") ()))));
-    decls.push(EggStatement::Rule {
-        ruleset: Some("list-ruleset".to_owned()),
-        body: vec![
             egg_expr!((= {set_call} "result")),
-            egg_expr!(("set-contains" "s" (mk "w"))),
-            egg_expr!(("set-contains" "s" {negated})),
+            egg_expr!(("set-contains" "s" {absorbing.clone()})),
         ],
         head: vec![egg_expr!((union "result" {absorbing}))],
     });
 
     decls
+}
+
+/// The set form of *any* `and`/`or` term, not only of the calls a proof step
+/// spells out.
+///
+/// The per-call conversions below cover the step's own terms, which leaves
+/// the terms the rewriting derives on the argument chain, where a rule's
+/// `:list` parameters need one slot each and an empty list has none.  These
+/// rules give every such term its set form: `elementsOf` collects a chain's
+/// elements (shallow), the conversion unions the term with the set form, and
+/// a nested application of the same operator is spliced into the set, which
+/// is the flattening the chain form got from re-association.  Everything here
+/// is demand-driven and linear in the term, so a set costs one node per
+/// argument rather than one per bracketing.
+///
+/// The rules go into a ruleset of their own, `set-ruleset`, which no ordinary
+/// round runs: they are declared with the program, so declaring them is cheap
+/// and happens once, and they fire only when the `aciSets` goal fallback
+/// saturates that ruleset.
+pub fn general_set_conversion(operators: &[&str]) -> Vec<EggStatement> {
+    let mut text = String::from(
+        "(function elementsOf (Term) AssocArgs :merge old)
+(relation elementsOfDemand (Term))
+(rule ((elementsOfDemand (Empty)))
+      ((set (elementsOf (Empty)) (set-empty))) :ruleset set-ruleset)
+(rule ((elementsOfDemand (Args head tail)))
+      ((elementsOfDemand tail)) :ruleset set-ruleset)
+(rule ((elementsOfDemand (Args head tail)) (= (elementsOf tail) rest))
+      ((set (elementsOf (Args head tail)) (set-insert rest head))) :ruleset set-ruleset)
+",
+    );
+    for operator in operators {
+        text.push_str(&format!(
+            "(rule ((= e (Mk ({operator} args))))
+      ((elementsOfDemand args)) :ruleset set-ruleset)
+(rule ((= e (Mk ({operator} args))) (= (elementsOf args) elements))
+      ((union e ({operator} (Assoc elements)))) :ruleset set-ruleset)
+(rule ((= ({operator} (Assoc elements)) result)
+       (set-contains elements (Mk ({operator} inner)))
+       (= (elementsOf inner) nested))
+      ((union result
+              ({operator} (Assoc (set-union (set-remove elements (Mk ({operator} inner))) nested)))))
+      :ruleset set-ruleset)
+"
+        ));
+    }
+    vec![EggStatement::Raw(text)]
 }
 
 /// Generate only the conversions tied to concrete calls seen in a proof step.

@@ -58,6 +58,9 @@ pub struct Rewrite {
     /// only bind a term of that sort (`Int`, `Real` or `Bool`), which keeps
     /// a rule instantiated for one numeric sort off the other.
     pub guards: Vec<(String, &'static str)>,
+    /// The rule's `:list` parameters, which stand for a segment of an n-ary
+    /// operator's arguments rather than for one argument.
+    pub lists: Vec<String>,
 }
 
 pub type Substitution = BTreeMap<String, Term>;
@@ -131,12 +134,34 @@ pub fn list_elements(list: &Term) -> Option<Vec<Term>> {
         match (current.op.as_str(), current.children.as_slice()) {
             ("Empty", []) => return Some(elements),
             ("Args", [element, tail]) => {
-                elements.push(element.clone());
+                // A chain is read as a concatenation of segments: the
+                // engine's re-association lets a cell's head be a sublist,
+                // and a `:list` parameter that binds nothing leaves an empty
+                // segment, which contributes no arguments.
+                match (element.op.as_str(), element.children.as_slice()) {
+                    ("Empty", []) => (),
+                    ("Args", [_, _]) => elements.extend(list_elements(element)?),
+                    _ => elements.push(element.clone()),
+                }
                 current = tail;
             }
             _ => return None,
         }
     }
+}
+
+/// `term` with its argument chains flattened: the segments a re-association
+/// nests and the empty one a `:list` parameter leaves when it binds nothing
+/// both disappear, so two encodings of the same Alethe term compare equal.
+/// For comparing terms, not for looking them up: the e-graph holds the
+/// shapes, not this normal form.
+pub fn flat_form(term: &Term) -> Term {
+    if term.op == "Args" || term.op == "Empty" {
+        if let Some(elements) = list_elements(term) {
+            return encoded_args(elements.iter().map(flat_form).collect());
+        }
+    }
+    Term::new(&term.op, term.children.iter().map(flat_form).collect())
 }
 
 /// Decompose an encoded application `Mk(op(list))` into its operator and

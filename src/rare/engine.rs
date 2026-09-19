@@ -917,6 +917,123 @@ fn construct_premises(
     Ok(grounds_terms.into_iter().collect())
 }
 
+/// A RARE rule whose n-ary operator has a set form, compiled against that
+/// form instead of against the argument chain.
+///
+/// A `:list` parameter stands for a possibly empty sequence of arguments,
+/// which the chain encoding cannot express: the parameter gets one slot of
+/// the chain, and a slot has to be filled, so the rule only matches when
+/// every list is non-empty.  Filling the gap on the chain costs either one
+/// rule per emptiness pattern or an e-node per chain cell, and the cells are
+/// re-associated, which multiplies the bracketings of a long `and`/`or`.
+///
+/// On the set form there are no positions at all: the rule says that the set
+/// contains the fixed elements, and the lists are whatever else is in it.
+/// One rule covers every arity and every arrangement, including the empty
+/// lists, and it adds nothing to the e-graph.  `and` and `or` qualify
+/// because they are idempotent, so dropping the multiplicity a set loses is
+/// sound; `+` and `*` are n-ary too but are not, and keep the chain form.
+fn set_form_rule(
+    definition: &RuleDefinition,
+    subs: &IndexMap<&String, (EggExpr, AttributeParameters)>,
+    func_cache: &mut EggFunctions,
+    var_map: &mut HashMap<String, u64>,
+    guards: &[EggExpr],
+    conclusion_lhs: &Rc<Term>,
+    conclusion_rhs: &Rc<Term>,
+) -> Result<Option<EggStatement>, String> {
+    let is_list = |term: &Rc<Term>| {
+        term.as_var().is_some_and(|name| {
+            definition
+                .parameters
+                .get(name)
+                .is_some_and(|parameter| parameter.attribute == AttributeParameters::List)
+        })
+    };
+    let elements = |term: &Rc<Term>| -> Option<(&'static str, Vec<Rc<Term>>, Vec<Rc<Term>>)> {
+        let Term::Op(operator, arguments) = term.as_ref() else {
+            return None;
+        };
+        let operator = match operator {
+            Operator::And => "@and",
+            Operator::Or => "@or",
+            _ => return None,
+        };
+        let (lists, fixed): (Vec<_>, Vec<_>) = arguments.iter().cloned().partition(&is_list);
+        Some((operator, lists, fixed))
+    };
+
+    let Some((operator, lists, fixed)) = elements(conclusion_lhs) else {
+        return Ok(None);
+    };
+    if lists.is_empty() || fixed.is_empty() {
+        return Ok(None);
+    }
+    let context = format!("translating RARE rule '{}' against the set form", definition.name);
+    let set = EggExpr::Literal("elements".to_owned());
+    let call = |set: EggExpr| {
+        EggExpr::Call(
+            operator.to_owned(),
+            vec![EggExpr::Call("Assoc".to_owned(), vec![set])],
+        )
+    };
+    let result = EggExpr::Literal("result".to_owned());
+
+    let mut body = vec![EggExpr::Equal(
+        Box::new(call(set.clone())),
+        Box::new(result.clone()),
+    )];
+    for element in &fixed {
+        let element = translate_term(element, subs, func_cache, var_map, false, &context)?;
+        body.push(EggExpr::Call(
+            "set-contains".to_owned(),
+            vec![set.clone(), element],
+        ));
+    }
+    body.extend(guards.iter().cloned());
+
+    // The right-hand side: a term that does not mention the lists is stated
+    // as it is; one that reuses them is the same set with the left-hand
+    // side's own elements taken out and its own put in.
+    let rhs_mentions_list = collect_vars(conclusion_rhs, false)
+        .keys()
+        .any(|name| {
+            definition
+                .parameters
+                .get(name)
+                .is_some_and(|parameter| parameter.attribute == AttributeParameters::List)
+        });
+    let head = if !rhs_mentions_list {
+        translate_term(conclusion_rhs, subs, func_cache, var_map, false, &context)?
+    } else {
+        let Some((rhs_operator, rhs_lists, rhs_fixed)) = elements(conclusion_rhs) else {
+            return Ok(None);
+        };
+        let same_lists = |a: &[Rc<Term>], b: &[Rc<Term>]| {
+            a.len() == b.len() && a.iter().all(|term| b.contains(term))
+        };
+        if rhs_operator != operator || !same_lists(&lists, &rhs_lists) {
+            return Ok(None);
+        }
+        let mut rebuilt = set.clone();
+        for element in &fixed {
+            let element = translate_term(element, subs, func_cache, var_map, false, &context)?;
+            rebuilt = EggExpr::Call("set-remove".to_owned(), vec![rebuilt, element]);
+        }
+        for element in &rhs_fixed {
+            let element = translate_term(element, subs, func_cache, var_map, false, &context)?;
+            rebuilt = EggExpr::Call("set-insert".to_owned(), vec![rebuilt, element]);
+        }
+        call(rebuilt)
+    };
+
+    Ok(Some(EggStatement::Rule {
+        ruleset: Some("list-ruleset".to_owned()),
+        body,
+        head: vec![EggExpr::Union(Box::new(result), Box::new(head))],
+    }))
+}
+
 fn construct_rules(
     database: &[RuleDefinition],
     func_cache: &mut EggFunctions,
@@ -1088,6 +1205,23 @@ fn construct_rules(
         // parameters, with those dropped from the argument chains, covers
         // the empty cases; a variant whose chain would end up without
         // arguments is not emitted.
+        // An `and`/`or` rule with `:list` parameters is compiled against the
+        // set form, where the lists need no positions; only the operators
+        // without one still need the chain variants below.
+        let set_form = set_form_rule(
+            definition,
+            &subs,
+            func_cache,
+            var_map,
+            &guards,
+            conclusion_lhs,
+            conclusion_rhs,
+        )?;
+        let on_the_set_form = set_form.is_some();
+        if let Some(statement) = set_form {
+            rules.insert(statement);
+        }
+
         let list_slots: Vec<String> = definition
             .parameters
             .iter()
@@ -1097,7 +1231,9 @@ fn construct_rules(
             })
             .map(|(name, _)| name.clone())
             .collect();
-        let variants: Vec<(EggExpr, EggExpr)> = if list_slots.len() <= MAX_LIST_SLOTS {
+        let variants: Vec<(EggExpr, EggExpr)> = if on_the_set_form {
+            Vec::new()
+        } else if list_slots.len() <= MAX_LIST_SLOTS {
             (1..(1u32 << list_slots.len()))
                 .filter_map(|mask| {
                     let dropped: Vec<&str> = list_slots
@@ -1130,9 +1266,24 @@ fn construct_rules(
             };
             rules.insert(statement);
         }
+        // The generated name carries the rule's `:list` parameters, so that
+        // the reconstruction can recover an instantiation the chain pattern
+        // cannot e-match: a list parameter stands for a segment of the
+        // arguments, which is a sequence match rather than a structural one.
+        let list_parameters: Vec<&str> = definition
+            .parameters
+            .iter()
+            .filter(|(_, parameter)| parameter.attribute == AttributeParameters::List)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let name_suffix = if list_parameters.is_empty() {
+            String::new()
+        } else {
+            format!(":lists={}", list_parameters.join(","))
+        };
         rules.insert(if !conditional {
             EggStatement::NamedRewrite {
-                name: format!("rare:{}#{}", definition.name, rules.len()),
+                name: format!("rare:{}#{}{}", definition.name, rules.len(), name_suffix),
                 lhs: egg_equations.0.clone(),
                 rhs: egg_equations.1.clone(),
                 conditions: guards.clone(),
@@ -1697,7 +1848,7 @@ fn check_goal_with_retry_rounds(
 ) -> Result<(), String> {
     let mut last_error = None;
     let base = egraph.num_tuples();
-    let tuple_cap = growth_cap(!goal.fallback_plans.is_empty(), options);
+    let tuple_cap = growth_cap(runs_polynomial_normalizer(goal), options);
 
     let mut round = 0;
     loop {
@@ -1764,13 +1915,20 @@ fn check_goal_with_retry_rounds(
     ))
 }
 
-/// Whether a goal runs the polynomial normalizer (it then has the
-/// arithmetic fallback plans); such goals grow by construction.
+/// Whether a goal runs the polynomial normalizer, which is what the
+/// arithmetic fallback plans stand for; such goals grow by construction.
+/// The set-form fallback is not one of them and leaves the goal plain.
+fn runs_polynomial_normalizer(goal: &GoalCheckTarget) -> bool {
+    goal.fallback_plans
+        .iter()
+        .any(|plan| plan.label.starts_with("arith"))
+}
+
 fn goal_class(goal: &GoalCheckTarget) -> &'static str {
-    if goal.fallback_plans.is_empty() {
-        "plain"
-    } else {
+    if runs_polynomial_normalizer(goal) {
         "arith"
+    } else {
+        "plain"
     }
 }
 
@@ -2071,23 +2229,35 @@ fn declare_functions(functions: &EggFunctions, sort_guards: bool) -> Vec<EggStat
     decls
 }
 
-fn get_fallback_plans(enable_arith_poly: bool) -> Vec<GoalFallbackPlan> {
+/// The ACI operators a goal actually mentions: the only ones whose set-form
+/// conversion is worth declaring, and the only ones whose constructors the
+/// generated program has.
+fn present_aci_operators(functions: &EggFunctions) -> Vec<&'static str> {
+    crate::rare::computational::aci_norm::aci_operators()
+        .filter(|(_, name, _, _, _)| functions.names.contains_key(*name))
+        .map(|(_, _, op_with_at, _, _)| op_with_at)
+        .collect()
+}
+
+fn get_fallback_plans(
+    enable_arith_poly: bool,
+    aci_operators: &[&'static str],
+) -> Vec<GoalFallbackPlan> {
     let (goal_lhs, goal_rhs) = equal_terms();
-    get_fallback_plans_for(enable_arith_poly, goal_lhs, goal_rhs)
+    get_fallback_plans_for(enable_arith_poly, aci_operators, goal_lhs, goal_rhs)
 }
 
 /// The fallback plans for a goal bound to the given names, so that several
 /// goals can live in one e-graph.
 fn get_fallback_plans_for(
     enable_arith_poly: bool,
+    aci_operators: &[&'static str],
     goal_lhs: EggExpr,
     goal_rhs: EggExpr,
 ) -> Vec<GoalFallbackPlan> {
-    if !enable_arith_poly {
-        return Vec::new();
-    }
-
-    vec![
+    let mut plans = Vec::new();
+    if enable_arith_poly {
+        plans.extend(vec![
         GoalFallbackPlan::new(
             "arithPolyNfOf",
             vec![
@@ -2132,11 +2302,33 @@ fn get_fallback_plans_for(
                     setup.extend(goal_run_schedule(1));
                     setup
                 },
-                goal_lhs,
-                goal_rhs,
+                goal_lhs.clone(),
+                goal_rhs.clone(),
             ),
         ),
-    ]
+        ]);
+    }
+    // The set form of every `and`/`or` term, not only of the calls the step
+    // spells out.  It is what lets a rule's `:list` parameters apply to a
+    // term the rewriting derived, the empty lists included, and it replaces
+    // the argument chain rather than adding to it, so it costs one node per
+    // argument instead of one per bracketing.  It is a fallback because a
+    // goal the ordinary rules prove needs none of it, and because the set
+    // form of a class is one more shape the certificate search has to step
+    // around.
+    if !aci_operators.is_empty() {
+        let mut setup = vec![EggStatement::Saturate {
+            ruleset: Some("set-ruleset".to_owned()),
+        }];
+        setup.extend(goal_run_schedule(1));
+        plans.push(GoalFallbackPlan::new(
+            "aciSets",
+            Vec::new(),
+            EggExpr::NativeBool(true),
+            (setup, goal_lhs.clone(), goal_rhs.clone()),
+        ));
+    }
+    plans
 }
 
 fn goal_log_label(node: &Rc<ProofNode>, conclusion: &Rc<Term>) -> String {
@@ -2365,7 +2557,8 @@ fn run_egglog_with_premises_inner(
     };
 
     let enable_arith_poly = arith_poly_norm::uses_arith_machinery(&goal_functions);
-    goal.fallback_plans = get_fallback_plans(enable_arith_poly);
+    goal.fallback_plans =
+        get_fallback_plans(enable_arith_poly, &present_aci_operators(&goal_functions));
 
     // Only constructors absent from the baseline need declaring in the clone.
     // Goal-specific rules still receive the complete local function/call set.
@@ -2614,6 +2807,7 @@ fn check_hole_rewrites_batched_inner(
     }
 
     let enable_arith_poly = arith_poly_norm::uses_arith_machinery(&goal_functions);
+    let aci_operators = present_aci_operators(&goal_functions);
     let mut new_functions = goal_functions.clone();
     new_functions
         .names
@@ -2694,7 +2888,8 @@ fn check_hole_rewrites_batched_inner(
             let Some((lhs, rhs)) = targets[index].clone() else {
                 continue;
             };
-            let plans = get_fallback_plans_for(enable_arith_poly, lhs.clone(), rhs.clone());
+            let plans =
+                get_fallback_plans_for(enable_arith_poly, &aci_operators, lhs.clone(), rhs.clone());
             match check_goal_against_current_state(
                 &mut egraph,
                 &mut code_str,
@@ -2892,9 +3087,9 @@ mod tests {
     /// A literal and its negation in an `and`/`or` make the connective's
     /// absorbing element, whatever the arity and the positions.  The RARE
     /// rules that state this (`bool-or-taut`, `bool-and-conf`) have `:list`
-    /// parameters, which compile to one argument slot each, so they only
-    /// match when every list is non-empty; the ACI set machinery is what
-    /// closes the two-element case.
+    /// parameters, and on the argument chain each would need one slot
+    /// filled, so the two-element case would not match; compiled against the
+    /// set form they carry no positions and match it.
     #[test]
     fn a_complementary_pair_absorbs_its_connective() {
         for (operator, absorbing) in [(Operator::Or, true), (Operator::And, false)] {
@@ -2905,7 +3100,7 @@ mod tests {
             let formula = pool.add(Term::Op(operator, vec![p, not_p]));
             let constant = pool.add(Term::new_bool(absorbing));
             let goal = pool.add(Term::Op(Operator::Equals, vec![formula, constant]));
-            let database = RareStatements::default();
+            let database = complement_rules(&mut pool);
             let context = RareCtx::new(&database);
 
             let (result, _) = check_hole_rewrite_with_context(
@@ -2918,6 +3113,25 @@ mod tests {
             );
             assert!(result.is_ok(), "check failed: {:?}", result.err());
         }
+    }
+
+    /// The two complement rules, as the database states them.
+    fn complement_rules(pool: &mut PrimitivePool) -> RareStatements {
+        const RULES: &str = "
+            (declare-rare-rule bool-or-taut ((xs Bool :list) (w Bool) (ys Bool :list) (zs Bool :list))
+              :args (xs w ys zs)
+              :conclusion (= (or xs w ys (not w) zs) true))
+            (declare-rare-rule bool-and-conf ((xs Bool :list) (w Bool) (ys Bool :list) (zs Bool :list))
+              :args (xs w ys zs)
+              :conclusion (= (and xs w ys (not w) zs) false))
+        ";
+        let mut parser = crate::parser::Parser::new(
+            pool,
+            crate::parser::Config::new(),
+            crate::parser::Source::new(std::path::Path::new("<rules>"), RULES),
+        )
+        .expect("the rules should open");
+        parser.parse_rare().expect("the rules should parse")
     }
 
     /// A distinct without repeats is not false; the solver must say so

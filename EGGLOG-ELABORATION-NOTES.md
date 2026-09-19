@@ -2465,3 +2465,90 @@ its own rather than by the complement family.
 still cannot be written in a `rare_rewrite` step, so such an instance is
 proved but not certified; that needs a form for a list argument in the
 step's `:args`, which is a proof-format decision.
+
+## 30. One rule on the set form, and the set form for every term (2026-09-19)
+
+§29 left the `:list` gap closed by brute force: one compiled variant per
+subset of a rule's list parameters, 2^k of them, capped at four.  The
+variants are gone for the connectives.  A rule whose left-hand side is an
+`and`/`or` over `:list` parameters is now compiled **once**, against the
+ACI set form:
+
+```
+(rule ((= (@and (Assoc elements)) result)
+       (set-contains elements (Mk w1))
+       (set-contains elements (Mk (@not (Args (Mk w1) (Empty)))))
+       (SortBool (Mk w1)))
+      ((union result (Mk (Bool false)))) :ruleset list-ruleset)
+```
+
+The fixed arguments become membership conditions and the list parameters
+disappear, because a set has no positions to fill: the rule fires whatever
+the arity, wherever the fixed arguments sit, and with any of the lists
+empty.  `set_form_rule` in `engine.rs` builds it, and a rule that gets one
+emits no variants (`on_the_set_form`).  For the three logics the database
+is 342 rules, against 322 with no empty-list handling at all and 366 with
+the variants.  The hand-written complement rule of §29 is gone with them:
+`bool-or-taut` and `bool-and-conf` are ordinary RARE rules again, and the
+certificate cites them by name instead of an `AciComplement` computation.
+
+**The set form has to exist for terms the rewriting derived**, not only
+for the ground `and`/`or` calls the step spells out, or the compiled rule
+has nothing to match.  `aci_norm::general_set_conversion` gives every
+class of an `and`/`or` term its set form.  Its rules are declared with the
+program but put in a ruleset of their own, `set-ruleset`, which no ordinary
+round runs; the last **goal fallback plan**, `aciSets`, saturates that
+ruleset and runs one more schedule round.  Three reasons, all measured:
+
+- A goal the ordinary rules prove needs none of it and pays nothing.  On
+  two cvc5 proofs with no kept holes (`dead_dnd014`, 624 holes;
+  `prime_cone_unsat_20`, 398) the plan is invisible: 8.901 s against
+  8.904 s and 18.610 s against 18.711 s with the plan removed entirely,
+  same verdicts.  (Both are about 20% and 10% slower than the binary the
+  cancelled `chk1200n` run used, which is the cost of everything on this
+  branch since; moving the compiled set-form rules out of `list-ruleset`
+  does not recover it and costs d3 and d5 a fallback round, so they stay.)
+- The plans run in order on the *same* e-graph, so by the time the set
+  conversion runs, the arithmetic plans have already added their relation
+  rows.  A goal proved by the set form alone loses those, and the
+  certificate search loses with them (d4 went 3 of 3 to 0 of 3 with the
+  conversion first).
+- Nothing else in the program depends on it, so it cannot slow down the
+  rounds that do the ordinary work.
+
+**A wrapper congruence was hiding the ACI and relation steps.**  The set
+form merges an `and`/`or` term with its permutations, which makes
+`Mk(@and(a,b))` and `Mk(@and(b,a))` congruence-compatible at the `Mk`
+wrapper: same operator, one child, children in the same class.  The
+candidate-graph builder preferred that edge, and justifying it pushed the
+obligation one level down, onto the *unwrapped* applications -- where
+`aci_modulo_pairs`, `aci_equal` and `arith_kind` all bail out, because
+they read a term through `encoded_application`, which wants the wrapper.
+The path then failed to justify, four bans later the search gave up, and a
+hole that used to be justified was kept.  `expand_vertex` now offers the
+ACI, ACI-modulo and relation edges *before* the congruence one; each is a
+single step the checker replays, while the congruence edge between two
+permuted n-ary applications is almost always a dead end.
+
+**Measured** on the diagnostics, against the binary the cancelled
+`chk1200n` run used:
+
+| | before | after |
+|---|---|---|
+| d1 checking | 7/7, 0.52 s | 7/7, 0.50 s |
+| d1 elaboration | 6/7, 60.0 s (one hole hit the 60 s cap) | **7/7, 0.56 s** |
+| d2 checking | 2/3, 34.4 s | **3/3, 0.14 s** |
+| d2 elaboration | 1/3, 33.5 s | 1/3, **0.60 s** |
+| d4 | 3/3, 3/3 | 3/3, 3/3 |
+| d5 | 6/6, 5/6 | 6/6, 5/6 |
+| d3, d8, d9 | unchanged | unchanged |
+
+d2's two kept holes and d3's one are not list-rule cases; they remain
+open.  The full test suite passes, `tests/rare/list-empty.rare` included,
+which is now pinned by the set-form path rather than by the variants.
+
+**Still open**, unchanged from §29: a list parameter that binds several
+arguments is proved but cannot be *cited*, since a `rare_rewrite` step has
+no form for it.  Commit 18d43bf0 writes such an argument as a `rare-list`
+term, which the parser and printer now round-trip, so the form exists in
+Carcara; whether it belongs in Alethe is a proof-format decision.

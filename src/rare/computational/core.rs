@@ -5,6 +5,7 @@ use crate::rare::{
 };
 
 fn declare_aci_rules(decls: &mut Vec<EggStatement>, functions: &EggFunctions) {
+    let mut present = Vec::new();
     for (_, name, op_with_at, identity, absorbing) in aci_norm::aci_operators() {
         if functions.names.contains_key(name) {
             decls.extend(aci_norm::aci_rules(
@@ -13,7 +14,15 @@ fn declare_aci_rules(decls: &mut Vec<EggStatement>, functions: &EggFunctions) {
                 absorbing,
                 functions.assoc_calls.get(op_with_at),
             ));
+            present.push(op_with_at);
         }
+    }
+    // Declared, never run by an ordinary round: the `aciSets` goal fallback
+    // saturates this ruleset when it needs the set form of a term the
+    // rewriting derived.
+    if !present.is_empty() {
+        decls.push(EggStatement::Ruleset("set-ruleset".to_owned()));
+        decls.extend(aci_norm::general_set_conversion(&present));
     }
 }
 

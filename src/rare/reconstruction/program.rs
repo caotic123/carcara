@@ -137,6 +137,7 @@ pub fn rules_from_generated_program(program: &str) -> Vec<Rewrite> {
             lhs: pattern_from_egglog_expr(lhs),
             rhs: pattern_from_egglog_expr(rhs),
             guards: Vec::new(),
+            lists: Vec::new(),
         });
     };
     for command in commands {
@@ -183,6 +184,7 @@ pub fn rules_from_generated_program(program: &str) -> Vec<Rewrite> {
                     lhs: pattern_from_egglog_expr(lhs),
                     rhs: pattern_from_egglog_expr(rhs),
                     guards,
+                    lists: rare_lists_of(&egglog_name),
                 });
             }
             _ => {}
@@ -235,11 +237,20 @@ where
 }
 
 /// The RARE rule name a generated egglog rule carries, if the engine
-/// compiled it from one: `rare:<name>#<k>`, the suffix keeping several
-/// instantiations of one rule apart.
+/// compiled it from one: `rare:<name>#<k>[:lists=a,b]`, the suffix keeping
+/// several instantiations of one rule apart and naming its `:list`
+/// parameters.
 fn rare_name_of(egglog_name: &str) -> Option<&str> {
     let name = egglog_name.strip_prefix("rare:")?;
     Some(name.rsplit_once('#').map_or(name, |(name, _)| name))
+}
+
+/// The `:list` parameters the generated name records.
+fn rare_lists_of(egglog_name: &str) -> Vec<String> {
+    egglog_name
+        .rsplit_once(":lists=")
+        .map(|(_, lists)| lists.split(',').map(str::to_owned).collect())
+        .unwrap_or_default()
 }
 
 /// Argument order of every RARE rule, by name: the instantiation a

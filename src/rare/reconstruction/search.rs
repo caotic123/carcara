@@ -831,11 +831,55 @@ impl Reconstructor<'_> {
         // path is a checkable certificate, while an arithmetic computation
         // still has to be routed into `poly_simp_rel` steps and may end up
         // trusted.
-        self.prove_by_congruence(source, target)
+        self.prove_by_list_rule(source, target)
+            .or_else(|| self.prove_by_congruence(source, target))
             .or_else(|| self.prove_by_transitivity(source, target, eclass))
             .or_else(|| self.prove_by_aci(source, target))
             .or_else(|| self.prove_by_arith(source, target))
             .or_else(|| self.prove_by_aci_modulo(source, target))
+    }
+
+    /// A rule whose `:list` parameters stand for segments of an n-ary
+    /// operator's arguments.  The engine proves such a rule on the set form,
+    /// where the segments have no positions to fill, and that leaves no
+    /// rewrite for the search to follow; the instantiation is recovered here
+    /// instead, by matching the rule's argument pattern against the term's
+    /// arguments as a sequence.  Each list parameter binds the segment it
+    /// covers, as an argument chain, which is what a `rare-list` argument of
+    /// the emitted step spells out.
+    pub fn prove_by_list_rule(&mut self, source: &Term, target: &Term) -> Option<Certificate> {
+        let (operator, elements) = encoded_application(source)?;
+        if !matches!(operator, "@and" | "@or") {
+            return None;
+        }
+        for index in 0..self.rules.len() {
+            let rule = &self.rules[index];
+            if rule.lists.is_empty() {
+                continue;
+            }
+            let Some(patterns) = argument_patterns(&rule.lhs, operator) else {
+                continue;
+            };
+            let mut substitution = Substitution::new();
+            if !match_sequence(&patterns, &elements, &rule.lists, &mut substitution) {
+                continue;
+            }
+            let Some(instance) = instantiate(&rule.rhs, &substitution) else {
+                continue;
+            };
+            if flat_form(&instance) != flat_form(target) {
+                continue;
+            }
+            let rule = &self.rules[index];
+            self.stats.rule_instances += 1;
+            return Some(Certificate::Rule {
+                name: rule.name.to_owned(),
+                lhs: source.clone(),
+                rhs: target.clone(),
+                substitution,
+            });
+        }
+        None
     }
 
     /// Arithmetic strategy inside a class: two relation (or polynomial)
@@ -1273,9 +1317,16 @@ impl Reconstructor<'_> {
             if *goal == *vertex {
                 continue;
             }
-            if self.congruence_compatible(vertex, goal) {
-                edges.push((goal.clone(), CandidateEdge::Congruence));
-            } else if aci_equal(vertex, goal) {
+            // The ACI and relation edges come before the congruence one.
+            // Two `and`/`or` applications whose arguments are a permutation
+            // of each other are congruence-compatible as soon as the e-graph
+            // holds the arguments equal position by position -- which the
+            // set form makes it do -- but that edge only pushes the
+            // obligation one level down, onto the unwrapped applications,
+            // where neither the ACI strategies nor the relation
+            // recomputation apply.  Each of these edges is instead one step
+            // the checker replays.
+            if aci_equal(vertex, goal) {
                 self.stats.computational_edges += 1;
                 edges.push((
                     goal.clone(),
@@ -1283,6 +1334,11 @@ impl Reconstructor<'_> {
                 ));
             } else if self.aci_modulo_pairs(vertex, goal).is_some() {
                 edges.push((goal.clone(), CandidateEdge::AciModulo));
+            } else if let Some(kind) = arith_kind(vertex, goal, self.sorts) {
+                self.stats.computational_edges += 1;
+                edges.push((goal.clone(), CandidateEdge::Computational { kind }));
+            } else if self.congruence_compatible(vertex, goal) {
+                edges.push((goal.clone(), CandidateEdge::Congruence));
             }
         }
         edges.retain(|(neighbour, _)| !graph.banned.contains(&(vertex.clone(), neighbour.clone())));
@@ -1386,4 +1442,88 @@ fn replace_literals(term: &Term, operator: &str, replacement: &HashMap<Term, Ter
         ),
         _ => term.clone(),
     }
+}
+
+/// The element patterns of an n-ary application pattern
+/// `Mk(op(Args p1 (Args p2 ... Empty)))`, when its operator is `operator`.
+fn argument_patterns(pattern: &Pattern, operator: &str) -> Option<Vec<Pattern>> {
+    let Pattern::App("Mk", application) = pattern else {
+        return None;
+    };
+    let [Pattern::App(op, arguments)] = application.as_slice() else {
+        return None;
+    };
+    if *op != operator {
+        return None;
+    }
+    let [chain] = arguments.as_slice() else {
+        return None;
+    };
+    let mut elements = Vec::new();
+    let mut current = chain;
+    loop {
+        match current {
+            Pattern::App("Empty", _) => return Some(elements),
+            Pattern::App("Args", cells) => {
+                let [head, tail] = cells.as_slice() else {
+                    return None;
+                };
+                elements.push(head.clone());
+                current = tail;
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Matches element patterns against a term's arguments, where a pattern that
+/// is one of the rule's `:list` parameters consumes a segment of any length,
+/// the empty one included.  The segment is bound as an argument chain.
+fn match_sequence(
+    patterns: &[Pattern],
+    elements: &[Term],
+    lists: &[String],
+    substitution: &mut Substitution,
+) -> bool {
+    let is_list = |pattern: &Pattern| {
+        matches!(pattern, Pattern::Var(name) if lists.iter().any(|list| list == name))
+    };
+    let Some((first, rest)) = patterns.split_first() else {
+        return elements.is_empty();
+    };
+    if is_list(first) {
+        let Pattern::Var(name) = first else {
+            return false;
+        };
+        // The shortest segment first, so that a list takes no more than it
+        // must; the fixed patterns after it decide how much it may take.
+        for taken in 0..=elements.len() {
+            let mut attempt = substitution.clone();
+            let segment = encoded_args(elements[..taken].to_vec());
+            let consistent = match attempt.get(*name) {
+                Some(previous) => *previous == segment,
+                None => {
+                    attempt.insert((*name).to_owned(), segment);
+                    true
+                }
+            };
+            if consistent && match_sequence(rest, &elements[taken..], lists, &mut attempt) {
+                *substitution = attempt;
+                return true;
+            }
+        }
+        return false;
+    }
+    let Some((element, elements)) = elements.split_first() else {
+        return false;
+    };
+    let mut attempt = substitution.clone();
+    if !match_pattern(first, element, &mut attempt) {
+        return false;
+    }
+    if match_sequence(rest, elements, lists, &mut attempt) {
+        *substitution = attempt;
+        return true;
+    }
+    false
 }

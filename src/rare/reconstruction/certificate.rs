@@ -1,5 +1,5 @@
 //! Equality certificates and their independent verification.
-use std::collections::BTreeMap;
+
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,10 +114,21 @@ impl Certificate {
                 .iter()
                 .filter(|rule| rule.name == name)
                 .any(|rule| {
-                    let mut matched = BTreeMap::new();
-                    match_pattern(&rule.lhs, lhs, &mut matched)
-                        && &matched == substitution
-                        && instantiate(&rule.rhs, substitution).as_ref() == Some(rhs)
+                    // Instantiating both sides re-derives the instance from
+                    // the substitution, and the comparison ignores the empty
+                    // segments a `:list` parameter bound: they encode the
+                    // same Alethe term.
+                    let instance = (
+                        instantiate(&rule.lhs, substitution),
+                        instantiate(&rule.rhs, substitution),
+                    );
+                    match instance {
+                        (Some(instance_lhs), Some(instance_rhs)) => {
+                            flat_form(&instance_lhs) == flat_form(lhs)
+                                && flat_form(&instance_rhs) == flat_form(rhs)
+                        }
+                        _ => false,
+                    }
                 }),
             // Verified by independent recomputation; the e-graph's own
             // solver state is never consulted.  ACI steps are judged by

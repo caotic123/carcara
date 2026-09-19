@@ -35,12 +35,14 @@ fn rules() -> Vec<Rewrite> {
             lhs: App("Ite", vec![Var("c"), App("False", vec![]), Var("x")]),
             rhs: App("And", vec![App("Not", vec![Var("c")]), Var("x")]),
             guards: Vec::new(),
+            lists: Vec::new(),
         },
         Rewrite {
             name: "and-true-right",
             lhs: App("And", vec![Var("x"), App("True", vec![])]),
             rhs: Var("x"),
             guards: Vec::new(),
+            lists: Vec::new(),
         },
     ]
 }
@@ -222,6 +224,7 @@ fn encoded_eq_symm_rule() -> Rewrite {
         lhs: encoded_formula("@=", vec![Var("t1"), Var("s1")]),
         rhs: encoded_formula("@=", vec![Var("s1"), Var("t1")]),
         guards: Vec::new(),
+        lists: Vec::new(),
     }
 }
 
@@ -233,6 +236,7 @@ fn encoded_bool_double_not_elim_rule() -> Rewrite {
         lhs: encoded_formula("@not", vec![encoded_call("@not", vec![Var("t1")])]),
         rhs: encoded_mk(Var("t1")),
         guards: Vec::new(),
+        lists: Vec::new(),
     }
 }
 
@@ -247,6 +251,7 @@ fn encoded_bool_or_false_rule() -> Rewrite {
         ),
         rhs: encoded_mk(Var("x")),
         guards: Vec::new(),
+        lists: Vec::new(),
     }
 }
 
@@ -2223,10 +2228,10 @@ fn elaborates_mirrored_bounds_in_a_conjunction() {
 
 /// An `and`/`or` holding a literal and its negation is the connective's
 /// absorbing element, whatever the arity.  The RARE rules for it
-/// (`bool-or-taut`, `bool-and-conf`) carry `:list` parameters, which the
-/// engine compiles as one argument slot each and which therefore only match
-/// when every list is non-empty; the ACI set machinery finds the pair
-/// instead, and the certificate cites `or_simplify`/`and_simplify`.
+/// (`bool-or-taut`, `bool-and-conf`) carry `:list` parameters, which on the
+/// argument chain would each need a slot filled; compiled against the set
+/// form they carry no positions, and the certificate cites the rule with
+/// the segments spelled out as `rare-list` arguments.
 #[test]
 fn elaborates_complementary_pairs() {
     use crate::elaborator::{self, ElaborationPass};
@@ -2262,8 +2267,10 @@ fn elaborates_complementary_pairs() {
     .expect("the elaborated proof should print");
     let printed = String::from_utf8(printed).expect("printed proof should be UTF-8");
     assert!(!printed.contains(":rule hole"), "{printed}");
-    assert!(printed.contains("or_simplify"), "{printed}");
-    assert!(printed.contains("and_simplify"), "{printed}");
+    assert!(printed.contains("(\"bool-or-taut\""), "{printed}");
+    assert!(printed.contains("(\"bool-and-conf\""), "{printed}");
+    assert!(printed.contains("(rare-list)"), "{printed}");
+    assert!(printed.contains("(rare-list q)"), "{printed}");
 }
 
 /// A `:list` parameter stands for a possibly empty sequence of arguments.
