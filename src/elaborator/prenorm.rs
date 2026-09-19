@@ -1,0 +1,613 @@
+//! Normalizing a hole's goal with Carcara's own normal forms before the
+//! egglog engine sees it.
+//!
+//! cvc5's theory-rewrite holes are, for the most part, the arithmetic
+//! rewriter's and the Boolean rewriter's normal forms: polynomial
+//! normalization, constant evaluation, flattening of `and`/`or`, and the
+//! canonical shape of linear relations.  Carcara already has decision
+//! procedures for those (`poly_simp`, `evaluate`, `aci_simp`); this module
+//! turns them into a normalizer that rewrites every subterm of a goal into a
+//! canonical form.  A hole whose two sides normalize to the same term is
+//! proved without egglog; the others reach egglog as the equality of the two
+//! normal forms, with nothing left to normalize.
+//!
+//! Every step is an equivalence Carcara's checker can justify (`poly_simp`
+//! and `poly_simp_rel` for the polynomial and relation forms, `evaluate`
+//! for constants, `aci_simp` and `not_not` for the Boolean shapes), so a
+//! certificate can cite them; only the checking use is wired up here.
+use crate::ast::{
+    Operator, Rc, Sort, Term,
+    pool::{PrimitivePool, TermPool},
+};
+use indexmap::IndexMap;
+use rug::{Integer, Rational};
+use std::collections::HashMap;
+
+/// A monomial: the atoms multiplied, sorted by pointer (one order per pool).
+#[derive(Clone, Hash, PartialEq, Eq, Debug)]
+struct Monomial(Vec<Rc<Term>>);
+
+impl Monomial {
+    fn one() -> Self {
+        Self(Vec::new())
+    }
+
+    fn mul(&self, other: &Self) -> Self {
+        let mut atoms = self.0.clone();
+        atoms.extend(other.0.iter().cloned());
+        atoms.sort_unstable_by_key(Rc::as_ptr);
+        Self(atoms)
+    }
+}
+
+/// A polynomial with rational coefficients over atoms (subterms that are
+/// not arithmetic operations): monomials with their coefficients, in
+/// insertion order.
+#[derive(Clone, Debug, Default)]
+struct Polynomial(IndexMap<Monomial, Rational>);
+
+impl Polynomial {
+    fn constant(value: Rational) -> Self {
+        let mut poly = Self::default();
+        poly.add_monomial(Monomial::one(), value);
+        poly
+    }
+
+    fn atom(term: Rc<Term>) -> Self {
+        let mut poly = Self::default();
+        poly.add_monomial(Monomial(vec![term]), Rational::from(1));
+        poly
+    }
+
+    fn add_monomial(&mut self, monomial: Monomial, coefficient: Rational) {
+        if coefficient == 0 {
+            return;
+        }
+        let entry = self.0.entry(monomial).or_insert_with(Rational::new);
+        *entry += coefficient;
+        if *entry == 0 {
+            self.0.retain(|_, c| *c != 0);
+        }
+    }
+
+    fn add(&mut self, other: &Self) {
+        for (monomial, coefficient) in &other.0 {
+            self.add_monomial(monomial.clone(), coefficient.clone());
+        }
+    }
+
+    fn scale(&mut self, factor: &Rational) {
+        if *factor == 0 {
+            self.0.clear();
+            return;
+        }
+        for coefficient in self.0.values_mut() {
+            *coefficient *= factor;
+        }
+    }
+
+    fn mul(&self, other: &Self) -> Self {
+        let mut result = Self::default();
+        for (m1, c1) in &self.0 {
+            for (m2, c2) in &other.0 {
+                result.add_monomial(m1.mul(m2), Rational::from(c1 * c2));
+            }
+        }
+        result
+    }
+
+    fn constant_part(&self) -> Rational {
+        self.0.get(&Monomial::one()).cloned().unwrap_or_default()
+    }
+
+    fn is_constant(&self) -> bool {
+        self.0.keys().all(|m| m.0.is_empty())
+    }
+
+    /// The monomials in the canonical order: fewer atoms first, then by
+    /// the atoms' pointers.
+    fn sorted(&self) -> Vec<(&Monomial, &Rational)> {
+        let mut entries: Vec<_> = self.0.iter().collect();
+        entries.sort_by(|(a, _), (b, _)| {
+            a.0.len().cmp(&b.0.len()).then_with(|| {
+                a.0.iter()
+                    .map(Rc::as_ptr)
+                    .cmp(b.0.iter().map(Rc::as_ptr))
+            })
+        });
+        entries
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArithSort {
+    Int,
+    Real,
+}
+
+pub struct Normalizer {
+    cache: HashMap<Rc<Term>, Rc<Term>>,
+    /// How many subterms changed under normalization.
+    pub rewritten: usize,
+}
+
+impl Default for Normalizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Normalizer {
+    pub fn new() -> Self {
+        Self { cache: HashMap::new(), rewritten: 0 }
+    }
+
+    /// `term` in normal form.
+    pub fn normalize(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Rc<Term> {
+        if let Some(known) = self.cache.get(term) {
+            return known.clone();
+        }
+        let result = self.normalize_uncached(pool, term);
+        if result != *term {
+            self.rewritten += 1;
+        }
+        self.cache.insert(term.clone(), result.clone());
+        result
+    }
+
+    fn normalize_uncached(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Rc<Term> {
+        match term.as_ref() {
+            Term::Op(op, args) => {
+                let args: Vec<Rc<Term>> =
+                    args.iter().map(|arg| self.normalize(pool, arg)).collect();
+                self.normalize_op(pool, term, *op, args)
+            }
+            Term::App(function, args) => {
+                let function = self.normalize(pool, function);
+                let args: Vec<Rc<Term>> =
+                    args.iter().map(|arg| self.normalize(pool, arg)).collect();
+                pool.add(Term::App(function, args))
+            }
+            _ => term.clone(),
+        }
+    }
+
+    fn normalize_op(
+        &mut self,
+        pool: &mut PrimitivePool,
+        original: &Rc<Term>,
+        op: Operator,
+        args: Vec<Rc<Term>>,
+    ) -> Rc<Term> {
+        use Operator::*;
+        match op {
+            Not => {
+                let arg = &args[0];
+                if let Term::Op(Not, inner) = arg.as_ref() {
+                    return inner[0].clone();
+                }
+                if arg.is_bool_true() {
+                    return pool.add(Term::new_bool(false));
+                }
+                if arg.is_bool_false() {
+                    return pool.add(Term::new_bool(true));
+                }
+                pool.add(Term::Op(Not, args))
+            }
+            And | Or => self.normalize_aci(pool, op, args),
+            Implies if args.len() == 2 => {
+                let negated = self.normalize_op(pool, original, Not, vec![args[0].clone()]);
+                self.normalize_aci(pool, Or, vec![negated, args[1].clone()])
+            }
+            Ite if args.len() == 3 => {
+                if args[0].is_bool_true() {
+                    return args[1].clone();
+                }
+                if args[0].is_bool_false() {
+                    return args[2].clone();
+                }
+                if args[1] == args[2] {
+                    return args[1].clone();
+                }
+                pool.add(Term::Op(Ite, args))
+            }
+            Add | Sub | Mult | RealDiv | ToReal => {
+                let sort = match self.arith_sort(pool, original) {
+                    Some(sort) => sort,
+                    None => return self.evaluated(pool, Term::Op(op, args)),
+                };
+                let candidate = pool.add(Term::Op(op, args));
+                let poly = self.polynomial(pool, &candidate);
+                self.term_of_polynomial(pool, &poly, sort)
+            }
+            LessThan | LessEq | GreaterThan | GreaterEq if args.len() == 2 => {
+                match self.arith_sort(pool, &args[0]) {
+                    Some(sort) => self.normalize_relation(pool, op, &args[0], &args[1], sort),
+                    None => self.evaluated(pool, Term::Op(op, args)),
+                }
+            }
+            Equals if args.len() == 2 => {
+                if args[0] == args[1] {
+                    return pool.add(Term::new_bool(true));
+                }
+                if let Some(sort) = self.arith_sort(pool, &args[0]) {
+                    return self.normalize_relation(pool, Equals, &args[0], &args[1], sort);
+                }
+                // `(= p true)` is `p`, `(= p false)` is `(not p)`.
+                for (index, other) in [(0, 1), (1, 0)] {
+                    if args[index].is_bool_true() {
+                        return args[other].clone();
+                    }
+                    if args[index].is_bool_false() {
+                        return self.normalize_op(pool, original, Not, vec![args[other].clone()]);
+                    }
+                }
+                // Symmetric: one order per pair.
+                let mut args = args;
+                if Rc::as_ptr(&args[0]) > Rc::as_ptr(&args[1]) {
+                    args.swap(0, 1);
+                }
+                self.evaluated(pool, Term::Op(Equals, args))
+            }
+            Distinct if args.len() == 2 => {
+                let equality = self.normalize_op(pool, original, Equals, args);
+                self.normalize_op(pool, original, Not, vec![equality])
+            }
+            // A distinct is the conjunction of the pairwise disequalities
+            // (Alethe's `distinct_elim`); as a conjunction it meets cvc5's
+            // expansion of it and a repeated element makes it false.
+            Distinct => {
+                let mut conjuncts = Vec::with_capacity(args.len() * (args.len() - 1) / 2);
+                for i in 0..args.len() {
+                    for j in i + 1..args.len() {
+                        let equality = self.normalize_op(
+                            pool,
+                            original,
+                            Equals,
+                            vec![args[i].clone(), args[j].clone()],
+                        );
+                        conjuncts.push(self.normalize_op(pool, original, Not, vec![equality]));
+                    }
+                }
+                self.normalize_aci(pool, And, conjuncts)
+            }
+            _ => self.evaluated(pool, Term::Op(op, args)),
+        }
+    }
+
+    /// The term, evaluated when it is ground.
+    fn evaluated(&mut self, pool: &mut PrimitivePool, term: Term) -> Rc<Term> {
+        let term = pool.add(term);
+        if let Term::Op(_, args) = term.as_ref() {
+            if args.iter().all(|arg| matches!(arg.as_ref(), Term::Const(_))) {
+                return term.evaluate(pool);
+            }
+        }
+        term
+    }
+
+    fn normalize_aci(&mut self, pool: &mut PrimitivePool, op: Operator, args: Vec<Rc<Term>>) -> Rc<Term> {
+        let (identity, absorbing) = match op {
+            Operator::And => (true, false),
+            _ => (false, true),
+        };
+        let mut flat: Vec<Rc<Term>> = Vec::new();
+        for arg in args {
+            match arg.as_ref() {
+                Term::Op(inner, inner_args) if *inner == op => flat.extend(inner_args.iter().cloned()),
+                _ => flat.push(arg),
+            }
+        }
+        let mut kept: Vec<Rc<Term>> = Vec::new();
+        for arg in flat {
+            if arg.is_bool_true() == identity && (arg.is_bool_true() || arg.is_bool_false()) {
+                continue;
+            }
+            if arg.is_bool_true() == absorbing && (arg.is_bool_true() || arg.is_bool_false()) {
+                return pool.add(Term::new_bool(absorbing));
+            }
+            kept.push(arg);
+        }
+        kept.sort_unstable_by_key(Rc::as_ptr);
+        kept.dedup();
+        // `p` and `(not p)` together make the absorbing element.
+        for arg in &kept {
+            if let Term::Op(Operator::Not, inner) = arg.as_ref() {
+                if kept.binary_search_by_key(&Rc::as_ptr(&inner[0]), Rc::as_ptr).is_ok() {
+                    return pool.add(Term::new_bool(absorbing));
+                }
+            }
+        }
+        match kept.len() {
+            0 => pool.add(Term::new_bool(identity)),
+            1 => kept.pop().unwrap(),
+            _ => pool.add(Term::Op(op, kept)),
+        }
+    }
+
+    fn arith_sort(&self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Option<ArithSort> {
+        match pool.sort(term).as_ref() {
+            Sort::Int => Some(ArithSort::Int),
+            Sort::Real => Some(ArithSort::Real),
+            _ => None,
+        }
+    }
+
+    /// The polynomial of an arithmetic term whose subterms are already in
+    /// normal form.
+    fn polynomial(&mut self, pool: &mut PrimitivePool, term: &Rc<Term>) -> Polynomial {
+        if let Some(value) = term.as_signed_number() {
+            return Polynomial::constant(value);
+        }
+        match term.as_ref() {
+            Term::Op(Operator::Add, args) => {
+                let mut sum = Polynomial::default();
+                for arg in args {
+                    sum.add(&self.polynomial(pool, arg));
+                }
+                sum
+            }
+            Term::Op(Operator::Sub, args) if args.len() == 1 => {
+                let mut poly = self.polynomial(pool, &args[0]);
+                poly.scale(&Rational::from(-1));
+                poly
+            }
+            Term::Op(Operator::Sub, args) => {
+                let mut result = self.polynomial(pool, &args[0]);
+                for arg in &args[1..] {
+                    let mut poly = self.polynomial(pool, arg);
+                    poly.scale(&Rational::from(-1));
+                    result.add(&poly);
+                }
+                result
+            }
+            Term::Op(Operator::Mult, args) => {
+                let mut product = Polynomial::constant(Rational::from(1));
+                for arg in args {
+                    product = product.mul(&self.polynomial(pool, arg));
+                }
+                product
+            }
+            Term::Op(Operator::RealDiv, args) if args.len() == 2 => {
+                match args[1].as_signed_number() {
+                    Some(divisor) if divisor != 0 => {
+                        let mut poly = self.polynomial(pool, &args[0]);
+                        poly.scale(&(Rational::from(1) / divisor));
+                        poly
+                    }
+                    _ => Polynomial::atom(term.clone()),
+                }
+            }
+            Term::Op(Operator::ToReal, args) if args.len() == 1 => {
+                // `to_real` distributes over the sum: constants convert,
+                // atoms are wrapped.
+                let inner = self.polynomial(pool, &args[0]);
+                let mut result = Polynomial::default();
+                for (monomial, coefficient) in &inner.0 {
+                    let atoms: Vec<Rc<Term>> = monomial
+                        .0
+                        .iter()
+                        .map(|atom| pool.add(Term::Op(Operator::ToReal, vec![atom.clone()])))
+                        .collect();
+                    let mut atoms = atoms;
+                    atoms.sort_unstable_by_key(Rc::as_ptr);
+                    result.add_monomial(Monomial(atoms), coefficient.clone());
+                }
+                result
+            }
+            _ => Polynomial::atom(term.clone()),
+        }
+    }
+
+    fn constant_term(&self, pool: &mut PrimitivePool, value: &Rational, sort: ArithSort) -> Rc<Term> {
+        match sort {
+            ArithSort::Int if value.is_integer() => pool.add(Term::new_int(value.numer().clone())),
+            _ => pool.add(Term::new_real(value.clone())),
+        }
+    }
+
+    /// The canonical term of a polynomial: the monomials in order, each a
+    /// constant, an atom or a product `(* c a1 ... an)`, summed.
+    fn term_of_polynomial(&self, pool: &mut PrimitivePool, poly: &Polynomial, sort: ArithSort) -> Rc<Term> {
+        let mut terms: Vec<Rc<Term>> = Vec::new();
+        let mut constant: Option<Rational> = None;
+        for (monomial, coefficient) in poly.sorted() {
+            if monomial.0.is_empty() {
+                constant = Some(coefficient.clone());
+                continue;
+            }
+            let mut factors: Vec<Rc<Term>> = Vec::new();
+            if *coefficient != 1 {
+                factors.push(self.constant_term(pool, coefficient, sort));
+            }
+            factors.extend(monomial.0.iter().cloned());
+            terms.push(if factors.len() == 1 {
+                factors.pop().unwrap()
+            } else {
+                pool.add(Term::Op(Operator::Mult, factors))
+            });
+        }
+        if let Some(constant) = constant {
+            terms.push(self.constant_term(pool, &constant, sort));
+        }
+        match terms.len() {
+            0 => self.constant_term(pool, &Rational::new(), sort),
+            1 => terms.pop().unwrap(),
+            _ => pool.add(Term::Op(Operator::Add, terms)),
+        }
+    }
+
+    /// `(op lhs rhs)` over arithmetic terms as `(op' P c)`: the difference of
+    /// the sides as a polynomial with integral coefficients of gcd 1 (Int) or
+    /// a leading coefficient of 1 (Real), positive leading coefficient, the
+    /// constant on the right, tightened to an integer for Int.
+    fn normalize_relation(
+        &mut self,
+        pool: &mut PrimitivePool,
+        op: Operator,
+        lhs: &Rc<Term>,
+        rhs: &Rc<Term>,
+        sort: ArithSort,
+    ) -> Rc<Term> {
+        use Operator::*;
+        let mut difference = self.polynomial(pool, lhs);
+        let mut right = self.polynomial(pool, rhs);
+        right.scale(&Rational::from(-1));
+        difference.add(&right);
+        if difference.is_constant() {
+            let value = difference.constant_part();
+            let holds = match op {
+                LessThan => value < 0,
+                LessEq => value <= 0,
+                GreaterThan => value > 0,
+                GreaterEq => value >= 0,
+                _ => value == 0,
+            };
+            return pool.add(Term::new_bool(holds));
+        }
+        let mut op = op;
+        let constant = difference.constant_part();
+        difference.add_monomial(Monomial::one(), -constant.clone());
+        let sorted = difference.sorted();
+        let leading = sorted[0].1.clone();
+        let scale = match sort {
+            ArithSort::Int => {
+                let mut lcm = Integer::from(1);
+                for (_, c) in &sorted {
+                    lcm.lcm_mut(c.denom());
+                }
+                let mut gcd = Integer::from(0);
+                for (_, c) in &sorted {
+                    let scaled = Rational::from(c.clone() * Rational::from(&lcm));
+                    gcd.gcd_mut(scaled.numer());
+                }
+                Rational::from((lcm, gcd))
+            }
+            ArithSort::Real => Rational::from(1) / leading.clone().abs(),
+        };
+        let scale = if leading < 0 { -scale } else { scale };
+        if leading < 0 {
+            op = match op {
+                LessThan => GreaterThan,
+                LessEq => GreaterEq,
+                GreaterThan => LessThan,
+                GreaterEq => LessEq,
+                other => other,
+            };
+        }
+        difference.scale(&scale);
+        // `P + k op 0` is `P op -k`.
+        let mut bound = Rational::from(-constant * &scale);
+        if sort == ArithSort::Int && !bound.is_integer() {
+            match op {
+                GreaterEq => bound = bound.ceil(),
+                LessEq => bound = bound.floor(),
+                GreaterThan => {
+                    op = GreaterEq;
+                    bound = bound.floor() + 1;
+                }
+                LessThan => {
+                    op = LessEq;
+                    bound = bound.ceil() - 1;
+                }
+                _ => return pool.add(Term::new_bool(false)),
+            }
+        } else if sort == ArithSort::Int {
+            match op {
+                GreaterThan => {
+                    op = GreaterEq;
+                    bound += 1;
+                }
+                LessThan => {
+                    op = LessEq;
+                    bound -= 1;
+                }
+                _ => {}
+            }
+        }
+        let left = self.term_of_polynomial(pool, &difference, sort);
+        let right = self.constant_term(pool, &bound, sort);
+        pool.add(Term::Op(op, vec![left, right]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser;
+
+    /// Normalizes `lhs` and `rhs` parsed against `problem`, returning
+    /// whether they coincide and their printed normal forms.
+    fn same(problem: &str, lhs: &str, rhs: &str) -> (bool, String, String) {
+        let problem_text = format!("{problem}\n(assert (= {lhs} {rhs}))\n");
+        let proof = format!("(assume h0 (= {lhs} {rhs}))\n");
+        let (_, proof, _, mut pool) = parser::parse_instance(
+            parser::Source::new(std::path::Path::new("<p>"), &problem_text),
+            parser::Source::new(std::path::Path::new("<a>"), &proof),
+            None,
+            parser::Config::new().allow_int_real_subtyping(true),
+        )
+        .expect("parses");
+        let crate::ast::ProofCommand::Assume { term, .. } = &proof.commands[0] else {
+            panic!("expected an assume");
+        };
+        let (_, l, r) = crate::rare::util::get_equational_terms(term).expect("equality");
+        let (l, r) = (l.clone(), r.clone());
+        let mut normalizer = Normalizer::new();
+        let nl = normalizer.normalize(&mut pool, &l);
+        let nr = normalizer.normalize(&mut pool, &r);
+        (nl == nr, format!("{nl:#}"), format!("{nr:#}"))
+    }
+
+    const INTS: &str = "(declare-const x Int) (declare-const y Int) (declare-const z Int) (declare-const p Bool) (declare-const q Bool)";
+    const REALS: &str = "(declare-const a Real) (declare-const b Real) (declare-const x Int)";
+
+    #[test]
+    fn equivalent_sides_coincide() {
+        for (problem, lhs, rhs) in [
+            (INTS, "(not (not (>= (+ x (* -1 y)) 1)))", "(>= (+ x (* -1 y)) 1)"),
+            (INTS, "(* 4 256)", "1024"),
+            (INTS, "(+ 0 1536 -1024 -1024 -512 -512 512 512 512)", "0"),
+            (INTS, "(+ x y x)", "(+ (* 2 x) y)"),
+            (INTS, "(- x y)", "(+ x (* (- 1) y))"),
+            (INTS, "(* (+ x 1) (+ x 1))", "(+ (* x x) (* 2 x) 1)"),
+            (INTS, "(< x y)", "(>= (+ y (* -1 x)) 1)"),
+            (INTS, "(> (* 2 x) 3)", "(>= x 2)"),
+            (INTS, "(<= (* 2 x) 3)", "(<= x 1)"),
+            (INTS, "(= (* 2 x) 3)", "false"),
+            (INTS, "(>= (* -2 x) (* -4 y))", "(<= (+ x (* -2 y)) 0)"),
+            (INTS, "(and p true q p)", "(and q p)"),
+            (INTS, "(or p (not p))", "true"),
+            (INTS, "(and p (not p))", "false"),
+            (INTS, "(=> p q)", "(or (not p) q)"),
+            (INTS, "(ite true x y)", "x"),
+            (INTS, "(= x x)", "true"),
+            (INTS, "(distinct x y)", "(not (= x y))"),
+            (INTS, "(distinct x y z)", "(and (not (= y x)) (not (= z x)) (not (= z y)))"),
+            (INTS, "(distinct x y x)", "false"),
+            (INTS, "(= p true)", "p"),
+            (INTS, "(= false p)", "(not p)"),
+            (REALS, "(>= 0.0 (/ (- 1) 1024))", "true"),
+            (REALS, "(* (/ 1 2) (to_real (+ x (* 2 x))))", "(* (/ 3 2) (to_real x))"),
+            (REALS, "(< (* 2.0 a) b)", "(> (+ b (* (- 2.0) a)) 0.0)"),
+            (REALS, "(= a b)", "(= (+ a (* (- 1.0) b)) 0.0)"),
+        ] {
+            let (equal, nl, nr) = same(problem, lhs, rhs);
+            assert!(equal, "{lhs} and {rhs} normalize to {nl} and {nr}");
+        }
+    }
+
+    #[test]
+    fn different_sides_stay_apart() {
+        for (problem, lhs, rhs) in [
+            (INTS, "(>= x 1)", "(>= x 2)"),
+            (INTS, "(+ x y)", "(+ x z)"),
+            (INTS, "(and p q)", "(or p q)"),
+            (INTS, "(* x y)", "(* x x)"),
+            (REALS, "(>= a 1.0)", "(> a 1.0)"),
+        ] {
+            let (equal, nl, nr) = same(problem, lhs, rhs);
+            assert!(!equal, "{lhs} and {rhs} both normalize to {nl}, {nr}");
+        }
+    }
+}

@@ -113,6 +113,11 @@ pub struct ReconstructHoleOptions {
     /// See `--rare-memory-soft-cap`.
     #[clap(long, value_name = "MEGABYTES")]
     pub memory_soft_cap: Option<usize>,
+
+    /// After a successful check, print the normal forms of the goal's
+    /// subterms (`nf <hash> <term>` lines).
+    #[clap(long, requires = "check_only")]
+    pub export_normal_forms: bool,
 }
 
 #[derive(Args)]
@@ -399,6 +404,18 @@ pub struct ElaborationOptions {
     /// already proved whose sides occur in its goal, as premises.
     #[clap(long, requires = "hole_check_only")]
     pub hole_reuse_proved: bool,
+
+    /// With `--hole-check-only`, substitute into each goal the normal forms
+    /// of its subterms found by the holes already proved, and check the
+    /// holes that normalize a subterm before the holes sharing it.
+    #[clap(long, requires = "hole_check_only")]
+    pub hole_reuse_subst: bool,
+
+    /// With `--hole-check-only`, normalize both sides of every hole with
+    /// Carcara's own normal forms before egglog; a hole whose sides
+    /// coincide is proved outright.
+    #[clap(long, requires = "hole_check_only")]
+    pub hole_prenormalize: bool,
 
     /// The pipeline of elaboration passes to use.
     #[clap(

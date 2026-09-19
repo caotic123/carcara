@@ -2,6 +2,7 @@
 
 pub mod error;
 mod hoist;
+pub mod prenorm;
 mod hole;
 mod local;
 mod prune;
@@ -121,6 +122,19 @@ pub struct Config {
     /// sides occur in its goal, as premises: the e-graph then starts with those subterm rewrites.
     /// Only equalities proved under a subset of the hole's assumptions are reused.
     hole_reuse_proved: bool,
+
+    /// In the checking pass, hand each hole the normal forms of the subterms of its goal that the
+    /// holes already proved found (the smallest equal term in their e-graphs), so that the child
+    /// substitutes them into the goal before translation instead of normalizing them again; holes
+    /// are scheduled after the holes that normalize their subterms.  Only normal forms found under
+    /// a subset of the hole's assumptions are used.
+    hole_reuse_subst: bool,
+
+    /// In the checking pass, normalize both sides of every hole with Carcara's own normal forms
+    /// (polynomials, linear relations, constant evaluation, `and`/`or` flattening) before egglog:
+    /// a hole whose sides coincide is proved outright, the others are checked as the equality of
+    /// their normal forms.
+    hole_prenormalize: bool,
 }
 
 impl Config {
@@ -425,13 +439,58 @@ impl<'e> Elaborator<'e> {
         &mut self,
         proof: &ProofNodeForest,
     ) -> HashMap<String, (Result<Vec<String>, String>, Duration)> {
-        let holes = rare_hole::theory_rewrite_holes(proof);
+        let mut holes = rare_hole::theory_rewrite_holes(proof);
         if holes.is_empty() {
             return HashMap::new();
         }
         let Some(rules) = self.rare_rules else {
             return HashMap::new();
         };
+        // Carcara's own normal forms first: a hole whose sides normalize to
+        // the same term needs no egglog, the others are checked as the
+        // equality of the normal forms.
+        let mut prenormalized: HashMap<String, (Result<Vec<String>, String>, Duration)> =
+            HashMap::new();
+        if self.config.hole_check_only && self.config.hole_prenormalize {
+            let started = Instant::now();
+            let mut normalizer = prenorm::Normalizer::new();
+            let mut rewritten = 0;
+            for (_, step) in holes.iter_mut() {
+                let Some(conclusion) = step.clause.first().cloned() else {
+                    continue;
+                };
+                let Some((crate::ast::Operator::Equals, lhs, rhs)) =
+                    crate::rare::util::get_equational_terms(&conclusion)
+                else {
+                    continue;
+                };
+                let (lhs, rhs) = (lhs.clone(), rhs.clone());
+                let left = normalizer.normalize(self.pool, &lhs);
+                let right = normalizer.normalize(self.pool, &rhs);
+                if left == right {
+                    log::debug!("hole {}: closed by normalization to {:#}", step.id, left);
+                    prenormalized.insert(step.id.clone(), (Ok(Vec::new()), Duration::ZERO));
+                } else if left != lhs || right != rhs {
+                    step.clause = vec![
+                        self.pool
+                            .add(Term::Op(crate::ast::Operator::Equals, vec![left, right])),
+                    ];
+                    rewritten += 1;
+                }
+            }
+            let total = holes.len();
+            holes.retain(|(_, step)| !prenormalized.contains_key(&step.id));
+            log::info!(
+                "hole prenorm: {} of {} holes closed by normalization, {} goals rewritten, in {:.3}s",
+                prenormalized.len(),
+                total,
+                rewritten,
+                started.elapsed().as_secs_f64()
+            );
+            if holes.is_empty() {
+                return prenormalized;
+            }
+        }
         let options = self.config.hole_rewrite_options;
         let isolate = self.config.hole_isolate;
         let check_only = self.config.hole_check_only;
@@ -486,7 +545,119 @@ impl<'e> Elaborator<'e> {
         } else {
             worklist.extend(0..holes.len());
         }
+        let mut worklist = worklist;
+
+        // Substitution-based reuse: the holes that normalize a subterm run
+        // before the holes sharing it.  Every hole's compound subterms are
+        // hashed structurally; the owner of a subterm is the smallest hole
+        // holding it (the cheapest one that normalizes it), and a hole
+        // depends on the owners of its subterms.  The worklist is ordered
+        // by goal size, and a worker takes the first hole whose owners are
+        // all done, falling back to the first hole left when none is ready
+        // within a window, so workers never idle.
+        let subst = check_only && self.config.hole_reuse_subst;
+        let mut hole_hashes: Vec<Vec<u64>> = vec![Vec::new(); holes.len()];
+        let mut dependencies: Vec<Vec<usize>> = vec![Vec::new(); holes.len()];
+        // Per hole: whether a later hole depends on it, so its normal forms
+        // are worth the snapshot that exporting them costs.
+        let mut exports: Vec<bool> = vec![false; holes.len()];
+        if subst {
+            let mut memo = HashMap::new();
+            let mut sizes: Vec<usize> = vec![0; holes.len()];
+            for &index in &worklist {
+                if let Some(conclusion) = holes[index].1.clause.first() {
+                    sizes[index] = term_node_count(conclusion);
+                    hole_hashes[index] =
+                        crate::rare::util::compound_subterms(conclusion, rare_hole::NF_EXPORT_CAP)
+                            .iter()
+                            .map(|term| crate::rare::util::structural_hash(term, &mut memo))
+                            .collect();
+                }
+            }
+            let mut by_size = worklist.clone();
+            by_size.sort_by_key(|&index| (sizes[index], index));
+            let mut owner: HashMap<u64, usize> = HashMap::new();
+            for &index in &by_size {
+                for &hash in &hole_hashes[index] {
+                    owner.entry(hash).or_insert(index);
+                }
+            }
+            let mut with_dependencies = 0;
+            for &index in &by_size {
+                let mut deps: Vec<usize> = hole_hashes[index]
+                    .iter()
+                    .filter_map(|hash| owner.get(hash).copied())
+                    .filter(|&owner| owner != index)
+                    .collect();
+                deps.sort_unstable();
+                deps.dedup();
+                if !deps.is_empty() {
+                    with_dependencies += 1;
+                }
+                for &dep in &deps {
+                    exports[dep] = true;
+                }
+                dependencies[index] = deps;
+            }
+            // The owners go first, smallest first; the other holes keep the
+            // proof's order, which spreads the large ones over the pass.
+            let owners: Vec<usize> = by_size.iter().copied().filter(|&i| exports[i]).collect();
+            let others: Vec<usize> = worklist.iter().copied().filter(|&i| !exports[i]).collect();
+            worklist = owners.iter().chain(&others).copied().collect();
+            log::info!(
+                "hole schedule: {} holes normalize a subterm of a later hole and go first; {} wait for them",
+                owners.len(),
+                with_dependencies
+            );
+        }
         let worklist = worklist;
+        let hole_hashes = hole_hashes;
+        let dependencies = dependencies;
+        let exports = exports;
+        // Per hole index: finished (whatever the verdict).
+        let done: Vec<std::sync::atomic::AtomicBool> = (0..holes.len())
+            .map(|_| std::sync::atomic::AtomicBool::new(false))
+            .collect();
+        struct Schedule {
+            taken: Vec<bool>,
+            cursor: usize,
+        }
+        let schedule = std::sync::Mutex::new(Schedule {
+            taken: vec![false; worklist.len()],
+            cursor: 0,
+        });
+        const SCHEDULE_WINDOW: usize = 512;
+        let pick = || -> Option<usize> {
+            if !subst {
+                let position = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return worklist.get(position).copied();
+            }
+            let mut schedule = schedule.lock().unwrap();
+            while schedule.cursor < worklist.len() && schedule.taken[schedule.cursor] {
+                schedule.cursor += 1;
+            }
+            let start = schedule.cursor;
+            if start >= worklist.len() {
+                return None;
+            }
+            let end = (start + SCHEDULE_WINDOW).min(worklist.len());
+            let ready = (start..end).find(|&position| {
+                !schedule.taken[position]
+                    && dependencies[worklist[position]]
+                        .iter()
+                        .all(|&dep| done[dep].load(std::sync::atomic::Ordering::Acquire))
+            });
+            let position = ready.unwrap_or(start);
+            schedule.taken[position] = true;
+            Some(worklist[position])
+        };
+        // The normal forms found so far, by the structural hash of the
+        // subterm: (assumptions they were found under, normal form text).
+        type NormalForms = HashMap<u64, Vec<(Vec<usize>, String)>>;
+        let normal_forms: std::sync::Mutex<NormalForms> = std::sync::Mutex::new(HashMap::new());
+        let exported_count = std::sync::atomic::AtomicUsize::new(0);
+        let substituted_count = std::sync::atomic::AtomicUsize::new(0);
+        const HINT_LIMIT: usize = 64;
 
         // The equalities proved so far, by the pointer of each side: an
         // equality is reused for a later hole whose goal contains that side,
@@ -517,6 +688,7 @@ impl<'e> Elaborator<'e> {
         if check_only && self.config.hole_batch > 1 {
             self.check_holes_in_batches(&holes, &results);
             let mut results = results.into_inner().unwrap();
+            results.extend(prenormalized.clone());
             for (_, step) in &holes {
                 results.entry(step.id.clone()).or_insert_with(|| {
                     (
@@ -538,12 +710,40 @@ impl<'e> Elaborator<'e> {
                         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                             return;
                         }
-                        let position = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(&index) = worklist.get(position) else {
+                        let Some(index) = pick() else {
                             return;
                         };
                         let (node, step) = &holes[index];
                         let started = Instant::now();
+                        // The normal forms known for this goal's subterms,
+                        // outermost first, found under a compatible context.
+                        let hints: Vec<(u64, String)> = if subst {
+                            let context = context_of(node);
+                            let table = normal_forms.lock().unwrap();
+                            let mut hints = Vec::new();
+                            for hash in &hole_hashes[index] {
+                                let Some(entries) = table.get(hash) else {
+                                    continue;
+                                };
+                                if let Some((_, text)) = entries.iter().find(|(found_under, _)| {
+                                    found_under
+                                        .iter()
+                                        .all(|a| context.binary_search(a).is_ok())
+                                }) {
+                                    hints.push((*hash, text.clone()));
+                                    if hints.len() >= HINT_LIMIT {
+                                        break;
+                                    }
+                                }
+                            }
+                            hints
+                        } else {
+                            Vec::new()
+                        };
+                        if !hints.is_empty() {
+                            substituted_count
+                                .fetch_add(hints.len(), std::sync::atomic::Ordering::Relaxed);
+                        }
                         // Earlier proved equalities whose sides occur in this
                         // goal, under a compatible context.
                         let extra: Vec<Rc<Term>> = if reuse {
@@ -594,6 +794,8 @@ impl<'e> Elaborator<'e> {
                                     check_only,
                                     deadline,
                                     &extra,
+                                    &hints,
+                                    subst && exports[index],
                                 ),
                                 None => {
                                     Err("isolating holes needs the RARE file's path".to_owned())
@@ -619,15 +821,53 @@ impl<'e> Elaborator<'e> {
                                 }
                             }
                         }
+                        // The child's `nf <hash> <term>` lines are the normal
+                        // forms it found; they are text until a later child
+                        // parses them, so no pool is shared between workers.
+                        let result = if subst {
+                            result.map(|lines| {
+                                let mut found = 0;
+                                let context = context_of(node);
+                                let mut table = normal_forms.lock().unwrap();
+                                for line in &lines {
+                                    let Some(rest) = line.strip_prefix("nf ") else {
+                                        continue;
+                                    };
+                                    let Some((hash, text)) = rest.split_once(' ') else {
+                                        continue;
+                                    };
+                                    let Ok(hash) = hash.parse::<u64>() else {
+                                        continue;
+                                    };
+                                    table
+                                        .entry(hash)
+                                        .or_default()
+                                        .push((context.clone(), text.to_owned()));
+                                    found += 1;
+                                }
+                                exported_count.fetch_add(found, std::sync::atomic::Ordering::Relaxed);
+                                Vec::new()
+                            })
+                        } else {
+                            result
+                        };
                         results
                             .lock()
                             .unwrap()
                             .insert(step.id.clone(), (result, started.elapsed()));
+                        done[index].store(true, std::sync::atomic::Ordering::Release);
                     }
                 });
             }
         });
         let mut results = results.into_inner().unwrap();
+        if subst {
+            log::info!(
+                "hole subst: {} normal forms exported, {} substitutions handed to later holes",
+                exported_count.load(std::sync::atomic::Ordering::Relaxed),
+                substituted_count.load(std::sync::atomic::Ordering::Relaxed)
+            );
+        }
         if reuse {
             log::info!(
                 "hole reuse: {} proved equalities handed to later holes as premises",
@@ -652,6 +892,7 @@ impl<'e> Elaborator<'e> {
                 )
             });
         }
+        results.extend(prenormalized);
         results
     }
 
@@ -838,6 +1079,8 @@ impl<'e> Elaborator<'e> {
                                                 true,
                                                 deadline,
                                                 &[],
+                                                &[],
+                                                false,
                                             ),
                                             None => Err(
                                                 "isolating holes needs the RARE file's path"
@@ -1290,5 +1533,17 @@ impl IdHelper {
     pub fn pop(&mut self) {
         assert!(self.stack.len() >= 2, "can't pop last frame from the stack");
         self.stack.pop();
+    }
+}
+
+
+/// The number of nodes of a term, walking through applications only.
+fn term_node_count(term: &Rc<Term>) -> usize {
+    match term.as_ref() {
+        Term::Op(_, args) => 1 + args.iter().map(term_node_count).sum::<usize>(),
+        Term::App(function, args) => {
+            1 + term_node_count(function) + args.iter().map(term_node_count).sum::<usize>()
+        }
+        _ => 1,
     }
 }

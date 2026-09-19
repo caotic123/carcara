@@ -544,12 +544,18 @@ fn hole_problem_string<'a>(
     text
 }
 
+/// The rule of the steps carrying a normal form to a child: `(step nfK (cl
+/// (= t t)) :rule nf-hint :args (H))` says that the subterm of structural
+/// hash `H` may be replaced by `t` in the hole's goal.
+pub const NF_HINT_RULE: &str = "nf-hint";
+
 pub fn hole_input(
     pool: &mut PrimitivePool,
     prelude: &ProblemPrelude,
     node: &Rc<ProofNode>,
     step: &StepNode,
     extra_premises: &[crate::ast::Rc<crate::ast::Term>],
+    hints: &[(u64, String)],
 ) -> Option<String> {
     let [conclusion] = step.clause.as_slice() else {
         return None;
@@ -586,6 +592,13 @@ pub fn hole_input(
     } else {
         format!(" :premises ({})", ids.join(" "))
     };
+    for (index, (hash, normal_form)) in hints.iter().enumerate() {
+        writeln!(
+            text,
+            "(step nf{index} (cl (= {normal_form} {normal_form})) :rule {NF_HINT_RULE} :args ({hash}))"
+        )
+        .ok()?;
+    }
     writeln!(
         text,
         "(step {} (cl {conclusion:#}) :rule hole{premises} :args (\"TRUST_THEORY_REWRITE\"))",
@@ -809,6 +822,7 @@ pub fn reconstruct_from_input(
     rules: parser::Source<'_>,
     options: crate::checker::RunEgglogOptions,
     check_only: bool,
+    export_normal_forms: bool,
     phase: &mut dyn FnMut(&str, Duration),
 ) -> Result<Vec<String>, String> {
     let boundary = format!("{HOLE_INPUT_BOUNDARY}\n");
@@ -832,9 +846,277 @@ pub fn reconstruct_from_input(
         .next()
         .ok_or_else(|| "hole input contains no TRUST_THEORY_REWRITE hole".to_owned())?;
     if check_only {
-        return check_hole(&mut pool, &node, &step, &database, options).map(|()| Vec::new());
+        // The normal forms the parent handed over replace the goal's
+        // subterms before translation, so the engine never sees the
+        // original subterm and does not normalize it again.
+        let hints = normal_form_hints(&forest);
+        let [conclusion] = step.clause.as_slice() else {
+            return Err(format!(
+                "setup: expected a single-literal clause, found {} literals",
+                step.clause.len()
+            ));
+        };
+        let mut memo = HashMap::new();
+        let mut replaced = 0;
+        let goal = crate::rare::util::substitute_by_hash(
+            &mut pool,
+            conclusion,
+            &hints,
+            &mut memo,
+            &mut replaced,
+        );
+        if replaced > 0 {
+            eprintln!("substituted {replaced} normal forms into the goal");
+        }
+        return check_hole_exporting(
+            &mut pool,
+            &node,
+            &goal,
+            &database,
+            options,
+            export_normal_forms,
+            phase,
+        );
     }
     reconstruct_steps_timed(&mut pool, &node, &step, &database, options, phase)
+}
+
+/// The normal forms a parent handed to this child, from the `nf-hint` steps
+/// of the input: structural hash of the subterm to replace -> its normal form.
+fn normal_form_hints(forest: &ProofNodeForest) -> HashMap<u64, crate::ast::Rc<crate::ast::Term>> {
+    let mut hints = HashMap::new();
+    for root in &forest.0 {
+        let ProofNode::Step(step) = root.as_ref() else {
+            continue;
+        };
+        if step.rule != NF_HINT_RULE {
+            continue;
+        }
+        let (Some(hash), Some(clause)) = (step.args.first(), step.clause.first()) else {
+            continue;
+        };
+        let (Some(crate::ast::Term::Const(Constant::Integer(hash))), Some((_, lhs, _))) = (
+            Some(hash.as_ref()),
+            crate::rare::util::get_equational_terms(clause),
+        ) else {
+            continue;
+        };
+        if let Some(hash) = hash.to_u64() {
+            hints.insert(hash, lhs.clone());
+        }
+    }
+    hints
+}
+
+/// The most subterms of a goal whose normal forms a child exports.
+pub const NF_EXPORT_CAP: usize = 256;
+
+/// [`check_hole`] on `goal` (the hole's conclusion, possibly with normal
+/// forms substituted in), which after a successful check also reports the
+/// normal forms the e-graph found for the goal's compound subterms when
+/// `export` is set: one `nf <hash> <term>` line per subterm whose class
+/// holds a smaller term, `<hash>` being the subterm's structural hash.
+fn check_hole_exporting(
+    pool: &mut PrimitivePool,
+    node: &crate::ast::Rc<ProofNode>,
+    goal: &crate::ast::Rc<crate::ast::Term>,
+    rules: &Rules,
+    options: crate::checker::RunEgglogOptions,
+    export: bool,
+    phase: &mut dyn FnMut(&str, Duration),
+) -> Result<Vec<String>, String> {
+    let deadline = options
+        .timeout
+        .and_then(|timeout| Instant::now().checked_add(timeout));
+    let clock = Instant::now();
+    let (result, program) = run_egglog(pool, (goal.clone(), node), rules, options);
+    phase("egglog", clock.elapsed());
+    let egraph = result.map_err(|error| format!("egglog check: {error}"))?;
+    if !export {
+        return Ok(Vec::new());
+    }
+    // The snapshot is skipped when it would not fit the budget or the graph
+    // is too large to copy: the verdict stands, the later holes just get
+    // nothing from this one.
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline)
+        || egraph.num_tuples() > MAX_SNAPSHOT_TUPLES
+    {
+        return Ok(Vec::new());
+    }
+    let clock = Instant::now();
+    let snapshot = EGraphSnapshot::from_raw_nodes(EGraphSnapshot::serialize_production(&egraph));
+    phase("serialize", clock.elapsed());
+    let clock = Instant::now();
+    let lines = export_normal_forms(goal, &snapshot, &program);
+    phase("export", clock.elapsed());
+    Ok(lines)
+}
+
+/// The `nf` lines for `goal`: its compound subterms are aligned with the
+/// encoded goal the engine built (the same tree, one `Mk` node per term),
+/// each is classified in the snapshot, and the smallest decodable term of
+/// its class is reported when it is strictly smaller than the subterm.
+fn export_normal_forms(
+    goal: &crate::ast::Rc<crate::ast::Term>,
+    snapshot: &EGraphSnapshot,
+    program: &str,
+) -> Vec<String> {
+    let (lhs, rhs) = generated_goals(program);
+    let names = goal_variable_names(&lhs, &rhs, goal);
+    let Some((goal_lhs, goal_rhs)) = crate::rare::util::get_equational_terms(goal)
+        .map(|(_, lhs, rhs)| (lhs.clone(), rhs.clone()))
+    else {
+        return Vec::new();
+    };
+    let mut aligned: Vec<(crate::ast::Rc<crate::ast::Term>, Term)> = Vec::new();
+    align_encoded(&goal_lhs, &lhs, &mut aligned);
+    align_encoded(&goal_rhs, &rhs, &mut aligned);
+    let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut classes = HashMap::new();
+    let mut representatives: HashMap<u32, Option<Term>> = HashMap::new();
+    let mut memo = HashMap::new();
+    let mut lines = Vec::new();
+    for (subterm, encoded) in aligned {
+        if lines.len() >= NF_EXPORT_CAP {
+            break;
+        }
+        if !seen.insert(crate::ast::Rc::as_ptr(&subterm) as *const () as usize) {
+            continue;
+        }
+        let Some(class) = snapshot.class_of(&encoded, &mut classes) else {
+            continue;
+        };
+        let Some(representative) =
+            smallest_in_class(snapshot, class, &mut representatives, &mut Vec::new())
+        else {
+            continue;
+        };
+        if representative.size() >= encoded.size() || !all_variables_named(&representative, &names)
+        {
+            continue;
+        }
+        let Some(text) = decode_any(&representative, &names) else {
+            continue;
+        };
+        lines.push(format!(
+            "nf {} {text}",
+            crate::rare::util::structural_hash(&subterm, &mut memo)
+        ));
+    }
+    lines
+}
+
+/// Pairs each compound subterm of `term` with its encoding, walking both
+/// trees in step: an operator application is `(Mk (@op (Args ...)))` with
+/// one list element per argument, a function application a curried `App`
+/// chain.  A subtree whose shapes disagree is left out.
+fn align_encoded(
+    term: &crate::ast::Rc<crate::ast::Term>,
+    encoded: &Term,
+    out: &mut Vec<(crate::ast::Rc<crate::ast::Term>, Term)>,
+) {
+    let ("Mk", [inner]) = (encoded.op.as_str(), encoded.children.as_slice()) else {
+        return;
+    };
+    match term.as_ref() {
+        crate::ast::Term::Op(_, args) if !args.is_empty() => {
+            let (operator, [list]) = (inner.op.as_str(), inner.children.as_slice()) else {
+                return;
+            };
+            if !operator.starts_with('@') {
+                return;
+            }
+            let Some(elements) = list_elements(list) else {
+                return;
+            };
+            if elements.len() != args.len() {
+                return;
+            }
+            out.push((term.clone(), encoded.clone()));
+            for (arg, element) in args.iter().zip(&elements) {
+                align_encoded(arg, element, out);
+            }
+        }
+        crate::ast::Term::App(function, args) => {
+            let mut arguments = Vec::new();
+            let mut current = inner;
+            while let ("App", [next, argument]) = (current.op.as_str(), current.children.as_slice())
+            {
+                arguments.push(argument);
+                current = next;
+            }
+            arguments.reverse();
+            if arguments.len() != args.len() {
+                return;
+            }
+            out.push((term.clone(), encoded.clone()));
+            align_encoded(function, current, out);
+            for (arg, argument) in args.iter().zip(arguments) {
+                align_encoded(arg, argument, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether every variable of an encoded term has a name in `names`, i.e.
+/// comes from the goal; a term over a premise's variables cannot be printed.
+fn all_variables_named(term: &Term, names: &HashMap<String, String>) -> bool {
+    if term.op == "Var" {
+        return term
+            .children
+            .first()
+            .is_some_and(|id| names.contains_key(&id.op));
+    }
+    term.children
+        .iter()
+        .all(|child| all_variables_named(child, names))
+}
+
+/// The smallest term of a class, built from the class's enodes over the
+/// smallest terms of their children (solver-internal rows skipped), or
+/// `None` for a class reachable only through internal rows or a cycle.
+fn smallest_in_class(
+    snapshot: &EGraphSnapshot,
+    class: u32,
+    memo: &mut HashMap<u32, Option<Term>>,
+    visiting: &mut Vec<u32>,
+) -> Option<Term> {
+    if let Some(known) = memo.get(&class) {
+        return known.clone();
+    }
+    if visiting.contains(&class) {
+        return None;
+    }
+    visiting.push(class);
+    let mut best: Option<Term> = None;
+    if let Some(indices) = snapshot.class_nodes.get(class as usize) {
+        for &index in indices {
+            let node = &snapshot.nodes[index as usize];
+            let op = snapshot.ops.names[node.op as usize].as_str();
+            if INTERNAL_OPS.contains(&op) {
+                continue;
+            }
+            let Some(children) = node
+                .child_classes
+                .iter()
+                .map(|&child| smallest_in_class(snapshot, child, memo, visiting))
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            let candidate = Term::new(op, children);
+            if best
+                .as_ref()
+                .is_none_or(|current| (candidate.size(), &candidate) < (current.size(), current))
+            {
+                best = Some(candidate);
+            }
+        }
+    }
+    visiting.pop();
+    memo.insert(class, best.clone());
+    best
 }
 
 /// Reconstructs a hole in a child process that is killed outright when the
@@ -855,8 +1137,10 @@ pub fn reconstruct_in_child(
     check_only: bool,
     deadline: Option<Instant>,
     extra_premises: &[crate::ast::Rc<crate::ast::Term>],
+    hints: &[(u64, String)],
+    export_normal_forms: bool,
 ) -> Result<Vec<String>, String> {
-    let input = hole_input(pool, prelude, node, step, extra_premises)
+    let input = hole_input(pool, prelude, node, step, extra_premises, hints)
         .ok_or_else(|| "expected a single-literal clause".to_owned())?;
     run_hole_worker(
         &step.id,
@@ -866,7 +1150,11 @@ pub fn reconstruct_in_child(
         None,
         memory_limit_mb,
         check_only,
-        WorkerMode::Single,
+        if export_normal_forms {
+            WorkerMode::SingleExporting
+        } else {
+            WorkerMode::Single
+        },
         deadline,
     )
     .map_err(|(reason, _)| reason)
@@ -948,6 +1236,9 @@ pub fn check_batch_in_child(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WorkerMode {
     Single,
+    /// One hole, checked, with the normal forms of its goal's subterms
+    /// reported afterwards.
+    SingleExporting,
     Batch,
     BatchSequential,
 }
@@ -968,7 +1259,7 @@ fn run_hole_worker(
     mode: WorkerMode,
     deadline: Option<Instant>,
 ) -> Result<Vec<String>, (String, Vec<String>)> {
-    let batch = mode != WorkerMode::Single;
+    let batch = !matches!(mode, WorkerMode::Single | WorkerMode::SingleExporting);
     run_hole_worker_inner(
         label,
         input,
@@ -979,6 +1270,7 @@ fn run_hole_worker(
         check_only,
         batch,
         mode == WorkerMode::BatchSequential,
+        mode == WorkerMode::SingleExporting,
         deadline,
     )
 }
@@ -997,6 +1289,7 @@ fn run_hole_worker_inner(
     check_only: bool,
     batch: bool,
     sequential: bool,
+    export_normal_forms: bool,
     deadline: Option<Instant>,
 ) -> Result<Vec<String>, (String, Vec<String>)> {
     let fail = |reason: String| (reason, Vec::new());
@@ -1040,6 +1333,9 @@ fn run_hole_worker_inner(
     }
     if sequential {
         arguments.push("--batch-sequential".into());
+    }
+    if export_normal_forms {
+        arguments.push("--export-normal-forms".into());
     }
     let mut command = match memory_limit_mb {
         // `exec` keeps the child's pid on carcara itself, so killing the pid

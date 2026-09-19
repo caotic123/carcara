@@ -238,6 +238,8 @@ fn elaborate_command(
     let hole_batch_overlap = options.elaboration.hole_batch_by_overlap;
     let hole_batch_term_cap = options.elaboration.hole_batch_terms.unwrap_or(0);
     let hole_reuse_proved = options.elaboration.hole_reuse_proved;
+    let hole_reuse_subst = options.elaboration.hole_reuse_subst;
+    let hole_prenormalize = options.elaboration.hole_prenormalize;
 
     let checker_config = (options.checking, options.tools.clone()).into_config();
     let (elab_config, pipeline) = (options.elaboration, options.tools).into_config();
@@ -255,6 +257,8 @@ fn elaborate_command(
         .hole_batch_overlap(hole_batch_overlap)
         .hole_batch_term_cap(hole_batch_term_cap)
         .hole_reuse_proved(hole_reuse_proved)
+        .hole_reuse_subst(hole_reuse_subst)
+        .hole_prenormalize(hole_prenormalize)
         .hole_rewrite_options(hole_rewrite_options)
         .allowed_rules(allowed_rules);
 
@@ -517,6 +521,7 @@ fn reconstruct_hole_command(options: ReconstructHoleOptions) -> CliResult<()> {
         rules,
         egglog_options,
         options.check_only,
+        options.export_normal_forms,
         // Reported as each phase completes and flushed at once, so the parent
         // learns how far a child got even when it kills it.
         &mut |name, elapsed| eprintln!("phase {name}={:.3}", elapsed.as_secs_f64()),
