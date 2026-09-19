@@ -2080,3 +2080,29 @@ one and the weakest are kept; a member of a dual argument that is
 complemented is dropped from it (`(or p (and (not p) q))` is `(or p q)`).
 Unit tests 56 / 14.  The ten cvc5 sample proofs still close completely,
 cross-check and oracle clean (`scratchpad/prenorm4`).
+
+**Correction: the `let`s were never the obstacle.**  Two claims in the
+"Inputs" paragraph above are wrong.  Carcara checks veriT's `let` proofs
+valid as they are (tgc_io-safe-6, clock_synchro, FISCHER9, gensys: valid);
+what failed was my own `--expand-let-bindings`, which expands the `let`
+terms of the proof too, so the `let` rule had no `let` to match.  And the
+rewrites do not depend on the anchor assignments: veriT's `let` subproofs
+contain only `refl`, `cong` and the closing `let` (vpm2-0: 1,838 `refl`,
+1,874 `cong`, 37 `let`, nothing else), while every `*_simplify`, `ac_simp`
+and `la_rw_eq` step is at depth 0.  So `fold` applies to the original
+proofs unchanged, the `let` subproofs stay as glue-only derivations, and
+the holes are depth-0 and context-free.  On the original proofs at limit
+100 (`scratchpad/verit/lets`): gensys 141 holes, clock_synchro 89,
+tgc_io-safe-6 51, 30_30_18 30, FISCHER9 3,107, ring 26; every folded proof
+checks `holey`, and the prenormalized pass closes every hole of every one
+(hole time 0.000–0.022 s).  What the cvc5 round-trip had actually done for
+vpm2-0 is unrelated to `let`: the original benchmark writes Real constants
+as integer numerals, veriT then prints `(step t1602 (cl (= (- 1.0) (- 1)))
+:rule unary_minus_simplify)`, and Carcara's parser rejects the mixed-sort
+equality (`sort error: expected 'Real', got 'Int'`) even with
+`--allow-int-real-subtyping`.  The corpus was run on the round-tripped
+benchmarks, which is a valid experiment (the proofs differ only in the
+absence of `let`s and in numeral spelling), but the plan is to run the
+original benchmarks directly; `scratchpad/verit/gen-orig.sh` is producing
+their veriT proofs and checking each, to count how many the numeral issue
+affects.
