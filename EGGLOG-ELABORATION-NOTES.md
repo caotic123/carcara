@@ -2694,3 +2694,44 @@ an `evaluate` step, and Carcara's evaluator decides an application of
 interpreted operators to *values* -- it needs every argument to evaluate,
 so an `ite` with arbitrary branches is not one of those.  It is the first
 case of `ite_simplify`, which is what the step now cites.
+
+## 33. The encodings, side by side (2026-09-20)
+
+### veriT, one binary, 98 proofs, normalizer on in both arms
+
+| | holes | proved | kept | skipped | time |
+|---|---|---|---|---|---|
+| `set-form` | 17,067 | **10,761** | **1,370** | **4,936** | 9,893 s |
+| `chain` | 17,067 | 5,866 | 1,558 | 9,643 | 10,606 s |
+
+Same binary, same folded proofs, same budgets, the two arms run one after
+the other so they never shared the machine.  The set form proves 83% more
+holes, keeps 12% fewer, and -- the number that explains the other two --
+skips half as many.  Both arms are budget-bound at 300 s per proof, and
+`chain` spends its budget on goals it cannot reach: a list rule that needs
+an empty list does not fire, an unreachable goal is what triggers the
+quadratic pair seeding, and the proof runs out of budget with two thirds of
+its holes untried.  Per proof the set form keeps fewer holes on 39 and more
+on 10, and is more than 10% faster on 35 against 1.
+
+### cvc5, the cap-kill sample
+
+Three proofs whose `chk1200h2` residue was entirely growth-cap kills, at
+the production cap and at ten times it, with and without the normalizer:
+
+| proof (holes) | plain, 3M | normalizer, 3M | normalizer, 30M | normalizer, 3M, `chain` |
+|---|---|---|---|---|
+| RC-06 (76) | 66 proved, 10 kept, 283 s | 73, 3, 240 s | 73, 3, 240 s | 73, 3, **159 s** |
+| v25_problem_2__029 (108) | 106, 2, 81 s | 108, 0, 17 s | 108, 0, 19 s | 108, 0, 18 s |
+| problem__006 (102) | 100, 2, 60 s | 102, 0, 60 s→4 s | 102, 0, 4 s | 102, 0, 4 s |
+
+Three readings.  The normalizer removes the residue and cuts the pass by
+3 to 15 times.  **The ten-times cap adds nothing once the normalizer is
+on** -- identical verdicts, identical time -- so the 17,079 cap kills of
+§31 are not a cap problem.  And `chain` is no worse than the set form here
+and sometimes faster (RC-06, 159 s against 240 s), which is the same
+conclusion §31 reached from `RF-06`: cvc5 does not need the set form.
+
+So the two producers want different things, and the run submitted as
+`enc4` measures exactly that on cvc5 at scale, four configurations over one
+hoisted proof per benchmark.
