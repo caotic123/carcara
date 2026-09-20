@@ -2869,16 +2869,39 @@ congruence can go.  Binders are never entered (that would need `bind`).
      :rule cong :premises (t3 t4 t5))
 ```
 
-On the two worst proofs of the sweep above, at `N = 50`:
+Over the same 40 benchmarks, at `N = 50`, leaving out one outlier treated
+below (31 proofs):
+
+| | holes | proved | kept | time |
+|---|---|---|---|---|
+| `N = 0` | 521 | 455 (87.3%) | 66 | 571 s |
+| `N = 50` | 1,804 | **1,729 (95.8%)** | 75 | **500 s** |
+| `N = 50` + normalizer | 1,804 | **1,745 (96.7%)** | 59 | **281 s** |
+
+Bounding the hole buys 8.5 points of closure and costs *less* wall-clock,
+because what it removes is the 20 s each impossible whole-assertion hole was
+burning.  On the two worst proofs:
 
 | proof | holes, N=0 | proved | holes, N=50 | proved |
 |---|---|---|---|---|
 | `clocksynchro_7clocks.induct` | 2 | **0** | 52 | **51** |
 | Heizmann `bubblesort` | 25 | 11 (44%) | 900 | **851 (95%)** |
 
-It is not free: the `cong` glue is steps (Heizmann 2,562 -> 3,575) and many
-small holes cost more wall-clock in total than two impossible ones (34 s ->
-228 s).  But it is time spent on goals that close.
+It is not free: the `cong` glue is steps (Heizmann 2,562 -> 3,575), and on a
+proof with many rewrites the many small holes cost more wall-clock in total
+than a few impossible ones (Heizmann 34 s -> 228 s).  But it is time spent
+on goals that close.
+
+**The outlier, and what it says about the knob.**
+`ReachSafety-Loops__deep-nested-O0` goes from 7 holes to **16,236**, and the
+300 s per-proof budget gets through 5,497 of them -- 18 kept, the other
+10,721 never attempted.  The bound is not what produces that number: at
+`N = 200` and at `N = 1000` the count is the same 16,227, because the
+formula is a deep spine with a separate small rewrite hanging off nearly
+every level.  Descending the spine, each differing child is already far
+below the bound, so the bound never gets to bundle anything.  Its holes do
+not fail, there are simply too many of them for the budget: for this shape
+the knob to turn is the budget, not the granularity.
 
 **What it cannot split.**  When the stage rewrites the *root* into a
 different shape, congruence has no footing.  The one hole left in
