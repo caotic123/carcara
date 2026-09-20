@@ -2901,7 +2901,9 @@ formula is a deep spine with a separate small rewrite hanging off nearly
 every level.  Descending the spine, each differing child is already far
 below the bound, so the bound never gets to bundle anything.  Its holes do
 not fail, there are simply too many of them for the budget: for this shape
-the knob to turn is the budget, not the granularity.
+the knob to turn is the budget, not the granularity.  Given 1,200 s instead
+of 300 s, the same proof closes **16,213 of 16,227 holes (99.9%) in 854 s**,
+the 14 left over being per-hole budget kills -- against 1 of 7 at `N = 0`.
 
 **What it cannot split.**  When the stage rewrites the *root* into a
 different shape, congruence has no footing.  The one hole left in
