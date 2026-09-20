@@ -2814,6 +2814,30 @@ The 12 kept split 6 `let_elim` and 6 `simplify_formula`, all of them the
 large ones -- a `let_elim` hole is a substitution over a whole assertion,
 which is not a rewrite any RARE rule states.
 
+Over 40 benchmarks -- a slice of QG-classification plus the QF_UF, QF_LIA
+and QF_LRA eval sets -- 32 give an unsat proof and **578 holes, 469 proved
+(81%), 109 kept, none skipped**.  The shape is uneven and worth keeping in
+view:
+
+- whole proofs close: `BART-PT-020__RC-00` 144/144, `BART-PT-050__RC-05`
+  49/49, the Bromberger slack benchmark 11/11, `gensys_icl077` 128/144;
+- the QF_UF hwbench family produces **no holes at all** -- veriT's
+  preprocessing does nothing there, so there is nothing to make coarse;
+- the residue concentrates in QF_LRA/QF_LIA with heavy arithmetic
+  preprocessing: `clocksynchro_7clocks.induct` 0/3,
+  `ReachSafety-Loops__deep-nested-O0` 1/9, the two Heizmann proofs 11/25
+  and 17/28.
+
+Where the residue is identifiable by stage it is 24 `let_elim`, 32
+`simplify_formula` and 5 `eq_rewrite`; the rest are per-hole budget kills at
+20 s on the large ones.  So two different causes: holes that state something
+RARE has no rule for (`let_elim`, and `eq_rewrite`, which is veriT's
+Boolean-equality rewriting), and holes that are simply too big for one
+20 s attempt.  Only the second is a granularity question -- a
+per-assertion `simplify_formula` hole is much coarser than a cvc5
+theory-rewrite hole, and the natural next knob is a bound on how much a
+single hole may cover.
+
 A side effect worth recording: the *detailed* veriT proof of that benchmark
 is `invalid` for Carcara, on a `let` step whose premise Carcara does not
 accept.  The coarse proof is `holey`: the option hides a checking failure
