@@ -2646,3 +2646,51 @@ changes, since rewriting merges the inner class rather than replacing it.
 Grounding a match through the matched enode's own children, instead of the
 class's preferred representative, is the change that would give the search
 those vertices.
+
+## 32. The cancelled run, read (2026-09-20)
+
+§31's taxonomy came from `chk1200h2`, which is complete but runs neither
+the normalizer nor the elaboration pass.  `chk1200n` does both; it was
+cancelled after QF_UF, and its partial `results.json.gz` covers **951
+proofs**, which is enough to say what the current pipeline actually leaves
+behind.
+
+| | holes |
+|---|---|
+| after hoisting | 513,596 |
+| plain checking pass: proved / kept | 510,626 / 2,970 |
+| normalized pass: proved / kept | 512,953 / **643** |
+| closed by the normalizer alone, no egglog | 162,605 (31.7%) |
+| remaining in the elaborated proof | **5,346** (1.0%) |
+
+The elaborated proofs re-check: **390 valid**, 532 holey, 2 error, 10 with
+no cvc5 proof, 17 tasks cut off.  Of the 532 holey ones, 23 are one hole
+short of valid and 439 are within five.  Elaboration cost 15,298 s of wall
+across the 951 proofs and the re-check 2,202 s.
+
+The normalizer is worth more than any cap: it closes a third of all holes
+outright and cuts the checking pass's kept holes by 78%.  §31's conclusion
+stands but its emphasis was wrong -- cvc5's holes are not blocked on rules,
+and the largest slice of what `chk1200h2` called a cap kill never reaches
+egglog at all once the normalizer runs (`Referendum-PT-1000/RF-06`: four
+holes, 50 s to fail at the production cap, 72 s to succeed at ten times it,
+**0.003 s** to close under `--hole-prenormalize`).
+
+What the residue is made of, across both passes:
+
+| reason | holes |
+|---|---|
+| e-graph grew past the tuple cap | 2,507 |
+| no certificate found (the search) | 2,214 |
+| per-hole time budget | 1,240 |
+| the reconstructed steps were rejected by the checker | 517 |
+| memory | 430 |
+| the proof's hole budget | 16 |
+
+So the certificate search, not the engine, is now the largest addressable
+class: 2,214 + 517 against 2,507 cap kills.  And all 517 rejections are one
+bug, fixed in 1feffecc: the reconstruction emitted `(ite true t u) = t` as
+an `evaluate` step, and Carcara's evaluator decides an application of
+interpreted operators to *values* -- it needs every argument to evaluate,
+so an `ite` with arbitrary branches is not one of those.  It is the first
+case of `ite_simplify`, which is what the step now cites.
