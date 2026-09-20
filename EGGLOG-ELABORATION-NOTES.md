@@ -2842,6 +2842,53 @@ much coarser than a cvc5 theory-rewrite hole, and the natural next knob is a
 bound on how much a single hole may cover -- the analogue of the fold pass's
 `--fold-limit`, but at the point the derivation is made.
 
+### Bounding how much one hole covers
+
+A hole per stage per assertion is very coarse, and the residue above is
+entirely holes that are too big for one attempt.  `--proof-hole-size=N`
+bounds it, in DAG nodes:
+
+```
+--proof-coarse-preprocessing --proof-hole-size=50
+```
+
+The stage still runs once, on the whole assertion, so the result is
+unchanged.  What changes is how its equivalence is written down:
+`pre_hole_equiv` walks `src` and `dest` in parallel and, while the two have
+the same top symbol and arity and the pair is bigger than the bound,
+descends into the arguments that differ and puts the pieces back together
+with one `cong` step.  A hole is emitted where the pair is small enough, or
+where the two sides stop having the same shape -- which is as far as
+congruence can go.  Binders are never entered (that would need `bind`).
+
+```
+(step t3 (cl (= (or false (f A) (f A)) (f A)))   :rule hole ...)
+(step t4 (cl (= (or (g A) (g A) false) (g A)))   :rule hole ...)
+(step t5 (cl (= (and true (h A)) (h A)))         :rule hole ...)
+(step t6 (cl (= (and (or false (f A) (f A)) ...) (and (f A) (g A) (h A))))
+     :rule cong :premises (t3 t4 t5))
+```
+
+On the two worst proofs of the sweep above, at `N = 50`:
+
+| proof | holes, N=0 | proved | holes, N=50 | proved |
+|---|---|---|---|---|
+| `clocksynchro_7clocks.induct` | 2 | **0** | 52 | **51** |
+| Heizmann `bubblesort` | 25 | 11 (44%) | 900 | **851 (95%)** |
+
+It is not free: the `cong` glue is steps (Heizmann 2,562 -> 3,575) and many
+small holes cost more wall-clock in total than two impossible ones (34 s ->
+228 s).  But it is time spent on goals that close.
+
+**What it cannot split.**  When the stage rewrites the *root* into a
+different shape, congruence has no footing.  The one hole left in
+`clocksynchro_7clocks.induct` is `ac_simp` flattening a left-nested binary
+`and` chain into a flat 159-ary one: arity 2 against arity 159 at the root,
+so the split stops immediately and the hole is the whole assertion.  egglog
+dies on it either way (38,215,762 tuples against a 3M cap at 180 s).  The
+hole normalizer closes it in 0.02 s -- it is exactly an `aci_simp` -- so
+with `--hole-prenormalize` that proof goes **52 of 52**.
+
 ### `--expand-let-bindings` is a cvc5 flag
 
 Checking these proofs with `--expand-let-bindings`, as the cvc5 runners do,
