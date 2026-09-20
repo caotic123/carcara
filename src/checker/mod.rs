@@ -123,6 +123,29 @@ pub struct RunEgglogOptions {
     /// containers blow up fails here instead of at the address-space kill.
     /// Zero disables the cap.
     pub memory_soft_cap_mb: usize,
+
+    /// How a RARE rule's `:list` parameters are compiled.  See
+    /// [`ListEncoding`]; the two are measurably different and both are kept
+    /// so an experiment can run either.
+    pub list_encoding: ListEncoding,
+}
+
+/// The two compilations of a `:list` parameter, which stands for a possibly
+/// empty *segment* of an n-ary operator's arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListEncoding {
+    /// On the ACI set form: a rule over `and`/`or` with at least one fixed
+    /// argument is compiled once, its fixed arguments becoming membership
+    /// conditions and its list parameters vanishing, so it fires at any
+    /// arity and with any of the lists empty.  Every `and`/`or` class gets a
+    /// set form, from a ruleset the `aciSets` goal fallback runs.
+    #[default]
+    SetForm,
+    /// On the argument chain: a list parameter is one slot, which
+    /// re-association lets bind a sublist but never nothing, so the compiler
+    /// emits one variant of the rule per subset of its list parameters, with
+    /// those slots dropped (capped at four list parameters).
+    Chain,
 }
 
 impl Default for RunEgglogOptions {
@@ -137,6 +160,7 @@ impl Default for RunEgglogOptions {
             growth_cap_arith: 0,
             growth_cap_plain: 0,
             memory_soft_cap_mb: 0,
+            list_encoding: ListEncoding::SetForm,
         }
     }
 }

@@ -102,6 +102,10 @@ pub struct ReconstructHoleOptions {
     #[clap(long)]
     pub sort_guards: bool,
 
+    /// See `--rare-list-encoding`.
+    #[clap(long, value_enum, default_value = "set-form")]
+    pub list_encoding: ListEncodingArg,
+
     /// See `--rare-growth-cap-arith`.
     #[clap(long, value_name = "TUPLES")]
     pub growth_cap_arith: Option<usize>,
@@ -210,6 +214,24 @@ pub struct ParsingOptions {
     pub allow_legacy_tester_syntax: bool,
 }
 
+/// The two compilations of a `:list` parameter; see
+/// [`carcara::ListEncoding`].
+#[derive(ValueEnum, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListEncodingArg {
+    #[default]
+    SetForm,
+    Chain,
+}
+
+impl From<ListEncodingArg> for carcara::ListEncoding {
+    fn from(argument: ListEncodingArg) -> Self {
+        match argument {
+            ListEncodingArg::SetForm => Self::SetForm,
+            ListEncodingArg::Chain => Self::Chain,
+        }
+    }
+}
+
 #[derive(ValueEnum, Clone, Copy, PartialEq, Eq)]
 pub enum CheckGranularity {
     Normal,
@@ -281,6 +303,14 @@ pub struct CheckingOptions {
     /// equalities over other sorts.
     #[clap(long)]
     pub rare_sort_guards: bool,
+
+    /// How a RARE rule's `:list` parameters are compiled.  `set-form`
+    /// compiles a rule over `and`/`or` once, against the ACI set form, where
+    /// a list may be empty; `chain` compiles it against the argument chain
+    /// and emits one variant per subset of its list parameters.  Both are
+    /// kept so an experiment can compare them.
+    #[clap(long, value_enum, default_value = "set-form")]
+    pub rare_list_encoding: ListEncodingArg,
 
     /// Stop a hole that runs the polynomial normalizer once its e-graph
     /// holds more than this many tuples, instead of running the remaining
@@ -693,6 +723,7 @@ impl IntoConfig for (CheckingOptions, ToolOptions) {
                 print_egglog: c.print_egglog,
                 seed_from_goal: c.rare_seed_from_goal,
                 sort_guards: c.rare_sort_guards,
+                list_encoding: c.rare_list_encoding.into(),
                 growth_cap_arith: c.rare_growth_cap_arith.unwrap_or(0),
                 growth_cap_plain: c.rare_growth_cap_plain.unwrap_or(0),
                 memory_soft_cap_mb: c.rare_memory_soft_cap.unwrap_or(0),

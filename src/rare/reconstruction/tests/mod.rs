@@ -2275,11 +2275,22 @@ fn elaborates_complementary_pairs() {
 
 /// A `:list` parameter stands for a possibly empty sequence of arguments.
 /// The rule of `tests/rare/list-empty.rare` is the only one that can prove
-/// this goal, and only with its first list empty, so it exercises the
-/// empty-list variants of the rule compiler and the `rare-list` argument
-/// the certificate needs for a parameter that binds nothing.
+/// this goal, and only with its first list empty.  Both encodings have to
+/// manage it: the set form, where an empty list is no case at all, and the
+/// chain, where the compiler emits a variant with the slot dropped.  Both
+/// cite the rule with a `rare-list` argument for the parameter that binds
+/// nothing.
 #[test]
 fn elaborates_a_rule_with_an_empty_list_argument() {
+    elaborates_an_empty_list_argument_under(crate::checker::ListEncoding::SetForm);
+}
+
+#[test]
+fn elaborates_an_empty_list_argument_on_the_chain_encoding() {
+    elaborates_an_empty_list_argument_under(crate::checker::ListEncoding::Chain);
+}
+
+fn elaborates_an_empty_list_argument_under(list_encoding: crate::checker::ListEncoding) {
     use crate::elaborator::{self, ElaborationPass};
 
     let problem_path = Path::new("tests/rare/elaborate/list-empty.smt2");
@@ -2296,7 +2307,10 @@ fn elaborates_a_rule_with_an_empty_list_argument() {
         parser::Source::file(proof_path, &mut proof_text).expect("proof should exist"),
         Some(parser::Source::file(rare_path, &mut rare_text).expect("RARE database should exist")),
         parser_config,
-        crate::checker::Config::new(),
+        crate::checker::Config::new().hole_rewrite_options(crate::RunEgglogOptions {
+            list_encoding,
+            ..crate::RunEgglogOptions::default()
+        }),
         elaborator::Config::new().elaborate_hole_rewrites(true),
         vec![ElaborationPass::Hole],
         false,

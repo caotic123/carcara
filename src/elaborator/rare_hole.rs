@@ -1348,6 +1348,16 @@ fn run_hole_worker_inner(
     if options.sort_guards {
         arguments.push("--sort-guards".into());
     }
+    // The worker prepares its own RARE database, so the encoding has to
+    // travel with it or an isolated hole would silently use the default.
+    arguments.push("--list-encoding".into());
+    arguments.push(
+        match options.list_encoding {
+            crate::checker::ListEncoding::SetForm => "set-form",
+            crate::checker::ListEncoding::Chain => "chain",
+        }
+        .into(),
+    );
     if options.growth_cap_arith > 0 {
         arguments.push("--growth-cap-arith".into());
         arguments.push(options.growth_cap_arith.to_string().into());

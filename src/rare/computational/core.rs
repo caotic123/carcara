@@ -1,10 +1,17 @@
-use crate::rare::{
-    computational::{aci_norm, arith_poly_norm, arith_poly_norm_rel, distinct_elim, evaluation},
-    engine::EggFunctions,
-    language::EggStatement,
+use crate::{
+    checker::ListEncoding,
+    rare::{
+        computational::{aci_norm, arith_poly_norm, arith_poly_norm_rel, distinct_elim, evaluation},
+        engine::EggFunctions,
+        language::EggStatement,
+    },
 };
 
-fn declare_aci_rules(decls: &mut Vec<EggStatement>, functions: &EggFunctions) {
+fn declare_aci_rules(
+    decls: &mut Vec<EggStatement>,
+    functions: &EggFunctions,
+    list_encoding: ListEncoding,
+) {
     let mut present = Vec::new();
     for (_, name, op_with_at, identity, absorbing) in aci_norm::aci_operators() {
         if functions.names.contains_key(name) {
@@ -20,15 +27,19 @@ fn declare_aci_rules(decls: &mut Vec<EggStatement>, functions: &EggFunctions) {
     // Declared, never run by an ordinary round: the `aciSets` goal fallback
     // saturates this ruleset when it needs the set form of a term the
     // rewriting derived.
-    if !present.is_empty() {
+    if !present.is_empty() && list_encoding == ListEncoding::SetForm {
         decls.push(EggStatement::Ruleset("set-ruleset".to_owned()));
         decls.extend(aci_norm::general_set_conversion(&present));
     }
 }
 
 /// Add rules that are independent of a particular proof step to the reusable database baseline.
-pub fn declare_database_eliminations(decls: &mut Vec<EggStatement>, functions: &EggFunctions) {
-    declare_aci_rules(decls, functions);
+pub fn declare_database_eliminations(
+    decls: &mut Vec<EggStatement>,
+    functions: &EggFunctions,
+    list_encoding: ListEncoding,
+) {
+    declare_aci_rules(decls, functions, list_encoding);
     decls.extend(evaluation::evaluation_rules());
     if functions.names.contains_key("distinct") {
         decls.extend(distinct_elim::distinct_solver_statements());

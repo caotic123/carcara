@@ -13,7 +13,7 @@ use crate::{
         pool::TermPool,
         rare_rules::{AttributeParameters, RuleDefinition, Rules},
     },
-    checker::RunEgglogOptions,
+    checker::{ListEncoding, RunEgglogOptions},
     rare::{
         computational::{
             aci_norm::singleton_operators,
@@ -63,15 +63,18 @@ impl<'a> RareCtx<'a> {
     }
 
     /// The prepared database, built on first use with the given seeding
-    /// (see `RunEgglogOptions::seed_from_goal`); one context serves one
-    /// setting.
+    /// (see `RunEgglogOptions::seed_from_goal`) and list encoding; one
+    /// context serves one setting.
     fn baseline(
         &self,
         seed_from_goal: bool,
         sort_guards: bool,
+        list_encoding: ListEncoding,
     ) -> Result<&RareDatabaseBaseline, String> {
         self.baseline
-            .get_or_init(|| prepare_database_safely(self.database, seed_from_goal, sort_guards))
+            .get_or_init(|| {
+                prepare_database_safely(self.database, seed_from_goal, sort_guards, list_encoding)
+            })
             .as_ref()
             .map_err(Clone::clone)
     }
@@ -1040,6 +1043,7 @@ fn construct_rules(
     var_map: &mut HashMap<String, u64>,
     seed_from_goal: bool,
     sort_guards: bool,
+    list_encoding: ListEncoding,
 ) -> Result<IndexSet<EggStatement>, String> {
     // The relation a conditional rule's premise instances range over: every
     // available term, or only the goal's and the proof premises' subterms.
@@ -1208,15 +1212,18 @@ fn construct_rules(
         // An `and`/`or` rule with `:list` parameters is compiled against the
         // set form, where the lists need no positions; only the operators
         // without one still need the chain variants below.
-        let set_form = set_form_rule(
-            definition,
-            &subs,
-            func_cache,
-            var_map,
-            &guards,
-            conclusion_lhs,
-            conclusion_rhs,
-        )?;
+        let set_form = match list_encoding {
+            ListEncoding::Chain => None,
+            ListEncoding::SetForm => set_form_rule(
+                definition,
+                &subs,
+                func_cache,
+                var_map,
+                &guards,
+                conclusion_lhs,
+                conclusion_rhs,
+            )?,
+        };
         let on_the_set_form = set_form.is_some();
         if let Some(statement) = set_form {
             rules.insert(statement);
@@ -2351,6 +2358,7 @@ fn prepare_database(
     database: &Rules,
     seed_from_goal: bool,
     sort_guards: bool,
+    list_encoding: ListEncoding,
 ) -> Result<RareDatabaseBaseline, String> {
     let mut functions = EggFunctions::default();
     let mut var_map = HashMap::new();
@@ -2361,6 +2369,7 @@ fn prepare_database(
         &mut var_map,
         seed_from_goal,
         sort_guards,
+        list_encoding,
     )?;
     let has_distinct = functions.names.contains_key("distinct");
 
@@ -2368,7 +2377,7 @@ fn prepare_database(
     // baseline. Every proof step starts by cloning this fully initialized EGraph.
     declare_logic_operators(&mut functions);
     let mut declarations = declare_functions(&functions, sort_guards);
-    declare_database_eliminations(&mut declarations, &functions);
+    declare_database_eliminations(&mut declarations, &functions, list_encoding);
     // The polynomial normalizer's rules are goal-independent, but preparing
     // them in the baseline was measured (2026-09-17) to cost every hole a
     // bigger baseline clone (~0.1 s) and to save the arithmetic holes
@@ -2407,9 +2416,10 @@ fn prepare_database_safely(
     database: &Rules,
     seed_from_goal: bool,
     sort_guards: bool,
+    list_encoding: ListEncoding,
 ) -> Result<RareDatabaseBaseline, String> {
     catch_unwind(AssertUnwindSafe(|| {
-        prepare_database(database, seed_from_goal, sort_guards)
+        prepare_database(database, seed_from_goal, sort_guards, list_encoding)
     }))
     .map_err(|panic| {
         format!(
@@ -2445,7 +2455,11 @@ fn run_egglog_with_premises_inner(
         return (Err(error), String::new());
     }
 
-    let baseline = match context.baseline(options.seed_from_goal, options.sort_guards) {
+    let baseline = match context.baseline(
+        options.seed_from_goal,
+        options.sort_guards,
+        options.list_encoding,
+    ) {
         Ok(baseline) => baseline,
         Err(error) => return (Err(error), String::new()),
     };
@@ -2557,8 +2571,14 @@ fn run_egglog_with_premises_inner(
     };
 
     let enable_arith_poly = arith_poly_norm::uses_arith_machinery(&goal_functions);
-    goal.fallback_plans =
-        get_fallback_plans(enable_arith_poly, &present_aci_operators(&goal_functions));
+    // The set-form fallback exists only under that encoding; with the chain
+    // encoding there are no set forms to build, and the rules that would
+    // read them were never compiled.
+    let aci_operators = match options.list_encoding {
+        ListEncoding::SetForm => present_aci_operators(&goal_functions),
+        ListEncoding::Chain => Vec::new(),
+    };
+    goal.fallback_plans = get_fallback_plans(enable_arith_poly, &aci_operators);
 
     // Only constructors absent from the baseline need declaring in the clone.
     // Goal-specific rules still receive the complete local function/call set.
@@ -2695,7 +2715,11 @@ fn check_hole_rewrites_batched_inner(
         },
         None => None,
     };
-    let baseline = match context.baseline(options.seed_from_goal, options.sort_guards) {
+    let baseline = match context.baseline(
+        options.seed_from_goal,
+        options.sort_guards,
+        options.list_encoding,
+    ) {
         Ok(baseline) => baseline,
         Err(error) => {
             fill(&mut results, error);
@@ -2807,7 +2831,10 @@ fn check_hole_rewrites_batched_inner(
     }
 
     let enable_arith_poly = arith_poly_norm::uses_arith_machinery(&goal_functions);
-    let aci_operators = present_aci_operators(&goal_functions);
+    let aci_operators = match options.list_encoding {
+        ListEncoding::SetForm => present_aci_operators(&goal_functions),
+        ListEncoding::Chain => Vec::new(),
+    };
     let mut new_functions = goal_functions.clone();
     new_functions
         .names

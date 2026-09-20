@@ -2547,6 +2547,27 @@ d2's two kept holes and d3's one are not list-rule cases; they remain
 open.  The full test suite passes, `tests/rare/list-empty.rare` included,
 which is now pinned by the set-form path rather than by the variants.
 
+**Both encodings are kept and selectable**, `--rare-list-encoding
+set-form|chain` (default `set-form`; the isolated hole worker gets it
+passed through, and the prepared database is keyed on it alongside the
+seeding and the sort guards).  `chain` is the §29 compilation: the
+argument chain plus one variant per subset of the list parameters.  It has
+to stay, and not only for the comparison -- the set form is available only
+because `and` and `or` are ACI, so the order-sensitive n-ary operators
+(`str.++`, `re.++`, bv `concat`) and every other list rule go through the
+chain path under either setting.  Measured side by side on the
+diagnostics:
+
+| | `set-form` | `chain` |
+|---|---|---|
+| d2 checking | 3/3, 0.17 s | 1/3, 60.2 s |
+| d2 elaboration | 1/3, 0.85 s | 1/3, 60.2 s |
+| d3 elaboration | 0/1, 0.16 s | 0/1, 2.85 s |
+| d5 elaboration | 5/6, 0.26 s | 5/6, 0.48 s |
+| d1, d4, d8, d9 | — | same verdicts, 5-100% slower |
+
+`tests/rare/list-empty.rare` is checked under both.
+
 **Still open**, unchanged from §29: a list parameter that binds several
 arguments is proved but cannot be *cited*, since a `rare_rewrite` step has
 no form for it.  Commit 18d43bf0 writes such an argument as a `rare-list`
