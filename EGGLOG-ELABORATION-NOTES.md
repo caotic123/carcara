@@ -2778,11 +2778,14 @@ subproof whose steps are thrown away (`proof_subproof_begin` ...
 followed by the same `equiv_pos2` + resolution the detailed pipeline ends
 with.  So the transformation, the formula it produces, and the search that
 follows are bit for bit what they are without the option; only the
-justification changes.  The stages that get a hole are `let_elim`,
-`lang_red` (n-ary and distinct elimination), `simplify_formula` (every call
-site, including the ones inside `pre_ite_proof` and `pre_quant_ite_proof`
-and the one in instance preprocessing) and `eq_rewrite`.  `bfun_elim`,
-`ite_intro` and skolemization already log one step each and are left alone.
+justification changes.  The stages that get a hole are `lang_red` (n-ary
+and distinct elimination), `simplify_formula` (every call site, including
+the ones inside `pre_ite_proof` and `pre_quant_ite_proof` and the one in
+instance preprocessing) and `eq_rewrite`.  `bfun_elim`, `ite_intro` and
+skolemization already log one step each and are left alone, and **let
+elimination keeps its derivation**: its equivalence is a substitution, not a
+rewrite any RARE rule states, and its `let` step is one Carcara checks
+natively, so a hole there can only lose.
 
 The `hole` rule is new on the veriT side (`ps_type_hole`), carries no
 premises, and prints a tag Carcara matches on.  `"preprocessing"` joins
@@ -2815,32 +2818,55 @@ large ones -- a `let_elim` hole is a substitution over a whole assertion,
 which is not a rewrite any RARE rule states.
 
 Over 40 benchmarks -- a slice of QG-classification plus the QF_UF, QF_LIA
-and QF_LRA eval sets -- 32 give an unsat proof and **578 holes, 469 proved
-(81%), 109 kept, none skipped**.  The shape is uneven and worth keeping in
-view:
+and QF_LRA eval sets -- 32 give an unsat proof and **528 holes, 456 proved
+(86%), 72 kept, none skipped** (with let elimination left detailed; when it
+was a hole too the same set gave 578 holes, 469 proved, 81%, and 24 of the
+109 kept were `let_elim` -- dropping it removes 50 holes and 37 of the
+residue).  The shape is uneven and worth keeping in view:
 
 - whole proofs close: `BART-PT-020__RC-00` 144/144, `BART-PT-050__RC-05`
-  49/49, the Bromberger slack benchmark 11/11, `gensys_icl077` 128/144;
+  49/49, the Bromberger slack benchmark 11/11, `gensys_icl328` 119/125,
+  `gensys_icl077` 125/133;
 - the QF_UF hwbench family produces **no holes at all** -- veriT's
   preprocessing does nothing there, so there is nothing to make coarse;
 - the residue concentrates in QF_LRA/QF_LIA with heavy arithmetic
-  preprocessing: `clocksynchro_7clocks.induct` 0/3,
-  `ReachSafety-Loops__deep-nested-O0` 1/9, the two Heizmann proofs 11/25
+  preprocessing: `clocksynchro_*.induct` 0/2,
+  `ReachSafety-Loops__deep-nested-O0` 1/7, the two Heizmann proofs 11/25
   and 17/28.
 
-Where the residue is identifiable by stage it is 24 `let_elim`, 32
-`simplify_formula` and 5 `eq_rewrite`; the rest are per-hole budget kills at
-20 s on the large ones.  So two different causes: holes that state something
-RARE has no rule for (`let_elim`, and `eq_rewrite`, which is veriT's
-Boolean-equality rewriting), and holes that are simply too big for one
-20 s attempt.  Only the second is a granularity question -- a
-per-assertion `simplify_formula` hole is much coarser than a cvc5
-theory-rewrite hole, and the natural next knob is a bound on how much a
-single hole may cover.
+The residue is 37 `simplify_formula` and 5 `eq_rewrite`, plus per-hole
+budget kills at 20 s on the large ones.  There is one cause, not two: a hole
+that covers a whole assertion is too big for one attempt, either past the
+growth cap or past the budget.  A per-assertion `simplify_formula` hole is
+much coarser than a cvc5 theory-rewrite hole, and the natural next knob is a
+bound on how much a single hole may cover -- the analogue of the fold pass's
+`--fold-limit`, but at the point the derivation is made.
 
-A side effect worth recording: the *detailed* veriT proof of that benchmark
-is `invalid` for Carcara, on a `let` step whose premise Carcara does not
-accept.  The coarse proof is `holey`: the option hides a checking failure
-that is really a veriT/Carcara disagreement about `let`.  That is a reason
-to read "coarse checks and detailed does not" carefully rather than as a
-win.
+### `--expand-let-bindings` is a cvc5 flag
+
+Checking these proofs with `--expand-let-bindings`, as the cvc5 runners do,
+makes veriT proofs that contain `let` steps come out `invalid`: the flag
+expands the very `(let ...)` term the `let` rule is about, and the rule then
+reports the premise is "of the wrong form, expected `(let ...)`".  Dropped,
+the same proofs are `valid`.  Nothing to do with veriT or with this option;
+a veriT runner must not pass it.
+
+### The `eq_rewrite` residue is a cap kill, not a missing rule
+
+`eq_rewrite` is veriT's `pre_eq`, on in QF_IDL/RDL/LRA/LIA/LIRA: it replaces
+every arithmetic equality by a conjunction of two inequalities, which
+veriT justifies with `la_rw_eq`, `(= (= t u) (and (<= t u) (<= u t)))`.
+RARE states the same rewrite the other way round -- `arith-eq-elim-int` and
+`arith-eq-elim-real` give `(and (>= t s) (<= t s))` -- and `arith-elim-leq`,
+`(= (<= t s) (>= s t))`, bridges the two orientations, so the engine does
+have what it needs.  A minimal hole `(= (= x y) (and (<= x y) (<= y x)))`
+over two reals is proved in **0.19 s**.
+
+What fails is the size.  An `eq_rewrite` hole is a whole assertion: on
+`clocksynchro_7clocks.induct` it is 33 KB of arithmetic in which every
+equality splits at once, and the run ends "the e-graph grew past the bound
+(14,157,290 tuples, cap 3,000,000)".  The same proof's `lang_red` and
+`simplify_formula` holes, also whole assertions, are killed by the 20 s
+per-hole budget.  So the arithmetic residue here is the granularity, not the
+rule set -- the same conclusion §31 reached about cvc5's cap kills, arrived
+at from the other side.
