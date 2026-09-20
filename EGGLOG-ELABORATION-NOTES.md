@@ -2628,8 +2628,21 @@ not a verification rejection (nothing is logged as a rejected step).  The
 path simply is not in the candidate graph: the derivation rewrites *inside*
 a nested implication, so no rule instance grounds at the root, and the only
 way to walk to a class-mate that differs deep inside is to substitute a
-subterm.  Substituting an arbitrary class-mate (rather than a constant) was
-tried and changes nothing, because the goal's own subterms are every
-class's preferred representative, so the substitution reproduces the term
-the search already has.  Making the preferred representatives yield to a
-second choice is the next thing to try.
+subterm.  Two widenings were tried and neither moves it.  Substituting an
+arbitrary class-mate rather than a constant changes nothing: grounding the
+alternative's children goes through the preferred representatives, which
+are the goal's own subterms.  Counting only *wrapped* positions against the
+substitution bound -- the encoding spends six nodes on a variable, so 32 raw
+positions cover barely two arguments of a real term -- reaches deeper but
+also changes nothing, and costs 2 to 3 times the elaboration time on the
+small proofs, so it was dropped.
+
+The diagnosis that remains is that the intermediate terms never become
+vertices at all.  `ground` binds every pattern variable to
+`self.representative(class)`, so a rule instance is spelled with the goal's
+own subterms; a derivation that rewrites inside a nested implication
+produces no instance anchored at the root, and the root enode itself never
+changes, since rewriting merges the inner class rather than replacing it.
+Grounding a match through the matched enode's own children, instead of the
+class's preferred representative, is the change that would give the search
+those vertices.
