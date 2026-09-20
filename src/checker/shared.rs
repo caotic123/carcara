@@ -171,7 +171,7 @@ fn is_hole_rewrite(step: &ProofStep) -> bool {
         && matches!(
             step.args.first().map(AsRef::as_ref),
             Some(Term::Const(Constant::String(marker)))
-                if marker == "TRUST_THEORY_REWRITE"
+                if crate::elaborator::rare_hole::THEORY_REWRITE_TAGS.contains(&marker.as_str())
         )
 }
 

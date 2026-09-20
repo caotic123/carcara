@@ -483,10 +483,17 @@ use crate::{
 /// built, as before.
 pub const MAX_SNAPSHOT_TUPLES: usize = 4_000_000;
 
-/// The tags cvc5 prints on a `ProofRule::TRUST_THEORY_REWRITE` hole: the
-/// rule's own name up to April 2026, and `"untranslated rewrite"` since
-/// cvc5 #12639 renamed the printed form (same rule, same code path).
-pub const THEORY_REWRITE_TAGS: [&str; 2] = ["TRUST_THEORY_REWRITE", "untranslated rewrite"];
+/// The tags a producer prints on a rewrite hole: cvc5's
+/// `ProofRule::TRUST_THEORY_REWRITE` under the rule's own name up to April
+/// 2026 and under `"untranslated rewrite"` since cvc5 #12639 renamed the
+/// printed form (same rule, same code path), and `"preprocessing"` on the
+/// holes veriT prints for a preprocessing stage under
+/// `--proof-coarse-preprocessing`.
+pub const THEORY_REWRITE_TAGS: [&str; 3] = [
+    "TRUST_THEORY_REWRITE",
+    "untranslated rewrite",
+    "preprocessing",
+];
 
 /// Whether `step` is a cvc5 theory-rewrite hole.
 pub fn is_theory_rewrite_hole(step: &StepNode) -> bool {

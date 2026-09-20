@@ -2707,12 +2707,24 @@ case of `ite_simplify`, which is what the step now cites.
 Same binary, same folded proofs, same budgets, the two arms run one after
 the other so they never shared the machine.  The set form proves 83% more
 holes, keeps 12% fewer, and -- the number that explains the other two --
-skips half as many.  Both arms are budget-bound at 300 s per proof, and
-`chain` spends its budget on goals it cannot reach: a list rule that needs
-an empty list does not fire, an unreachable goal is what triggers the
-quadratic pair seeding, and the proof runs out of budget with two thirds of
-its holes untried.  Per proof the set form keeps fewer holes on 39 and more
-on 10, and is more than 10% faster on 35 against 1.
+skips half as many.  Both arms are budget-bound at 300 s per proof, so the
+proof runs out of budget with two thirds of its holes untried.  Per proof
+the set form keeps fewer holes on 39 and more on 10, and is more than 10%
+faster on 35 against 1.
+
+**This is a throughput win, not a coverage win.**  The residue reasons of
+the two arms contain *no* "goal not reached" at all: on the holes each arm
+got to, `chain` -- with its empty-list variants -- reaches the same goals
+the set form reaches.  What it does not do is reach them as cheaply.  The
+cost is where the two encodings differ: a rule with a `:list` parameter
+compiles to one set-form rule but to 2^k-1 chain variants, and on an n-ary
+`and`/`or` a list parameter has to bind a *segment*, which the chain can
+only produce by re-associating the argument chain.  That is why the gap
+shows up on veriT and not on cvc5: measured per hole, 59% of the folded
+veriT holes contain an `and`/`or` of arity 3 or more, against 3% of cvc5's
+theory-rewrite holes, 76% of which contain no `and`/`or` at all.  The
+earlier reading of this table -- that `chain` loses on the empty-list case,
+and a depth-based reading of the same difference -- are both wrong.
 
 ### cvc5, the cap-kill sample
 
@@ -2735,3 +2747,76 @@ conclusion §31 reached from `RF-06`: cvc5 does not need the set form.
 So the two producers want different things, and the run submitted as
 `enc4` measures exactly that on cvc5 at scale, four configurations over one
 hoisted proof per benchmark.
+
+## 34. Coarse holes from the producer: veriT's preprocessing (2026-09-20)
+
+The folded veriT holes of §33 are made by Carcara: `--pipeline fold` glues a
+chain of `*_simplify`/`ac_simp` steps back together after veriT has already
+spelled it out.  veriT can print the hole itself, which is both cheaper and
+honest about where the granularity comes from.  The vendored copy in
+`verit-2026.05/` now has
+
+```
+--proof-coarse-preprocessing
+```
+
+Its patch, against the 2026.05 sources, is kept in
+`~/exp/egglog-holes/verit-coarse-preprocessing.patch`.
+
+### What it does
+
+`src/pre/pre.c` has two parallel pipelines, `pre_process` (no proof) and
+`pre_process_array_proof` (proof).  The option does not switch between them.
+Each stage of the proof pipeline still runs, unchanged, but inside a
+subproof whose steps are thrown away (`proof_subproof_begin` ...
+`proof_subproof_remove`), and what is logged in its place is one step
+
+```
+(step tN (cl (= F G)) :rule hole :args ("preprocessing" "<stage>"))
+```
+
+followed by the same `equiv_pos2` + resolution the detailed pipeline ends
+with.  So the transformation, the formula it produces, and the search that
+follows are bit for bit what they are without the option; only the
+justification changes.  The stages that get a hole are `let_elim`,
+`lang_red` (n-ary and distinct elimination), `simplify_formula` (every call
+site, including the ones inside `pre_ite_proof` and `pre_quant_ite_proof`
+and the one in instance preprocessing) and `eq_rewrite`.  `bfun_elim`,
+`ite_intro` and skolemization already log one step each and are left alone.
+
+The `hole` rule is new on the veriT side (`ps_type_hole`), carries no
+premises, and prints a tag Carcara matches on.  `"preprocessing"` joins
+`THEORY_REWRITE_TAGS`, so the whole existing pipeline -- `--hole-check-only`,
+elaboration, `hoist` -- treats these holes exactly like cvc5's.
+
+### That the search is untouched, measured
+
+`gensys_icl328` (QF_UF, QG-classification), same binary, `--proof-prune
+--proof-merge`, rule histograms of the two proofs:
+
+| | detailed | coarse |
+|---|---|---|
+| `resolution` | 6043 | 6043 |
+| `and_pos` / `and` / `or` / `not_and` / `not_not` | 733 / 200 / 98 / 110 / 110 | identical |
+| `eq_transitive` / `eq_congruent` / `eq_reflexive` / `contraction` | 1381 / 113 / 30 / 94 | identical |
+| `cong` + `refl` + `trans` + `ac_simp` + `*_simplify` + `let` | 4454 | 0 |
+| `hole` | 0 | 135 |
+| steps | 15,059 | 10,731 |
+
+Every search-level count is the same; 4,454 preprocessing steps become 135
+holes.
+
+### What the holes are worth
+
+Checked through the RARE/egglog pipeline (8 workers, 20 s per hole, the
+production caps), `gensys_icl328`: **123 of 135 holes proved in 6.8 s**.
+The 12 kept split 6 `let_elim` and 6 `simplify_formula`, all of them the
+large ones -- a `let_elim` hole is a substitution over a whole assertion,
+which is not a rewrite any RARE rule states.
+
+A side effect worth recording: the *detailed* veriT proof of that benchmark
+is `invalid` for Carcara, on a `let` step whose premise Carcara does not
+accept.  The coarse proof is `holey`: the option hides a checking failure
+that is really a veriT/Carcara disagreement about `let`.  That is a reason
+to read "coarse checks and detailed does not" carefully rather than as a
+win.
