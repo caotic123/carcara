@@ -2371,6 +2371,14 @@ fn prepare_database(
         sort_guards,
         list_encoding,
     )?;
+    log::debug!(
+        "rare database: {} rules compiled with the {} list encoding",
+        rules.len(),
+        match list_encoding {
+            ListEncoding::SetForm => "set-form",
+            ListEncoding::Chain => "chain",
+        }
+    );
     let has_distinct = functions.names.contains_key("distinct");
 
     // Logic operators and all database-derived rules belong to the immutable

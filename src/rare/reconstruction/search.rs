@@ -10,6 +10,9 @@ use std::{
 /// (computation tables, demand relations, ACI set forms) rather than to the
 /// proof term language.  They appear in the serialized snapshot co-classed
 /// with real terms and must be ignored by term extraction.
+/// How deep a class constant may be: `Mk`, the constructor, the literal.
+pub const CONSTANT_DEPTH: usize = 3;
+
 pub const INTERNAL_OPS: [&str; 12] = [
     "to_formula",
     "to_formula_rel",
@@ -402,6 +405,36 @@ impl Reconstructor<'_> {
             }
         }
         self.extract_representative(eclass, &mut HashSet::new())
+    }
+
+    /// A constant of a class, built only from the constant constructors, or
+    /// `None` when the class holds no constant.  Deliberately not
+    /// `extract_representative`: that one answers with the goal's own
+    /// subterm whenever the class has one, which is exactly the term the
+    /// caller already has.
+    pub fn class_constant(&self, eclass: u32, depth: usize) -> Option<Term> {
+        if depth == 0 {
+            return None;
+        }
+        for &index in self.snapshot.class_nodes.get(eclass as usize)?.iter() {
+            let node = &self.snapshot.nodes[index as usize];
+            let op = self.snapshot.ops.names[node.op as usize].as_str();
+            if node.child_classes.is_empty() {
+                return Some(Term::leaf(op));
+            }
+            if !matches!(op, "Mk" | "Bool" | "Num" | "Real" | "RatConst") {
+                continue;
+            }
+            let children: Option<Vec<Term>> = node
+                .child_classes
+                .iter()
+                .map(|&child| self.class_constant(child, depth - 1))
+                .collect();
+            if let Some(children) = children {
+                return Some(Term::new(op, children));
+            }
+        }
+        None
     }
 
     pub fn extract_representative(
@@ -1313,6 +1346,49 @@ impl Reconstructor<'_> {
             self.stats.computational_edges += 1;
             edges.push((result, CandidateEdge::Computational { kind }));
         }
+        // Congruence candidates towards the vertex with one subterm
+        // replaced by a constant of its class.  After the computational
+        // edges: when both reach the same neighbour, the computation is the
+        // single replayable step and the congruence only a decomposition.  The e-graph holds
+        // `(not X) = false` because a rule made `X` true and the evaluator
+        // then folded the negation, but it never holds the *term*
+        // `(not true)` that both steps go through, and the goal's own
+        // subterms are this class's preferred representatives, so nothing
+        // else produces it.  Substituting the constant builds the
+        // intermediate the evaluation and the constant-folding rules state.
+        // Only for a wrapped vertex: the rules are stated on `Mk`-wrapped
+        // terms, so a path through the unwrapped applications can cite none
+        // of them, and handing that level more reach only makes the search
+        // prefer a generic computation where a named rule was available.
+        let positions = if vertex.op == "Mk" {
+            subterm_positions(vertex)
+        } else {
+            Vec::new()
+        };
+        for position in positions {
+            let subterm = at_position(vertex, &position);
+            let Some(class) = self.class_of(subterm) else {
+                continue;
+            };
+            let Some(constant) = self.class_constant(class, CONSTANT_DEPTH) else {
+                continue;
+            };
+            if constant == *subterm {
+                continue;
+            }
+            let candidate = replace_at_position(vertex, &position, &constant);
+            // Never shadow an edge the vertex already has: a rule or a
+            // computation towards the same neighbour is a single replayable
+            // step, and the breadth-first search keeps only the first edge
+            // it sees to a vertex.
+            if edges.iter().any(|(neighbour, _)| *neighbour == candidate) {
+                continue;
+            }
+            if graph.discovered.insert(candidate.clone()) {
+                self.stats.candidate_vertices += 1;
+            }
+            edges.push((candidate, CandidateEdge::Congruence));
+        }
         for goal in [&graph.source, &graph.target] {
             if *goal == *vertex {
                 continue;
@@ -1526,4 +1602,39 @@ fn match_sequence(
         return true;
     }
     false
+}
+
+/// The positions of a term's proper subterms, outermost first, bounded so a
+/// large term does not flood the candidate search.
+fn subterm_positions(term: &Term) -> Vec<Vec<usize>> {
+    const MAX_POSITIONS: usize = 32;
+    fn walk(term: &Term, prefix: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+        for (index, child) in term.children.iter().enumerate() {
+            if out.len() >= MAX_POSITIONS {
+                return;
+            }
+            prefix.push(index);
+            out.push(prefix.clone());
+            walk(child, prefix, out);
+            prefix.pop();
+        }
+    }
+    let mut out = Vec::new();
+    walk(term, &mut Vec::new(), &mut out);
+    out
+}
+
+fn at_position<'t>(term: &'t Term, position: &[usize]) -> &'t Term {
+    position
+        .iter()
+        .fold(term, |current, &index| &current.children[index])
+}
+
+fn replace_at_position(term: &Term, position: &[usize], replacement: &Term) -> Term {
+    let Some((&index, rest)) = position.split_first() else {
+        return replacement.clone();
+    };
+    let mut children = term.children.clone();
+    children[index] = replace_at_position(&children[index], rest, replacement);
+    Term::new(&term.op, children)
 }

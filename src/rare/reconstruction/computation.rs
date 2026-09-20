@@ -76,10 +76,24 @@ pub fn aci_complement_equal(lhs: &Term, rhs: &Term) -> bool {
         || Computation::AciComplement.apply(rhs).as_ref() == Some(lhs)
 }
 
+/// A term as the computations read it.  The encoding wraps a term in `Mk`
+/// at formula positions, but the e-graph also holds the unwrapped
+/// application, and [`Computation::apply`] wraps such a term before running
+/// and unwraps its result.  The independent recomputation has to wrap the
+/// same way, or it rejects the very step the proposer was entitled to make.
+pub fn wrapped(term: &Term) -> Term {
+    if term.op == "Mk" {
+        term.clone()
+    } else {
+        Term::new("Mk", vec![term.clone()])
+    }
+}
+
 /// Associative-commutative-idempotent equality for `and`/`or`: both sides
 /// flatten to the same non-empty set of literals.  Purely syntactic — the
 /// e-graph is never consulted, so this is decidable checker-side.
 pub fn aci_equal(lhs: &Term, rhs: &Term) -> bool {
+    let (lhs, rhs) = (&wrapped(lhs), &wrapped(rhs));
     let operator = [lhs, rhs].iter().find_map(|term| {
         match encoded_application(term) {
             Some(("@and", _)) => Some(("@and", true)),

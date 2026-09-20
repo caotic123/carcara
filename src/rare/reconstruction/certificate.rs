@@ -104,6 +104,28 @@ impl Certificate {
     /// Verification with the arithmetic sort facts the relation checker
     /// needs; `rules` and `sorts` are both trusted problem input.
     pub fn verify_in(&self, rules: &[Rewrite], sorts: &ArithSorts) -> bool {
+        let ok = self.verify_step(rules, sorts);
+        // Naming the step that failed is the only handle on a search bug:
+        // the certificate is dropped as a whole and the hole is kept.
+        if !ok && log::log_enabled!(log::Level::Debug) {
+            let kind = match self {
+                Self::Refl { .. } => "refl".to_owned(),
+                Self::Rule { name, .. } => format!("rule {name}"),
+                Self::Computational { kind, .. } => format!("{kind:?}"),
+                Self::Symm { .. } => "symm".to_owned(),
+                Self::Congruence { child_index, .. } => format!("cong@{child_index}"),
+                Self::Trans { .. } => "trans".to_owned(),
+            };
+            log::debug!(
+                "certificate step rejected ({kind}): {} = {}",
+                self.lhs().to_egglog(),
+                self.rhs().to_egglog()
+            );
+        }
+        ok
+    }
+
+    fn verify_step(&self, rules: &[Rewrite], sorts: &ArithSorts) -> bool {
         match self {
             Self::Refl { .. } => true,
             // One RARE rule compiles to several egglog rules -- one per
