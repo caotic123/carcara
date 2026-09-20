@@ -1468,7 +1468,18 @@ pub fn reconstruct_with_sorts(
     };
     reconstructor.seed_goal_terms(source);
     reconstructor.seed_goal_terms(target);
-    let mut certificate = if snapshot.same_class(source, target) {
+    let same_class = snapshot.same_class(source, target);
+    log::debug!(
+        "reconstructing {} = {} ({})",
+        source.to_egglog(),
+        target.to_egglog(),
+        if same_class {
+            "one class"
+        } else {
+            "across classes"
+        }
+    );
+    let mut certificate = if same_class {
         reconstructor.prove(source, target)
     } else {
         reconstructor.prove_across_classes(source, target)

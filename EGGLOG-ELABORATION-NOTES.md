@@ -2573,3 +2573,63 @@ arguments is proved but cannot be *cited*, since a `rare_rewrite` step has
 no form for it.  Commit 18d43bf0 writes such an argument as a `rare-list`
 term, which the parser and printer now round-trip, so the form exists in
 Carcara; whether it belongs in Alethe is a proof-format decision.
+
+## 31. What the encodings actually buy, and what cvc5's holes are blocked on (2026-09-20)
+
+Both list encodings are now selectable (`--rare-list-encoding`), so the
+question "does the set form help?" can be asked of a corpus rather than of
+the diagnostics.  Two measurements, one of them the more useful for being
+negative.
+
+### cvc5's kept holes are not blocked on rules
+
+Reading every `kept as trusted` line of the `chk1200h2` run (9,812
+benchmarks, two checking passes, 120,841 kept-hole events):
+
+| reason | events |
+|---|---|
+| per-hole time budget exhausted during egglog | 60,790 |
+| worker killed: memory allocation failed (8 GB) | 37,564 |
+| e-graph grew past the tuple cap | 17,079 |
+| the proof's own hole budget ran out | 4,465 |
+| every goal fallback failed (rounds exhausted) | 933 |
+
+Every one of the 17,079 "egglog check failed" holes says *grew past the
+bound*; **not one** says the goal was unreachable after the rounds.  So
+0.8% of cvc5's kept holes are coverage misses and the rest are resource
+kills.  A better rule encoding cannot move that corpus: no cvc5 hole is
+waiting for a rule.  What would move it is saturation cost, and there the
+set form is the wrong lever -- it *adds* to the e-graph rather than
+replacing the chain.
+
+The biggest identifiable family confirms it.  Of the cap kills, 10,446
+have an `or` left-hand side and 2,343 an `and`; `Referendum-PT-1000/RF-06`
+is typical, four holes that flatten a nested `or` over 1,000 literals.  At
+the production cap (3M tuples) both encodings keep all four; at 30M both
+prove all four, the chain in 58 s and the set form in 72 s.  The set form
+is not what those holes need, and the cap is.
+
+### veriT is where the list rules matter
+
+The shapes that need an empty `:list` are veriT's, not cvc5's: the
+diagnostics move from 2 of 3 to 3 of 3 on d2's checking (34.4 s to 0.14 s)
+and the corpus run of §30 loses a quarter of its kept holes.  The corpus
+A/B under one binary is running as this is written.
+
+### The remaining diagnostic failures
+
+d3 and d5's sixth shape -- the complementary pair under a `not` -- are
+closed by commit be7d8658 (the constant intermediate).  d2's `bool_simplify`
+holes are the one shape left, and they are a certificate-search failure,
+not an engine one: checking proves them in 0.2 s, the reconstruction gives
+up in the same time.  It is not a budget (256, 1024, 4096 and 16384 states
+all fail identically, and so do 4, 32 and 256 rejustification attempts) and
+not a verification rejection (nothing is logged as a rejected step).  The
+path simply is not in the candidate graph: the derivation rewrites *inside*
+a nested implication, so no rule instance grounds at the root, and the only
+way to walk to a class-mate that differs deep inside is to substitute a
+subterm.  Substituting an arbitrary class-mate (rather than a constant) was
+tried and changes nothing, because the goal's own subterms are every
+class's preferred representative, so the substitution reproduces the term
+the search already has.  Making the preferred representatives yield to a
+second choice is the next thing to try.
