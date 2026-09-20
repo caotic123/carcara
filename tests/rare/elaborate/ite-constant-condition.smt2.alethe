@@ -1,0 +1,4 @@
+(assume h1 p)
+(assume h2 (not p))
+(step t1 (cl (= (ite true (f p) (f q)) (f p))) :rule hole :args ("TRUST_THEORY_REWRITE" "ite"))
+(step t9 (cl) :rule resolution :premises (h1 h2))

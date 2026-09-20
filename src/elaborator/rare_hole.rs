@@ -320,6 +320,15 @@ impl AletheElaborator {
                 // that re-decides it, so the elaborated step carries no
                 // trust: `evaluate` constant-folds, `aci_simp` normalizes
                 // and/or, `poly_simp` compares polynomial normal forms.
+                // `evaluate` decides an application of interpreted
+                // operators to *values*; folding an `ite` whose condition is
+                // a constant is not one of those -- Carcara's evaluator
+                // needs every argument to evaluate, and the branches here
+                // are arbitrary terms -- but it is the first case of
+                // `ite_simplify`.
+                Computation::Evaluation if constant_condition_ite(lhs) => {
+                    self.emit(lhs, rhs, "ite_simplify", "")
+                }
                 Computation::Evaluation => self.emit(lhs, rhs, "evaluate", ""),
                 Computation::AciNorm => self.emit(lhs, rhs, "aci_simp", ""),
                 // A complementary pair short-circuits the connective, which
@@ -1606,6 +1615,27 @@ pub fn check_hole_with_context(
     result
         .map(|_| ())
         .map_err(|error| format!("egglog check: {error}"))
+}
+
+/// Whether a term is `(ite c x y)` with `c` a Boolean constant, in either
+/// the wrapped or the unwrapped encoding.
+fn constant_condition_ite(term: &Term) -> bool {
+    let inner = if term.op == "Mk" {
+        match term.children.first() {
+            Some(inner) => inner,
+            None => return false,
+        }
+    } else {
+        term
+    };
+    if inner.op != "@ite" {
+        return false;
+    }
+    let Some(arguments) = inner.children.first() else {
+        return false;
+    };
+    matches!(list_elements(arguments).as_deref(), Some([condition, _, _])
+        if crate::rare::reconstruction::term::bool_value(condition).is_some())
 }
 
 /// The Alethe steps justifying one `TRUST_THEORY_REWRITE` hole.
