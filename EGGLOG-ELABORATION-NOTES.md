@@ -2985,3 +2985,66 @@ equality splits at once, and the run ends "the e-graph grew past the bound
 per-hole budget.  So the arithmetic residue here is the granularity, not the
 rule set -- the same conclusion §31 reached about cvc5's cap kills, arrived
 at from the other side.
+
+## 35. `enc4` read at three quarters: the normalizer decides, the encoding does not (2026-09-20)
+
+The four checking configurations over cvc5 proofs -- the two `:list`
+encodings, each with and without `--hole-prenormalize` -- on one hoisted
+proof per benchmark, 600 s per pass, 60 s and 8 GB per hole.  QF_UF is
+complete (4,361 benchmarks, 4,127 of them checked: 36 gave no complete proof
+in cvc5's 60 s, 198 failed to hoist).  QF_LIA is at 3,738 of 4,745, of which
+2,295 checked -- 37% of its benchmarks give cvc5 no complete proof at all in
+60 s.  QF_LRA has not started.
+
+### QF_UF, 4,127 proofs, 2,240,247 holes
+
+| | proved | kept | skipped | closed by the normalizer | time |
+|---|---|---|---|---|---|
+| `set` | 2,232,298 (99.6%) | 6,911 | 1,038 | -- | 17.65 h |
+| `chain` | 2,232,207 (99.6%) | 6,954 | 1,086 | -- | 18.16 h |
+| `nset` | **2,238,956 (99.9%)** | **576** | 715 | 683,858 | **11.37 h** |
+| `nchain` | 2,238,870 (99.9%) | 586 | 791 | 683,858 | 11.75 h |
+
+### QF_LIA, 2,295 proofs, 1,315,154 holes
+
+| | proved | kept | skipped | closed by the normalizer | time |
+|---|---|---|---|---|---|
+| `set` | 944,063 (71.8%) | 8,778 | 362,313 | -- | 41.7 h |
+| `chain` | 943,717 (71.8%) | 8,785 | 362,652 | -- | 42.0 h |
+| `nset` | **1,312,828 (99.8%)** | **931** | 1,395 | 955,309 | **13.9 h** |
+| `nchain` | 1,312,793 (99.8%) | 933 | 1,428 | 955,309 | 14.0 h |
+
+### The two questions the run was submitted to answer
+
+**The encodings are a wash on cvc5.**  Per proof, `set` has the smaller
+residue on 28 QF_UF proofs and `chain` on 1, with 4,098 ties; on QF_LIA, 56
+against 13 with 2,226 ties.  `set` is more than 10% faster on 23 QF_UF and
+221 QF_LIA proofs, `chain` on 5 and 29.  With the normalizer on, the
+difference all but disappears (13 against 0, and 5 against 2).  This is
+§31 and §33 at scale: cvc5's holes are not where the set form pays, and
+either encoding is a defensible default -- `set` by a nose, and never
+materially behind.
+
+**The normalizer decides everything.**  On QF_UF it takes the residue from
+6,911 to 576 and the pass from 17.65 h to 11.37 h; proofs with no residue at
+all go from 1,603 to 4,088 of 4,127.  On QF_LIA it is the difference between
+71.8% and 99.8%, and between 41.7 h and 13.9 h.  Per proof it is better on
+2,495 QF_UF proofs and worse on 1; faster by more than 10% on 3,685 against
+3.  It closes 30% of the QF_UF holes and **73% of the QF_LIA holes** without
+egglog running at all.
+
+### What the residue is now made of
+
+With the normalizer, QF_UF keeps 576 and skips 715 of 2.24M holes (0.06%),
+QF_LIA keeps 931 and skips 1,395 of 1.32M (0.18%).  The reasons have
+changed class: it is now **per-hole time and memory**, not the growth cap
+(QF_UF 326 time / 185 memory / 65 cap; QF_LIA 1,005 / 958 / 44).  §31's
+picture -- 99.2% cap kills -- was a picture of the *un-normalized* arm, and
+the normalizer removes precisely that class.  The 958 QF_LIA memory deaths
+are the case the new `--rare-memory-soft-cap` (set to 90% of the hard limit
+in both runners) turns into a clean stop with a reason.
+
+The plain arms' QF_LIA number carries a caveat: 362,313 of their holes were
+never attempted because the 600 s pass budget ran out, so 71.8% is a
+statement about equal budget, not about what they could eventually prove.
+That is the comparison the run was for.
