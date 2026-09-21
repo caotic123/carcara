@@ -3131,3 +3131,53 @@ pass's 600 s budget expiring mid-hole (2,748 / 784) -- the latter is a
 budget loss and belongs with the unattempted holes.  The run had no
 `--rare-memory-soft-cap` (added to both runners after submission); its
 10,013 memory deaths under `nset` remain reasonless `SIGABRT`s.
+
+## 37. What the QF_LRA residue of `enc4` is made of (2026-09-21)
+
+With the normalizer on, QF_LRA holds 12,886 of the 17,443 kept holes and
+65,577 of the 75,703 unattempted; 8,607 of its kept holes are memory kills,
+concentrated in `sc` (4,009), `tta_startup` (1,840), `sal/pursuit` (1,062)
+and `uart` (909), and the unattempted ones sit in 54 proofs of 11k--13k
+holes each that the 600 s pass cannot get through.
+
+`sc-14.base.cvc` reproduced locally (same cvc5 build, carcara cb6161af,
+two workers, 4 GB per hole, 1200 s): the normalizer closes 3,608 of 5,281
+holes, egglog proves 1,406 more, and **all 267 kept holes die of memory and
+all have one shape**,
+
+    (= (<= s t) (>= (+ (* -1 s') t') 0.0))
+
+i.e. cvc5's arith-post rewrite of a `<=` atom into its `>=` mirror over the
+negated difference, where the polynomial contains an `ite` (the min/max
+encodings of these benchmarks).  Two separate facts, checked on a
+two-assumption toy problem (`scratchpad/sc14/ite.alethe`, `plain.alethe`):
+
+- **The normalizer does not close the shape even without the `ite`** ("0 of
+  1 closed, 1 rewritten"; egglog proves it in 0.29 s).  `relation_step`
+  keeps the relation symbol and scales `<=`/`>=` only positively, so `(<= P
+  c)` and `(>= -P -c)` never meet.  `comp_simplify` already certifies
+  `(>= a b) => (<= b a)`, `(> a b) => (not (<= a b))` and `(< a b) => (not
+  (<= b a))`, so orienting every relation to `<=` (and `not <=`) before
+  `poly_simp_rel` is a normal form the checker can cite.
+- **With the `ite` inside the polynomial egglog allocates 4 GB within 10 s**
+  and is killed; with a fresh variable in its place it is proved in 0.29 s.
+  The arithmetic rules descend into the `ite` and its condition (itself a
+  relation), and the growth caps do not catch a single allocation.
+
+How much of QF_LRA this is (hoisted holes, by top-level operator pair of
+the goal):
+
+| proof | holes | `(<=)=(>=)` | `(<)=(not)` + `(not)=(>=)` | goals with `ite` |
+|---|---|---|---|---|
+| sc-14 | 5,281 | 706 (267 kept) | 1,365 | 3,280 |
+| gasburner-prop3-19 | 1,703 | 342 | 320 | 588 |
+| tta_startup simple_startup_10nodes.abstract.base | 2,178 | 323 | -- | 322 |
+| pursuit-safety-14 | 1,742 | 329 | 218 | 603 |
+
+So the mirror shape alone is 13--20% of every one of these proofs, the
+negated-relation shapes another 10--25%, and today each of them costs an
+egglog run (0.3 s when it works, 60 s and 8 GB when the `ite` is in it).
+Closing them in the normalizer through `comp_simplify` takes those runs out
+of the 600 s budget that the 54 giant `sc`-style proofs exhaust, and
+removes the memory-kill class at its source; making `ite` an opaque atom
+for the arithmetic rules is the engine-side fix for whatever is left.
