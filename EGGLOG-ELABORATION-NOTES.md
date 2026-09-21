@@ -2914,6 +2914,49 @@ dies on it either way (38,215,762 tuples against a 3M cap at 180 s).  The
 hole normalizer closes it in 0.02 s -- it is exactly an `aci_simp` -- so
 with `--hole-prenormalize` that proof goes **52 of 52**.
 
+### Giving the unbounded holes room: it is the cap, not the clock
+
+If the bound is off, a proof has few, very large holes, and the 20 s per
+hole of the production runs was chosen for the opposite case.  Given 300 s
+per hole and ten times the caps (30M arith / 5M plain), on the six
+QG-classification proofs that had residue:
+
+| proof | holes | plain | + normalizer | plain | norm | at 20 s / 3M |
+|---|---|---|---|---|---|---|
+| `dead_dnd001` | 8 | 6 | 7 | 16 s | 3.5 s | 3 |
+| `gensys_icl037` | 65 | 63 | 64 | 12 s | 3.2 s | 61 |
+| `gensys_icl077` | 133 | 129 | 130 | 27 s | 6.5 s | 125 |
+| `iso_icl022` | 13 | 11 | 12 | 17 s | 3.4 s | 8 |
+| `iso_icl062` | 10 | 8 | 9 | 17 s | 3.5 s | 5 |
+| `iso_icl102` | 10 | 7 | 8 | 18 s | 3.4 s | 5 |
+
+Nothing here times out.  Every kept hole ends "the e-graph grew past the
+bound", at 5.6M to 13.3M tuples against the 5M plain cap -- the extra time
+only lets a hole *reach* the cap sooner.  Raising it settles them:
+
+| proof | plain cap | plain | norm | peak RSS, plain | peak RSS, norm |
+|---|---|---|---|---|---|
+| `iso_icl102` | 5M | 7/10 | -- | | |
+| | **20M** | **10/10**, 35 s | | | |
+| | 50M | 10/10, 37 s | | | |
+| `dead_dnd001` | 5M | 6/8, 30 s | 7/8, 4.9 s | 1.5 GB | 0.8 GB |
+| | **20M** | **8/8**, 33 s | **8/8**, 6.1 s | 2.6 GB | 1.3 GB |
+| `iso_icl062` | 5M | 8/10, 26 s | 9/10, 4.0 s | 1.8 GB | 0.8 GB |
+| | **20M** | **10/10**, 30 s | **10/10**, 4.8 s | 3.1 GB | 1.3 GB |
+
+So for whole-assertion holes on this corpus: **cap 20M plain / 120M arith,
+about 3 GB for one worker, and 50M buys nothing over 20M**.  The normalizer
+is worth more here than at fine granularity -- it closes one extra hole in
+every proof at the 5M cap, and where both succeed it is five times faster on
+half the memory, because a whole-assertion hole is very often pure ACI that
+`aci_simp` settles without building an e-graph at all.
+
+The exception is the deep-nested shape.  `ReachSafety-Loops__deep-nested-O0`
+unbounded is 7 holes, and at 300 s per hole with the 30M/5M caps it proves
+**1**: five holes exhaust the 300 s, one dies allocating past a 9 GB worker
+limit.  Bounded at `N = 200` the same proof is 16,213 of 16,227.  That is
+the whole argument for running both sets.
+
 ### `--expand-let-bindings` is a cvc5 flag
 
 Checking these proofs with `--expand-let-bindings`, as the cvc5 runners do,
