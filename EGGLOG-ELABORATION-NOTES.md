@@ -3071,3 +3071,63 @@ The plain arms' QF_LIA number carries a caveat: 695,501 of their holes were
 never attempted because the 600 s pass budget ran out, so 60.8% is a
 statement about equal budget, not about what they could eventually prove.
 That is the comparison the run was for.
+
+## 36. `enc4` complete, and what the read at three quarters got wrong (2026-09-21)
+
+The run finished 2026-09-21 01:43 (9,812 tasks; results synced to
+`~/exp/results/egglog-holes/enc4`, md5 identical to the cluster copy).  The
+final numbers are in the report addendum (`~/exp/egglog-holes/report`,
+§7, tables from `make-enc4.py`); the totals over the three logics:
+
+| | holes | proved | kept | unattempted | closed by norm. | hours |
+|---|---|---|---|---|---|---|
+| `set` | 5,441,531 | 3,847,142 (70.7%) | 39,351 | 1,555,038 | -- | 112 |
+| `chain` | 5,441,531 | 3,843,654 (70.6%) | 39,484 | 1,558,393 | -- | 113 |
+| `nset` | 5,440,377 | **5,347,231 (98.3%)** | **17,443** | 75,703 | 3,129,633 | **50** |
+| `nchain` | 5,441,531 | 5,346,874 (98.3%) | 17,436 | 77,221 | 3,130,192 | 50 |
+
+Coverage: 7,405 of 9,812 benchmarks give a complete cvc5 proof, 7,171
+hoist, 7,192 reach the passes, and **6,775 come out with no trusted rewrite
+under `nset`** (91% of the proved, 94% of the ran; a portfolio over the four
+adds six).  QF_LRA, which §35 had not seen: 703 benchmarks, 537 proved, 525
+hoisted, 317 fully justified; 1,382,686 holes, `set` proves 36.8% with
+858,499 unattempted, `nset` 94.3% with 12,886 kept and 65,577 unattempted,
+1,046,616 closed by the normalizer.  The encodings stay a wash there too
+(`set` smaller residue on 96 proofs, `chain` on 20, 414 ties; with the
+normalizer 30 / 5 / 495).
+
+Three things the three-quarter read, and the first draft of the report
+addendum, misrepresented; the raw records were re-tabulated
+(`scratchpad/xcheck.py` of the 2026-09-21 session) to settle them:
+
+- **The 234 proofs between proved and hoisted are not hoist timeouts.**
+  207 of them are the upfront rejections of the full run's Table 2
+  (`pivot was not found in clause`; 195 in `QG-classification/qg5`, one in
+  `qg6`, two `2018-Goel-hwbench`, seven QF_LRA, two QF_LIA): `hoist_rc=1`
+  and every pass `rc=1` within seconds.  Only 27 hit the 300 s hoist limit;
+  21 of them were checked unhoisted (none fully justified, all but two cut
+  at 700 s in every pass) and 6 (QF_LIA, 1--3k holes) never printed a
+  summary in any pass.  So 213 proved proofs contribute nothing to the pass
+  columns, and 7,405 − 213 = 7,192 is the `ran` denominator.
+- **Five tasks have no record at all** -- `terminationreason=memory` at the
+  60 GB job limit, 750--2,300 s in, i.e. during the checking passes, and the
+  runner's stdout was lost with them: `QF_UF_hanoi.2.prop1_ab_br_max`,
+  `SpamAssassin-loop-O0`, `fragtest_simple-O0`, `prp-2-17`, `prp-3-18`.
+  They count as "no proof" in the coverage table although three had
+  complete proofs in the full run (1,175 / 2,938 / 11,162 holes).  Eight
+  workers at 8 GB address space each can exceed the job's 60 GB; the soft
+  cap at 7.2 GB (57.6 GB over eight) is also only just under it.
+- **`benchmark32_linear-O0`** lost its summary in `nset` only (700 s
+  external kill), not in both normalized passes; `nchain` printed one (559
+  closed by the normalizer, 595 unattempted), which is why the `nset` hole
+  and closed counts are 1,154 and 559 short of `nchain`.
+
+And two caveats on the residue table that the first draft did not state:
+the runner logs at most 200 `kept as trusted` lines per pass, so the reason
+tally covers 36,400 of 39,351 `set` kept holes and 15,836 of 17,443 `nset`
+(four or five proofs per pass hold the rest); and "killed after Ns" is two
+reasons, the per-hole hard limit (`set` 15,276 / `nset` 4,899) and the
+pass's 600 s budget expiring mid-hole (2,748 / 784) -- the latter is a
+budget loss and belongs with the unattempted holes.  The run had no
+`--rare-memory-soft-cap` (added to both runners after submission); its
+10,013 memory deaths under `nset` remain reasonless `SIGABRT`s.
