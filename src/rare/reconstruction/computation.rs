@@ -158,6 +158,11 @@ impl ArithSorts {
                 if wrapper.to_string() != "Mk" || atom.to_string() != "AAtom" {
                     continue;
                 }
+                // The `ite` atom rules are keyed on the sort relations, one
+                // per sort; its sort is read off its branch instead.
+                if function.to_string() == "@ite" {
+                    continue;
+                }
                 let Some(GenericExpr::Lit(_, EgglogLiteral::Bool(is_int))) =
                     atom_arguments.get(1)
                 else {
@@ -189,8 +194,35 @@ impl ArithSorts {
             },
             // Opaque divisions are real-valued for the solver.
             ("@/" | "@/_total", [_]) => Some(false),
+            // An opaque `ite` has the sort of its branches.
+            ("@ite", [args]) => {
+                let elements = list_elements(args)?;
+                self.term_is_int(elements.get(1)?)
+            }
             (function, [_]) if self.int_functions.contains(function) => Some(true),
             (function, [_]) if self.real_functions.contains(function) => Some(false),
+            _ => None,
+        }
+    }
+
+    /// The sort of an encoded arithmetic term, atom or not, as far as the
+    /// atoms' sorts and the operators decide it.
+    fn term_is_int(&self, term: &Term) -> Option<bool> {
+        if let Some(is_int) = self.atom_is_int(term) {
+            return Some(is_int);
+        }
+        let ("Mk", [inner]) = (term.op.as_str(), term.children.as_slice()) else {
+            return None;
+        };
+        match (inner.op.as_str(), inner.children.as_slice()) {
+            ("Num", [_]) => Some(true),
+            ("Real" | "RatConst", _) => Some(false),
+            ("@to_real", [_]) => Some(false),
+            ("@to_int" | "@div" | "@mod", [_]) => Some(true),
+            ("@+" | "@-" | "@*" | "@abs", [args]) => {
+                let elements = list_elements(args)?;
+                self.term_is_int(elements.first()?)
+            }
             _ => None,
         }
     }

@@ -1395,8 +1395,8 @@ fn construct_rules(
 }
 
 const ORIGIN_RELATION: &str = "Origin";
-const SORT_INT: &str = "SortInt";
-const SORT_REAL: &str = "SortReal";
+pub(crate) const SORT_INT: &str = "SortInt";
+pub(crate) const SORT_REAL: &str = "SortReal";
 const SORT_BOOL: &str = "SortBool";
 const GOAL_LHS_NAME: &str = "goal_lhs";
 const GOAL_RHS_NAME: &str = "goal_rhs";
@@ -2178,14 +2178,21 @@ fn guard_sort(term: &Rc<Term>) -> Option<&'static str> {
 
 /// Sort facts for a goal-side or premise term and every subterm of it: the
 /// seeds of `sort_guards`.
+/// With `only_ite`, only the `ite` subterms are seeded: what the polynomial
+/// normalizer needs to treat a numeric `ite` as an opaque atom when the
+/// guards, and their propagation rules, are off.
 fn sort_premises(
     term: &Rc<Term>,
     func_cache: &mut EggFunctions,
     var_map: &mut HashMap<String, u64>,
+    only_ite: bool,
 ) -> Result<Vec<EggStatement>, String> {
     let subs = IndexMap::new();
     let mut premises = Vec::new();
     for subterm in collect_subterms(term) {
+        if only_ite && !matches!(subterm.as_ref(), Term::Op(Operator::Ite, _)) {
+            continue;
+        }
         let Some(relation) = guard_sort(&subterm) else {
             continue;
         };
@@ -2551,17 +2558,18 @@ fn run_egglog_with_premises_inner(
         }
         goals_ast.extend(origins);
     }
-    if options.sort_guards {
+    {
+        let only_ite = !options.sort_guards;
         let mut sorts = Vec::new();
         for term in [lhs, rhs] {
-            match sort_premises(term, &mut goal_functions, &mut var_map) {
+            match sort_premises(term, &mut goal_functions, &mut var_map, only_ite) {
                 Ok(premises) => sorts.extend(premises),
                 Err(error) => return (Err(error), code_str),
             }
         }
         for clause in premise_clauses {
             if let Some(clause) = clauses_to_or(pool, clause) {
-                match sort_premises(&clause, &mut goal_functions, &mut var_map) {
+                match sort_premises(&clause, &mut goal_functions, &mut var_map, only_ite) {
                     Ok(premises) => sorts.extend(premises),
                     Err(error) => return (Err(error), code_str),
                 }
@@ -2813,9 +2821,15 @@ fn check_hole_rewrites_batched_inner(
                     }
                 }
             }
-            if options.sort_guards {
+            {
+                let only_ite = !options.sort_guards;
                 for term in [lhs, rhs] {
-                    goals_ast.extend(sort_premises(term, &mut goal_functions, &mut var_map)?);
+                    goals_ast.extend(sort_premises(
+                        term,
+                        &mut goal_functions,
+                        &mut var_map,
+                        only_ite,
+                    )?);
                 }
                 for clause in &clauses {
                     if let Some(clause) = clauses_to_or(pool, clause) {
@@ -2823,6 +2837,7 @@ fn check_hole_rewrites_batched_inner(
                             &clause,
                             &mut goal_functions,
                             &mut var_map,
+                            only_ite,
                         )?);
                     }
                 }
@@ -3117,6 +3132,55 @@ mod tests {
             RunEgglogOptions::default(),
         );
         assert!(result.is_ok(), "check failed: {:?}", result.err());
+    }
+
+    /// A numeric `ite` inside a polynomial is an atom for the normalizer:
+    /// `(<= (+ x (ite c y z)) w)` and its mirror over the negated difference
+    /// have the same relation key once the `ite` is opaque.  Without the
+    /// atom rule the normal form is never computed and the goal fails (or,
+    /// with the `ite` rules of the database, grows the e-graph until the
+    /// memory limit).  Both with the sort guards, which seed and propagate
+    /// the `ite`'s sort, and without, where only the goal's own `ite`
+    /// subterms are seeded.
+    #[test]
+    fn a_numeric_ite_is_an_opaque_atom_for_the_normalizer() {
+        for sort_guards in [false, true] {
+            let mut pool = PrimitivePool::new();
+            let real = pool.add_sort(Sort::Real);
+            let bool_sort = pool.add_sort(Sort::Bool);
+            let c = pool.add(Term::Var("c".to_owned(), bool_sort));
+            let [x, y, z, w] = ["x", "y", "z", "w"]
+                .map(|name| pool.add(Term::Var(name.to_owned(), real.clone())));
+            let ite = pool.add(Term::Op(Operator::Ite, vec![c, y, z]));
+            let minus_one = pool.add(Term::new_real(-1));
+            let zero = pool.add(Term::new_real(0));
+            let sum = pool.add(Term::Op(Operator::Add, vec![x.clone(), ite.clone()]));
+            let lhs = pool.add(Term::Op(Operator::LessEq, vec![sum, w.clone()]));
+            let neg_x = pool.add(Term::Op(Operator::Mult, vec![minus_one.clone(), x]));
+            let neg_ite = pool.add(Term::Op(Operator::Mult, vec![minus_one, ite]));
+            let difference = pool.add(Term::Op(Operator::Add, vec![neg_x, w, neg_ite]));
+            let rhs = pool.add(Term::Op(Operator::GreaterEq, vec![difference, zero]));
+            let goal = pool.add(Term::Op(Operator::Equals, vec![lhs, rhs]));
+            let database = RareStatements::default();
+            let context = RareCtx::new(&database);
+
+            let (result, _) = check_hole_rewrite_with_context(
+                &mut pool,
+                "ite-atom",
+                goal,
+                &[],
+                &context,
+                RunEgglogOptions {
+                    sort_guards,
+                    ..RunEgglogOptions::default()
+                },
+            );
+            assert!(
+                result.is_ok(),
+                "check failed (sort guards {sort_guards}): {:?}",
+                result.err()
+            );
+        }
     }
 
     /// A literal and its negation in an `and`/`or` make the connective's

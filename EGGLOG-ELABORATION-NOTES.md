@@ -3181,3 +3181,42 @@ Closing them in the normalizer through `comp_simplify` takes those runs out
 of the 600 s budget that the 54 giant `sc`-style proofs exhaust, and
 removes the memory-kill class at its source; making `ite` an opaque atom
 for the arithmetic rules is the engine-side fix for whatever is left.
+
+## 38. A numeric `ite` is an atom for the polynomial normalizer (2026-09-21)
+
+The engine-side fix for §37.  `declare_opaque_arith_poly_rules` already
+turned every declared function of numeric result sort into an `AAtom` of the
+polynomial normalizer; `ite` is an operator, not a function, so the
+normalizer's `arithCopyOf` demand on a `(Mk (@ite ...))` term had no rule
+and stayed open, the goal's relation key was never computed, and the main
+rounds ran the arithmetic and `ite` rules into the `ite`'s condition (a
+relation) and branches until a single 4 GB allocation failed.  Now a numeric
+`ite` is an atom too, keyed on the `SortInt`/`SortReal` relation of the
+term: with `--rare-sort-guards` those relations are seeded from the goal and
+propagated per operator (`from_branch` for `ite`); without them only the
+goal's own `ite` subterms are seeded (`sort_premises(.., only_ite)`), which
+is all the atom rule needs.  Reconstruction reads the `ite` atom's sort off
+its `then` branch (`ArithSorts::term_is_int`) for the Int-tightening checks.
+
+- Toy hole `(= (<= (+ x (ite c y z)) w) (>= (+ (* -1 x) w (* -1 (ite c y z))) 0))`:
+  4 GB kill at 10 s → proved in 0.31 s, elaborated into `arith-elim-leq`,
+  `poly_simp`, `poly_simp_rel`, `trans`, re-checked `valid`.  Regression test
+  `a_numeric_ite_is_an_opaque_atom_for_the_normalizer` (both guard modes;
+  fails on the previous atom rules).
+- `sc-14.base.cvc` (two workers, 4 GB per hole): checking **5,281/5,281 in
+  120 s**, was 5,014 with 267 memory kills in 924 s.  Elaboration justifies
+  5,273 in 162 s; the 8 misses are `(= (= false x) (not x))` and `(= (xor
+  false x) x)`, "no certificate found" -- a reconstruction gap, not the
+  engine.  The elaborated proof re-checks in 3.8 s, `holey`.
+- Full suite green (272 lib tests).
+
+What the elaborated sc-14 still carries, and what it says about §37's
+first item: 195 `TRUST_THEORY_REWRITE` holes *inside* certificates, every
+one the strict-relation step `(= (> P 0) (not (<= P 0)))` that reconstruction
+emits as a hole tagged `arith_poly_norm_rel`.  That step is exactly
+`comp_simplify`'s `(> t1 t2) ⇒ (not (<= t1 t2))`.  So the relation
+orientation that §37 asked the normalizer for is not a `poly_simp` /
+`aci_simp` / `evaluate` / `distinct_elim` matter at all -- `poly_simp_rel`
+requires the same operator on both sides and a same-sign scale for
+inequalities -- but `comp_simplify`'s, and it is already missing from the
+certificates the reconstruction emits, not only from the prenormalizer.

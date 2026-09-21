@@ -4,7 +4,7 @@ use crate::{
     ast::Sort,
     egg_expr,
     rare::{
-        engine::EggFunctions,
+        engine::{EggFunctions, SORT_INT, SORT_REAL},
         language::{EggExpr, EggStatement},
         util::str_to_u64,
     },
@@ -56,11 +56,67 @@ pub fn declare_opaque_arith_poly_rules(functions: &EggFunctions) -> Vec<EggState
         .collect();
     numeric_funcs.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
-    if numeric_funcs.is_empty() {
-        return Vec::new();
+    let mut decls = Vec::new();
+
+    // A numeric `ite` is an atom too: the normalizer must not look inside
+    // it (its condition is a relation, and the arithmetic rules over it and
+    // the branches grow the e-graph without bound), and its sort is what the
+    // sort relations say, seeded from the goal and propagated from the
+    // branches.  Without a sort fact the demand stays open, as before.
+    if functions
+        .names
+        .get("ite")
+        .is_some_and(|(is_op, _, _)| *is_op)
+    {
+        let wrapped_ite = EggExpr::Mk(Box::new(EggExpr::Call(
+            "@ite".to_owned(),
+            vec![EggExpr::Literal("args".to_owned())],
+        )));
+        for (relation, is_int) in [(SORT_INT, true), (SORT_REAL, false)] {
+            let atom = EggExpr::Call(
+                "AAtom".to_owned(),
+                vec![
+                    EggExpr::Call(
+                        "arith_source_atom_hash".to_owned(),
+                        vec![wrapped_ite.clone()],
+                    ),
+                    EggExpr::NativeBool(is_int),
+                ],
+            );
+            decls.push(EggStatement::Rule {
+                ruleset: Some("arith_poly_guard".to_owned()),
+                body: vec![
+                    egg_expr!(("arithGoalPolyNfOf-demand" {wrapped_ite.clone()})),
+                    EggExpr::Call(relation.to_owned(), vec![wrapped_ite.clone()]),
+                ],
+                head: vec![EggExpr::Set(
+                    Box::new(EggExpr::Call(
+                        "arithGoalPolyCanMatch".to_owned(),
+                        vec![wrapped_ite.clone()],
+                    )),
+                    Box::new(EggExpr::NativeBool(true)),
+                )],
+            });
+            decls.push(EggStatement::Rule {
+                ruleset: Some("arith_poly".to_owned()),
+                body: vec![
+                    egg_expr!(("arithCopyOf-demand" {wrapped_ite.clone()})),
+                    EggExpr::Call(relation.to_owned(), vec![wrapped_ite.clone()]),
+                ],
+                head: vec![EggExpr::Set(
+                    Box::new(EggExpr::Call(
+                        "arithCopyOf".to_owned(),
+                        vec![wrapped_ite.clone()],
+                    )),
+                    Box::new(atom),
+                )],
+            });
+        }
     }
 
-    let mut decls = Vec::new();
+    if numeric_funcs.is_empty() {
+        return decls;
+    }
 
     for (func, result_sort) in &numeric_funcs {
         let is_int_result = matches!(result_sort, Sort::Int);
