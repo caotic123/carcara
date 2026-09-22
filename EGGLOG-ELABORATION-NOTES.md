@@ -3304,3 +3304,76 @@ Those thirty goals are equalities between `@p_` names whose expansion is
 what blew the unshared print up: goals over very large shared DAGs, a size
 problem rather than a shape one, and the family that dominates the
 per-hole-time class of `enc4` (`sal/gasburner` 835).  Open.
+
+## 36. veriT's own holes at scale: `vb50-2` complete (2026-09-22)
+
+The bounded arm is in: 9,812 benchmarks, veriT solving and printing a proof
+whose preprocessing rewrites are holes at `--proof-hole-size=50`, then four
+checking passes over that proof.  The unbounded arm (`vnob-2`) is a fifth of
+the way through QF_UF.
+
+### What veriT gives
+
+| | proofs | holes/proof (median, mean, max) | proofs with none | normalizer closes |
+|---|---|---|---|---|
+| QF_UF | 4,176 of 4,361 | 17, 73, 5,049 | 219 | 98.1% |
+| QF_LIA | 2,506 of 4,748 | 6, 416, 57,772 | 28 | **3.5%** |
+| QF_LRA | 566 of 703 | 123, 547, 12,362 | 0 | 35.6% |
+
+veriT misses 1,957 QF_LIA benchmarks at the 65 s limit and 116 QF_LRA ones;
+55 more fail on `define-fun`, which it does not support in proof mode.
+
+### The four configurations, `vb50-2`
+
+| | QF_UF (305,215 holes) | QF_LIA (1,041,503) | QF_LRA (309,653) |
+|---|---|---|---|
+| `set` | 93.7%, 16.9 h | 69.2%, 24.4 h | 39.6%, 43.0 h |
+| `chain` | 92.9%, **41.1 h** | 68.3%, 29.0 h | 38.7%, 44.5 h |
+| `nset` | **98.9%**, 12.0 h | **62.2%**, 37.4 h | **70.7%**, 44.4 h |
+| `nchain` | 98.1%, 36.8 h | 37.8%, 62.7 h | 66.4%, 50.4 h |
+
+**The encoding matters here, and it did not on cvc5.**  `chain` costs 2.4
+times `set-form` on QF_UF (41.1 h against 16.9 h) and proves less; with the
+normalizer it is 36.8 h against 12.0 h.  This is §33's prediction at scale:
+veriT's holes carry n-ary `and`/`or`, where a `:list` parameter has to bind
+a segment, and that is exactly what the chain has to re-associate.  On cvc5
+the same two encodings were within 1%.
+
+**The normalizer is not universally good.**  It closes 98% of the QF_UF
+holes and 36% of the QF_LRA ones, but only **3.5%** of the QF_LIA ones --
+and there it *loses*, 62.2% against 69.2%, because the per-hole cost it adds
+pushes 72k more holes past the 600 s pass budget.  On veriT's QF_LIA proofs
+the holes are arithmetic rewrites the normal forms do not reach.
+
+### The bounded arm was given the wrong caps
+
+`vb50-2` inherited the cvc5 run's growth caps (3M arith / 500k plain), as
+intended -- it was to run "under the same limits cvc5 gets".  The residue
+says that was the wrong call for this corpus.  On QF_UF:
+
+| | growth cap | per-hole time | memory |
+|---|---|---|---|
+| `vb50-2` (caps 3M/500k, 60 s) | **18,757** | 561 | 31 |
+| `vnob-2` (caps 120M/20M, 120 s) | 46 | 317 | 32 |
+
+Nearly the whole of the bounded arm's 6.3% shortfall is cap truncation, not
+the granularity.
+
+### The paired comparison, and what it is worth
+
+On the 853 QF_UF proofs both arms have so far:
+
+| | holes | proved | kept | proofs fully justified | time |
+|---|---|---|---|---|---|
+| `N=50`, `set` | 60,592 | 95.5% | 2,706 | 236 | 4.4 h |
+| `N=50`, `nset` | 60,592 | 99.1% | 549 | 496 | 3.6 h |
+| no bound, `set` | 51,638 | 99.3% | 373 | 619 | 10.2 h |
+| no bound, `nset` | 51,638 | **99.5%** | **272** | **642** | 7.9 h |
+
+Per proof, the unbounded arm leaves less behind on 243 and more on 45.  But
+the two arms differ in three things at once -- granularity, per-hole time
+(60 s against 120 s) and caps -- so this is not yet a measurement of the
+bound.  Splitting does what it promised (17% more holes, each smaller); what
+the comparison shows is that **the caps, not the granularity, decide the
+QF_UF outcome**.  Isolating the bound needs the bounded arm rerun at
+120M/20M.
