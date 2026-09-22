@@ -150,7 +150,11 @@ impl PrintWithSharing for Rc<Term> {
                 || Rc::strong_count(self) <= 3
                 // - Terms which are not closed, that is, terms which have free variables besides
                 // the global variables, cannot be shared
-                || !self.is_closed(p.pool, &p.global_variables);
+                || !self.is_closed(p.pool, &p.global_variables)
+                // - A lambda heads applications (`((lambda ...) a b)`, what a `define-fun`
+                // application parses to), and a name in head position reads back as a nullary
+                // constant: "expected 0 arguments, got 2".  It stays spelled out.
+                || matches!(self.as_ref(), Term::Binder(Binder::Lambda, ..));
 
             if !cannot_use_sharing {
                 return if let Some(i) = indices.get(self) {
@@ -725,6 +729,42 @@ impl fmt::Display for ProblemPrelude {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A lambda that heads an application is never given a sharing name: a
+    /// name in head position reads back as a nullary constant.  The printed
+    /// proof must re-parse.
+    #[test]
+    fn test_sharing_leaves_lambda_heads_spelled_out() {
+        use crate::parser;
+
+        let definitions = "(declare-const a Int)";
+        let proof = "
+            (step t1 (cl (= ((lambda ((x Int) (y Int)) (+ x y)) a 1) \
+                            ((lambda ((x Int) (y Int)) (+ x y)) a 2))) :rule hole)
+            (step t2 (cl (= ((lambda ((x Int) (y Int)) (+ x y)) a 1) \
+                            ((lambda ((x Int) (y Int)) (+ x y)) a 1))) :rule hole)
+        ";
+        let (problem, proof, _, mut pool) = parser::parse_instance(
+            definitions.into(),
+            proof.into(),
+            None,
+            parser::Config::new(),
+        )
+        .unwrap();
+        let mut buf = Vec::new();
+        AlethePrinter::new(&mut pool, &problem.prelude, true, &mut buf)
+            .write_proof(&proof)
+            .unwrap();
+        let printed = String::from_utf8(buf).unwrap();
+        assert!(!printed.contains("(! (lambda"), "{printed}");
+        parser::parse_instance(
+            definitions.into(),
+            printed.as_str().into(),
+            None,
+            parser::Config::new(),
+        )
+        .unwrap_or_else(|error| panic!("printed proof should re-parse: {error}\n{printed}"));
+    }
 
     #[test]
     fn test_sharing() {

@@ -3635,3 +3635,62 @@ holes to closing everything but the `ite` shapes, and the 1.6--4.5x
 slowdown of §43 disappears with the goals it was paid on.  The cluster
 binaries (`vb50-2`, `vnob-2`) predate this; a rerun of the two `nset`
 arms is the measurement to make.
+
+## 42. The QF_LIA residue of `enc4`, reproduced (2026-09-22)
+
+`enc4`'s best configuration left QF_LIA with 3,981 kept and 9,411
+unattempted holes.  Split by whether the proof hoisted: **10,537 of the
+13,392 sit on the 15 proofs whose hoist timed out** (the unshared print of
+§40), 2,855 on 149 hoisted proofs.  By family (kept / unattempted; the
+reason classes of the kept): Dartagnan ReachSafety-Loops 821 / 7,222 (422
+memory, 335 time; 9 of its 64 residue proofs unhoisted), calypto 753 / 1,117
+(461 time, 90 memory; 4 of 13 unhoisted), fft 1,532 / 0 (Sz32_455 alone,
+unhoisted), rings 527 / 0 (263 memory, 264 time, 35 proofs), Averest
+parallel_prefix_sum 28 / 834, ezsmt incrementalScheduling 225 / 0 (208
+memory, 13 proofs), SMPT a few dozen.  One representative of each family
+was reproduced locally with the binary of §41, a shared hoist, four
+workers of 3.5 GB, 60 s per hole and a 1,200 s pass:
+
+| proof | holes | closed by normalizer | proved | kept | unattempted | pass |
+|---|---|---|---|---|---|---|
+| fft/Sz32_455 (cluster: 1,499 kept, unhoisted) | 6,723 | 5,986 | 6,720 | 3 (2 cap, 1 time) | 0 | 124 s |
+| rings/ring_2exp8_4vars_2ite (cluster: 22 kept, 214 s) | 7,800 | 7,484 | **7,800** | 0 | 0 | **14 s** |
+| Dartagnan/in-de62-O0 (cluster: 72 kept, 3,174 unattempted, unhoisted) | 5,783 | 3,388 | 4,411 | 78 (54 time, 20 memory) | 1,294 | 1,185 s |
+| calypto/problem-001542 (cluster: 323 kept, 643 unattempted, unhoisted) | 2,200 | 1,554 | 1,856 | 74 (50 time, 20 memory) | 270 | 1,200 s |
+| ezsmt/379-incremental_scheduling-78325-0 (cluster: 26 kept) | 1,143 | 646 | 1,118 | 25 (memory) | 0 | 98 s |
+
+What each residue is:
+
+- **rings**: gone.  The `_2ite` benchmarks put `ite` inside the
+  polynomials; §38's atom rule closes the family (cluster 527 kept).
+- **fft**: gone with the shared hoist; the three left are a growth cap
+  and a timeout on a 46 MB proof whose non-hole steps take 300 s to check.
+- **Dartagnan and calypto**: size.  The kept goals are Boolean rewrites
+  (`(= (= A e) ...)`, `(not (not ...))`, `(ite ...)` = `(ite ...)`,
+  `(=> ..)`) over terms whose expansion runs to millions of characters
+  (in-de62: 1--180 M; calypto at three levels of names: up to 1.1 M), and
+  the memory kills fail on 48-byte allocations at the 4 GB limit -- the
+  e-graph is simply full.  The unattempted holes are the same proofs
+  running out of pass budget behind those.  No rule is missing; the lever
+  is granularity (a hole per subterm the sides differ on, as veriT's
+  `--proof-hole-size` does, §34) or a per-proof budget in hole count.
+- **incrementalScheduling**: all 25 kept holes are **beta reductions**,
+  `(= ((lambda ((x Int) (y Int)) ...) a b) (ite (>= ..) 0 a))` from the
+  benchmark's parameterized `define-fun`s (`max`, `min`), the shape the
+  engine cannot prove (a lambda-headed application is an opaque symbol)
+  and then blows memory on.  A prenormalizer step that beta-reduces a
+  lambda application would close every one; cvc5 states them as
+  `TRUST_THEORY_REWRITE`, so the certificate needs a rule -- which Alethe
+  does not have -- or the checker's own reduction.  Open.
+
+**A printer bug the shared hoist uncovered.**  The scheduling proof's
+shared hoist did not parse back ("expected 0 arguments, got 2"): the
+printer named the `lambda` heading an application and then wrote
+`(@p_547 0 @p_540)`, and a name in head position is a nullary constant to
+the parser.  With the runners now hoisting with sharing, every proof with
+a parameterized `define-fun` -- 28 of `enc4`'s proved benchmarks: ezsmt
+incrementalScheduling 13, ezsmt robotics 11, cmodelsdiff wireRouting 4 --
+would have hoisted "ok" and then failed every pass at parsing.  Fixed in
+`printer.rs`: a lambda is never given a sharing name (test
+`test_sharing_leaves_lambda_heads_spelled_out`, a print/re-parse round
+trip).
