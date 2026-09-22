@@ -1201,7 +1201,12 @@ impl<'e> Elaborator<'e> {
                             }
                             Err(error) => {
                                 kept += 1;
-                                log::warn!("hole {}: kept as trusted: {error}", s.id);
+                                let reason = error.to_string();
+                                log::warn!(
+                                    "hole {}: kept as trusted: [{}] {reason}",
+                                    s.id,
+                                    rare_hole::residue_class(&reason)
+                                );
                                 Ok(node.clone())
                             }
                         }
@@ -1215,7 +1220,11 @@ impl<'e> Elaborator<'e> {
                             log::info!("hole {}: {reason}", s.id);
                         } else {
                             kept += 1;
-                            log::warn!("hole {}: kept as trusted: {reason}", s.id);
+                            log::warn!(
+                                "hole {}: kept as trusted: [{}] {reason}",
+                                s.id,
+                                rare_hole::residue_class(&reason)
+                            );
                         }
                         Ok(node.clone())
                     }

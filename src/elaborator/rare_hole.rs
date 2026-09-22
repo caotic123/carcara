@@ -1879,6 +1879,39 @@ pub fn elaborate(
 /// Checks the reconstructed steps against the problem and splices them in.
 /// Always runs on the proof's own pool: the steps arrive as text precisely so
 /// that the terms they mention are interned once, here.
+/// The class of a residue reason, for the runner's tally: a short tag that
+/// names what stopped the hole, read off the reason text at its one log
+/// site so the counts do not depend on where in the text the runner's
+/// truncation falls.  The specific stops come first: a worker that exits
+/// with a status carries the engine's own message in its tail.
+pub fn residue_class(reason: &str) -> &'static str {
+    if reason.contains("grew past the memory cap") {
+        "memory-soft-cap"
+    } else if reason.contains("grew past the bound") {
+        "growth-cap"
+    } else if reason.contains("memory allocation") || reason.contains("out of memory") {
+        "memory"
+    } else if reason.contains("hole budget ran out") {
+        "pass-budget"
+    } else if reason.contains("budget exhausted") {
+        "hole-time"
+    } else if reason.contains("no certificate found") {
+        "no-certificate"
+    } else if reason.contains("rejected") {
+        "checker-rejected"
+    } else if reason.contains("egglog check for") {
+        "unproved"
+    } else if reason.contains("killed by signal 6") || reason.contains("killed by signal 9") {
+        "memory"
+    } else if reason.contains("killed by signal") {
+        "signal"
+    } else if reason.contains("exited with status") {
+        "worker-error"
+    } else {
+        "other"
+    }
+}
+
 pub fn insert_steps(
     elaborator: &mut Elaborator,
     step: &StepNode,

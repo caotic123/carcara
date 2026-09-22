@@ -3259,3 +3259,48 @@ re-checks in 5.2 s, `holey` only by cvc5's `THEORY_INFERENCE_ARITH` and
 `ARITH_STATIC_LEARN` steps.  The 8 kept holes are still the §38
 `(= (= false x) (not x))` / `(= (xor false x) x)` reconstruction misses.
 Full suite green.
+
+## 40. The runners after `enc4`: records that survive a kill, a complete residue tally, and the hoist blow-up (2026-09-21)
+
+Runner fixes (`~/exp/egglog-holes/run-holes-enc.sh`, `run-holes.sh`,
+`run-holes-verit.tmpl` and its two instances), verified locally on
+`sc-10.base.cvc` with tiny budgets (97 `[pfchk]` keys, histogram and sample
+present):
+
+- **Every pass prints its keys as soon as they are known** (`emit_pass_keys`
+  in the checking runners; inline in `run-holes.sh`), and the proof/hoist
+  keys right after hoisting.  The final block repeats them, which the
+  readers' `dict(KEY.findall(log))` absorbs.  A task killed in pass three
+  now keeps passes one and two; `enc4` lost five whole tasks.
+- **Per-worker memory is derived from the job's:** `HOLE_MEMORY_MB =
+  (JOB_MEMORY_MB - DRIVER_RESERVE_MB) / HOLE_WORKERS`, 6,000 MB for eight
+  workers under 60,000 with 12,000 for the driver (the veriT `nob` arm's
+  four workers get 12,750 under 63,000, not 16,000).  All workers at their
+  limit no longer exceed the task's limit.
+- **The residue is counted by class, completely.**  The engine now tags the
+  reason at its one log site -- `hole N: kept as trusted: [class] reason`,
+  `rare_hole::residue_class`: `memory`, `memory-soft-cap`, `growth-cap`,
+  `hole-time`, `pass-budget`, `no-certificate`, `checker-rejected`,
+  `unproved`, `signal`, `worker-error`, `other` -- and the runners emit
+  `<p>_kept_<class>=N` per pass from a `uniq -c` over the tags, plus
+  `<p>_kept_untagged` for an older binary, and keep a 50-line sample.
+  `analyze.py` and `make-enc4.py` read the tag when present.
+- **The hoisted proof is printed with term sharing.**  Every cluster
+  "hoist timeout" reproduced locally is the *printing* of the hoisted proof
+  without sharing exploding: `gasburner-prop3-19` (2.4 MB in) writes 12 GB
+  and is killed at 300 s, `Sz32_455` (70 MB in) writes 13 GB; with sharing
+  they hoist in 0.2 s to 1.9 MB and in 6.5 s to 46 MB.  The passes read the
+  result with `--expand-let-bindings` as before.  `Sz32_455` then checks
+  6,720 of 6,723 holes in 124 s (cluster: unhoisted, 43,270 holes, 41,771
+  proved, 1,499 kept of which 183 memory), the three left being two
+  growth-cap stops and one per-hole timeout; the pass's wall is 425 s,
+  three hundred of them parsing and checking the 46 MB proof's other steps
+  before any hole -- the per-proof budget question of §6 again.
+
+`gasburner-prop3-19` on its shared hoist (two workers, 1,200 s): 1,497
+holes, the normalizer closes 839, egglog proves 596 more; **30 per-hole
+timeouts at 60 s each** and 30 unattempted behind them, no memory kill.
+Those thirty goals are equalities between `@p_` names whose expansion is
+what blew the unshared print up: goals over very large shared DAGs, a size
+problem rather than a shape one, and the family that dominates the
+per-hole-time class of `enc4` (`sal/gasburner` 835).  Open.
