@@ -108,51 +108,112 @@ impl AletheElaborator {
         self.emit(lhs, rhs, "rare_rewrite", &tail)
     }
 
-    /// Rewrites one side of the goal into an equivalent `>=` relation,
-    /// emitting the steps that justify the rewrite.  Returns the `>=` term
-    /// together with the id of a step proving `(= side geq)`, or `None` for
-    /// a shape with no route.
-    fn to_geq(&mut self, side: &Term) -> Option<(Term, Option<String>)> {
+    /// Rewrites one side of the goal into an equivalent `>=` relation, or
+    /// the negation of one, emitting the steps that justify the rewrite.
+    /// Returns the polarity (`false` for a negated form), the `>=` term, and
+    /// the id of a step proving `(= side form)` where `form` is the `>=`
+    /// term or its negation, or `None` for a shape with no route.  Every
+    /// relation is routed through the RARE elimination rules of the
+    /// database: `arith-elim-leq`, `arith-elim-gt`, `arith-elim-lt`, and
+    /// over the integers the tightening `arith-elim-int-lt`, so the routing
+    /// steps are `rare_rewrite` steps the checker recomputes.
+    fn to_geq(&mut self, side: &Term) -> Option<(bool, Term, Option<String>)> {
         let (operator, arguments) = encoded_application(side)?;
         match (operator, arguments.as_slice()) {
-            ("@>=", [_, _]) => Some((side.clone(), None)),
+            ("@>=", [_, _]) => Some((true, side.clone(), None)),
             // (<= a b) = (>= b a)
             ("@<=", [a, b]) => {
                 let geq = encoded_app("@>=", vec![b.clone(), a.clone()]);
                 let id = self.rare_step(side, &geq, "arith-elim-leq", &[a, b])?;
-                Some((geq, Some(id)))
+                Some((true, geq, Some(id)))
+            }
+            // (> a b) = (not (>= b a))
+            ("@>", [a, b]) => {
+                let geq = encoded_app("@>=", vec![b.clone(), a.clone()]);
+                let negated = encoded_app("@not", vec![geq.clone()]);
+                let id = self.rare_step(side, &negated, "arith-elim-gt", &[a, b])?;
+                Some((false, geq, Some(id)))
+            }
+            // (< a b) = (not (>= a b)); over the integers the tightened
+            // (>= b (+ a 1)) is the positive form the chain prefers.
+            ("@<", [a, b]) => {
+                let difference = poly_of(a)?.sub(&poly_of(b)?);
+                if difference.is_int_valued(&self.sorts, true) {
+                    let bumped =
+                        encoded_app("@+", vec![a.clone(), Self::numeral(&Integer::from(1))]);
+                    let geq = encoded_app("@>=", vec![b.clone(), bumped]);
+                    // arith-elim-int-lt: (= (< a b) (>= b (+ a 1)))
+                    let id = self.rare_step(side, &geq, "arith-elim-int-lt", &[a, b])?;
+                    return Some((true, geq, Some(id)));
+                }
+                let geq = encoded_app("@>=", vec![a.clone(), b.clone()]);
+                let negated = encoded_app("@not", vec![geq.clone()]);
+                let id = self.rare_step(side, &negated, "arith-elim-lt", &[a, b])?;
+                Some((false, geq, Some(id)))
             }
             ("@not", [inner]) => {
                 let (inner_operator, inner_arguments) = encoded_application(inner)?;
                 let [a, b] = inner_arguments.as_slice() else {
                     return None;
                 };
-                if inner_operator != "@>=" {
-                    return None;
+                if inner_operator == "@>=" {
+                    // (not (>= a b)) is (< a b); over the integers that
+                    // tightens to (>= b (+ a 1)).  The tightening is only
+                    // sound when the difference really is integer-valued.
+                    let difference = poly_of(a)?.sub(&poly_of(b)?);
+                    if !difference.is_int_valued(&self.sorts, true) {
+                        return Some((false, inner.clone(), None));
+                    }
+                    let less = encoded_app("@<", vec![a.clone(), b.clone()]);
+                    // arith-elim-lt: (= (< a b) (not (>= a b)))
+                    let forward = self.rare_step(&less, side, "arith-elim-lt", &[a, b])?;
+                    let backward =
+                        self.emit(side, &less, "symm", &format!(" :premises ({forward})"))?;
+                    let bumped =
+                        encoded_app("@+", vec![a.clone(), Self::numeral(&Integer::from(1))]);
+                    let geq = encoded_app("@>=", vec![b.clone(), bumped]);
+                    // arith-elim-int-lt: (= (< a b) (>= b (+ a 1)))
+                    let tightened = self.rare_step(&less, &geq, "arith-elim-int-lt", &[a, b])?;
+                    let id = self.emit(
+                        side,
+                        &geq,
+                        "trans",
+                        &format!(" :premises ({backward} {tightened})"),
+                    )?;
+                    return Some((true, geq, Some(id)));
                 }
-                // (not (>= a b)) is (< a b); over the integers that tightens
-                // to (>= b (+ a 1)).  The tightening is only sound when the
-                // difference really is integer-valued.
-                let difference = poly_of(a)?.sub(&poly_of(b)?);
-                if !difference.is_int_valued(&self.sorts, true) {
-                    return None;
+                // The negation of a routed relation: the inner route under
+                // a congruence, its polarity flipped; a double negation the
+                // flip leaves behind is stripped by `not_simplify`.
+                let (polarity, geq, bridge) = self.to_geq(inner)?;
+                let form = if polarity {
+                    geq.clone()
+                } else {
+                    encoded_app("@not", vec![geq.clone()])
+                };
+                let negated_form = encoded_app("@not", vec![form.clone()]);
+                let mut id = match bridge {
+                    Some(bridge) => Some(self.emit(
+                        side,
+                        &negated_form,
+                        "cong",
+                        &format!(" :premises ({bridge})"),
+                    )?),
+                    None => None,
+                };
+                if !polarity {
+                    let stripped = self.emit(&negated_form, &geq, "not_simplify", "")?;
+                    id = Some(match id {
+                        Some(first) => self.emit(
+                            side,
+                            &geq,
+                            "trans",
+                            &format!(" :premises ({first} {stripped})"),
+                        )?,
+                        None => stripped,
+                    });
                 }
-                let less = encoded_app("@<", vec![a.clone(), b.clone()]);
-                // arith-elim-lt: (= (< a b) (not (>= a b)))
-                let forward = self.rare_step(&less, side, "arith-elim-lt", &[a, b])?;
-                let backward =
-                    self.emit(side, &less, "symm", &format!(" :premises ({forward})"))?;
-                let bumped = encoded_app("@+", vec![a.clone(), Self::numeral(&Integer::from(1))]);
-                let geq = encoded_app("@>=", vec![b.clone(), bumped]);
-                // arith-elim-int-lt: (= (< a b) (>= b (+ a 1)))
-                let tightened = self.rare_step(&less, &geq, "arith-elim-int-lt", &[a, b])?;
-                let id = self.emit(
-                    side,
-                    &geq,
-                    "trans",
-                    &format!(" :premises ({backward} {tightened})"),
-                )?;
-                Some((geq, Some(id)))
+                Some((!polarity, geq, id))
             }
             _ => None,
         }
@@ -223,8 +284,10 @@ impl AletheElaborator {
 
     /// Justifies an `arith_poly_norm_rel` obligation with `poly_simp_rel`.
     /// Equalities go straight through; every other relation is routed to a
-    /// `>=` form on both sides first, and the routing steps are glued back on
-    /// with `trans`/`symm`.
+    /// `>=` form, or the negation of one, on both sides first, and the
+    /// routing steps are glued back on with `trans`/`symm`.  Sides that end
+    /// in opposite polarities are not one `poly_simp_rel` step and keep the
+    /// trusted form.
     fn poly_simp_rel_chain(&mut self, lhs: &Term, rhs: &Term) -> Option<String> {
         if let (Some(("@=", left)), Some(("@=", right))) =
             (encoded_application(lhs), encoded_application(rhs))
@@ -236,39 +299,76 @@ impl AletheElaborator {
 
         let mark = self.steps.len();
         let chain = (|| {
-            let (left_geq, left_bridge) = self.to_geq(lhs)?;
-            let (right_geq, right_bridge) = self.to_geq(rhs)?;
+            let (left_polarity, left_geq, left_bridge) = self.to_geq(lhs)?;
+            let (right_polarity, right_geq, right_bridge) = self.to_geq(rhs)?;
+            if left_polarity != right_polarity {
+                return None;
+            }
             let (_, left_arguments) = encoded_application(&left_geq)?;
             let (_, right_arguments) = encoded_application(&right_geq)?;
             let ([x1, x2], [y1, y2]) = (left_arguments.as_slice(), right_arguments.as_slice())
             else {
                 return None;
             };
-            let mut current =
-                self.poly_simp_rel_pair(&left_geq, &right_geq, x1, x2, y1, y2, false)?;
-            let mut source = left_geq.clone();
-            // Prepend `lhs = left_geq`.
+            let (left_form, right_form) = if left_polarity {
+                (left_geq.clone(), right_geq.clone())
+            } else {
+                (
+                    encoded_app("@not", vec![left_geq.clone()]),
+                    encoded_app("@not", vec![right_geq.clone()]),
+                )
+            };
+            // The two routes may end in the same form, in which case the
+            // bridges alone join the sides; otherwise the forms are one
+            // `poly_simp_rel` step apart, under a congruence when both are
+            // negated.
+            let mut current = if left_geq == right_geq {
+                None
+            } else {
+                let pair =
+                    self.poly_simp_rel_pair(&left_geq, &right_geq, x1, x2, y1, y2, false)?;
+                Some(if left_polarity {
+                    pair
+                } else {
+                    self.emit(
+                        &left_form,
+                        &right_form,
+                        "cong",
+                        &format!(" :premises ({pair})"),
+                    )?
+                })
+            };
+            let mut source = left_form.clone();
+            // Prepend `lhs = left_form`.
             if let Some(bridge) = left_bridge {
-                current = self.emit(
-                    lhs,
-                    &right_geq,
-                    "trans",
-                    &format!(" :premises ({bridge} {current})"),
-                )?;
+                current = Some(match current {
+                    Some(middle) => self.emit(
+                        lhs,
+                        &right_form,
+                        "trans",
+                        &format!(" :premises ({bridge} {middle})"),
+                    )?,
+                    None => bridge,
+                });
                 source = lhs.clone();
             }
-            // Append `right_geq = rhs`, which is the reverse of the bridge.
+            // Append `right_form = rhs`, which is the reverse of the bridge.
             if let Some(bridge) = right_bridge {
                 let reversed =
-                    self.emit(&right_geq, rhs, "symm", &format!(" :premises ({bridge})"))?;
-                current = self.emit(
-                    &source,
-                    rhs,
-                    "trans",
-                    &format!(" :premises ({current} {reversed})"),
-                )?;
+                    self.emit(&right_form, rhs, "symm", &format!(" :premises ({bridge})"))?;
+                current = Some(match current {
+                    Some(so_far) => self.emit(
+                        &source,
+                        rhs,
+                        "trans",
+                        &format!(" :premises ({so_far} {reversed})"),
+                    )?,
+                    None => reversed,
+                });
             }
-            Some(current)
+            // Identical sides never reach here (`step_for` has a `refl`
+            // case), so at least one bridge or the pair exists.
+            current
         })();
         if chain.is_none() {
             // A partial chain must not be left behind for the trusted

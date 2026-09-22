@@ -3220,3 +3220,42 @@ orientation that §37 asked the normalizer for is not a `poly_simp` /
 requires the same operator on both sides and a same-sign scale for
 inequalities -- but `comp_simplify`'s, and it is already missing from the
 certificates the reconstruction emits, not only from the prenormalizer.
+
+## 39. Relation orientation stays with the RARE rules; the certificates now cite them (2026-09-21)
+
+Decision on §37's first item: the prenormalizer is not extended with
+`comp_simplify`; the mirror and negated relation shapes are egglog's job
+through the database's `arith-elim-leq`, `arith-elim-gt`, `arith-elim-lt`
+and `arith-elim-int-lt`.  The same conclusion had been reached for veriT's
+`comp_simplify` / `la_rw_eq` holes (§26, §34), and there is no separate
+veriT rule file: both runners read `holes.rare`, which carries these four
+rules already.  So there was nothing to copy over; what was missing is that
+the *certificates* did not cite them.
+
+Why not: `expand_vertex` offers a computational edge from a vertex to its
+recomputed relation form, and on `(= (> P 0) (not (<= P 0)))` that edge
+lands on the target in one step, while the rule path needs two
+(`arith-elim-gt`, then a congruence over `not` with `arith-elim-leq`).  The
+bidirectional search takes the shorter one, and the elaborator's
+`poly_simp_rel_chain` then had to spell the computation out: it routed
+only `<=` and the integer `(not (>= ..))` to a `>=` form, so every strict
+or negated relation fell back to a trusted `arith_poly_norm_rel` step --
+the 195 certificate-internal holes of §38.
+
+`to_geq` now returns a *polarity* with the `>=` term: `>` and real `<`
+route to the negation of a `>=` (`arith-elim-gt`, `arith-elim-lt`),
+integer `<` to the tightened positive form (`arith-elim-int-lt`), and
+`(not R)` routes `R` under a `cong` with the polarity flipped, a
+`not_simplify` stripping the double negation when `R` was itself negated.
+The chain requires equal polarities, states `poly_simp_rel` on the two
+`>=` terms (under one `cong` when both are negated), and skips the pair
+when both routes reach the same term.  Toy `(> P 0) = (not (<= P 0))`:
+`arith-elim-gt`, `arith-elim-leq`, `cong`, `symm`, `trans`, no `hole`,
+re-checks `valid`.  `sc-14.base.cvc`: **0** `arith_poly_norm_rel` steps
+(was 195), 1,887 `rare_rewrite` steps -- `arith-elim-leq` 901,
+`bool-double-not-elim` 377, `arith-elim-gt` 195, `arith-elim-lt` 172,
+`eq-symm` 153, `ite-eq` 28 -- 5,273 of 5,281 holes justified, the proof
+re-checks in 5.2 s, `holey` only by cvc5's `THEORY_INFERENCE_ARITH` and
+`ARITH_STATIC_LEARN` steps.  The 8 kept holes are still the §38
+`(= (= false x) (not x))` / `(= (xor false x) x)` reconstruction misses.
+Full suite green.
