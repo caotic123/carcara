@@ -3297,6 +3297,17 @@ present):
   three hundred of them parsing and checking the 46 MB proof's other steps
   before any hole -- the per-proof budget question of §6 again.
 
+**The passes printed unshared too (2026-09-22).**  Every hole pass ends by
+printing its proof, and the runners passed `--no-print-with-sharing` to
+the checking passes as well, whose output goes to `/dev/null`: the same
+blow-up, paid in time inside `<p>_time` on every pass -- locally the
+check-only pass of `in-de62-O0` wrote 60 GB, `Sz32_455` 16 GB,
+`gasburner-prop3-19` 12 GB (and filled the disk).  The flag is now gone
+from every runner's `HOLE_OPTS`; the elaborated proof is printed with
+sharing and re-checked with `--expand-let-bindings` as before.  So `enc4`'s
+per-pass overhead has three parts -- parsing, the upfront check of the
+non-hole steps, and this print -- and only a rerun separates them.
+
 `gasburner-prop3-19` on its shared hoist (two workers, 1,200 s): 1,497
 holes, the normalizer closes 839, egglog proves 596 more; **30 per-hole
 timeouts at 60 s each** and 30 unattempted behind them, no memory kill.
