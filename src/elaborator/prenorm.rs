@@ -3,13 +3,19 @@
 //!
 //! The normalizer is the bottom-up composition of exactly the procedures
 //! that check `evaluate`, `poly_simp` (with `poly_simp_rel` for relations),
-//! `aci_simp` and `distinct_elim`: a ground term is evaluated, an arithmetic
+//! `aci_simp`, `distinct_elim` and `la_rw_eq`: a ground term is evaluated, an arithmetic
 //! term is printed as its canonical polynomial, a relation is put in the
 //! form `(op P c)` with `P` the scaled difference of its sides, an `and`/`or`
 //! (and the associative bit-vector operators) is flattened, freed of its
-//! identity element, deduplicated when idempotent and sorted, and a
-//! `distinct` is expanded to its pairwise disequalities.  Nothing else: what
-//! these four do not reach is left to the RARE rules in egglog.
+//! identity element, deduplicated when idempotent and sorted, a
+//! `distinct` is expanded to its pairwise disequalities, and a pair of
+//! opposite bounds between the same two terms, `(and (<= t u) (<= u t))`
+//! or with either bound written as a `>=`, is the equality `(= t u)`
+//! (`la_rw_eq`, read on the term as written, before its bounds are
+//! normalized apart; a `>=` bound is first turned round by `la_generic`,
+//! `equiv_neg1`, `equiv_neg2` and `resolution`, so the certificate stays
+//! within Alethe without a `*_simplify` rule).  Nothing else: what these
+//! five do not reach is left to the RARE rules in egglog.
 //!
 //! Because each step is one of those rules applied to one subterm, the
 //! derivation of a normal form is a certificate of `cong`, `trans` and rule
@@ -27,14 +33,27 @@ use indexmap::IndexSet;
 use rug::{Integer, Rational};
 use std::collections::HashMap;
 
+/// A premise a top step's certificate needs: the `poly_simp` equality a
+/// `poly_simp_rel` step is stated on, or the equality of a `>=` bound with
+/// its `<=` mirror image, `(= (>= x y) (<= y x))`, proved from `la_generic`
+/// and the `equiv_neg` tautologies by resolution.
+#[derive(Clone)]
+enum Premise {
+    PolySimp(Rc<Term>, Rc<Term>),
+    BoundFlip(Rc<Term>, Rc<Term>),
+}
+
 /// One rule application at the top of a term: `(= from to)` by `rule`, with
-/// the `poly_simp` premise a `poly_simp_rel` step needs.
+/// the premises its certificate needs.  A `flipped` step is one whose rule
+/// concludes `(= to from)` (`la_rw_eq` states the equality as the pair of
+/// bounds); its certificate adds a `symm`.
 #[derive(Clone)]
 struct TopStep {
     rule: &'static str,
     from: Rc<Term>,
     to: Rc<Term>,
-    premise: Option<(Rc<Term>, Rc<Term>)>,
+    premises: Vec<Premise>,
+    flipped: bool,
 }
 
 /// How a term's normal form is derived: the arguments' normal forms under
@@ -149,6 +168,17 @@ impl Normalizer {
             tail: None,
             result: t.clone(),
         };
+        // 0. `la_rw_eq`, on the term as written: `(and (<= t u) (<= u t))`,
+        //    either bound possibly a `>=`, is `(= t u)`.  This comes before
+        //    the arguments are normalized because afterwards the two bounds
+        //    are `(<= P c)` and `(<= -P -c)` and no longer mirror each
+        //    other.  The equality is then normalized like any other.
+        if let Some(tops) = self.la_rw_eq_steps(pool, term) {
+            let equality = tops.last().expect("at least the la_rw_eq step").to.clone();
+            let result = self.normalize(pool, &equality);
+            let tail = (result != equality).then(|| equality.clone());
+            return Derivation { cong: None, tops, tail, result };
+        }
         // 1. The arguments, under `cong`.
         let current = match term.as_ref() {
             Term::Op(op, args) => {
@@ -195,6 +225,66 @@ impl Normalizer {
         Derivation { cong, tops, tail, result }
     }
 
+    /// `la_rw_eq` read backwards: `(and (<= t u) (<= u t))`, with `t` and
+    /// `u` the same terms in both bounds, to `(= t u)`.  A bound written as
+    /// `(>= u t)` or `(>= t u)` is accepted too; the certificate then first
+    /// turns it round under `cong`, so the pair matches the rule as stated.
+    fn la_rw_eq_steps(&mut self, pool: &mut dyn TermPool, term: &Rc<Term>) -> Option<Vec<TopStep>> {
+        // A bound as "x is at most y", and whether it is written as a `>=`.
+        fn at_most(bound: &Rc<Term>) -> Option<(&Rc<Term>, &Rc<Term>, bool)> {
+            match bound.as_ref() {
+                Term::Op(Operator::LessEq, args) if args.len() == 2 => {
+                    Some((&args[0], &args[1], false))
+                }
+                Term::Op(Operator::GreaterEq, args) if args.len() == 2 => {
+                    Some((&args[1], &args[0], true))
+                }
+                _ => None,
+            }
+        }
+        let Term::Op(Operator::And, args) = term.as_ref() else {
+            return None;
+        };
+        let [first, second] = args.as_slice() else {
+            return None;
+        };
+        let (t, u, first_flipped) = at_most(first)?;
+        let (u2, t2, second_flipped) = at_most(second)?;
+        if t != t2 || u != u2 || arith_sort(pool, t).is_none() {
+            return None;
+        }
+        let (t, u) = (t.clone(), u.clone());
+        let lower = pool.add(Term::Op(Operator::LessEq, vec![t.clone(), u.clone()]));
+        let upper = pool.add(Term::Op(Operator::LessEq, vec![u.clone(), t.clone()]));
+        let stated = pool.add(Term::Op(Operator::And, vec![lower.clone(), upper.clone()]));
+        let mut tops = Vec::new();
+        if stated != *term {
+            let mut premises = Vec::new();
+            if first_flipped {
+                premises.push(Premise::BoundFlip(first.clone(), lower));
+            }
+            if second_flipped {
+                premises.push(Premise::BoundFlip(second.clone(), upper));
+            }
+            tops.push(TopStep {
+                rule: "cong",
+                from: term.clone(),
+                to: stated.clone(),
+                premises,
+                flipped: false,
+            });
+        }
+        let to = pool.add(Term::Op(Operator::Equals, vec![t, u]));
+        tops.push(TopStep {
+            rule: "la_rw_eq",
+            from: stated,
+            to,
+            premises: Vec::new(),
+            flipped: true,
+        });
+        Some(tops)
+    }
+
     /// One rule applied at the top of `term`, whose arguments are normal.
     fn top_step(&mut self, pool: &mut dyn TermPool, term: &Rc<Term>) -> Option<TopStep> {
         use Operator::*;
@@ -206,7 +296,8 @@ impl Normalizer {
                 rule,
                 from: term.clone(),
                 to,
-                premise: None,
+                premises: Vec::new(),
+                flipped: false,
             })
         };
         // `evaluate`: a ground term is its value.
@@ -307,7 +398,8 @@ impl Normalizer {
             rule: "poly_simp_rel",
             from: term.clone(),
             to,
-            premise: Some((left, right)),
+            premises: vec![Premise::PolySimp(left, right)],
+            flipped: false,
         })
     }
 
@@ -548,11 +640,23 @@ impl Normalizer {
                 at = congruent.clone();
             }
             for top in &derivation.tops {
-                let premises = match &top.premise {
-                    Some((left, right)) => vec![emitter.emit(pool, left, right, "poly_simp", &[])],
-                    None => Vec::new(),
+                let premises: Vec<String> = top
+                    .premises
+                    .iter()
+                    .map(|premise| match premise {
+                        Premise::PolySimp(left, right) => {
+                            emitter.emit(pool, left, right, "poly_simp", &[])
+                        }
+                        Premise::BoundFlip(from, to) => emitter.emit_bound_flip(pool, from, to),
+                    })
+                    .collect();
+                let id = if top.flipped {
+                    let stated = emitter.emit(pool, &top.to, &top.from, top.rule, &premises);
+                    emitter.emit(pool, &top.from, &top.to, "symm", &[stated])
+                } else {
+                    emitter.emit(pool, &top.from, &top.to, top.rule, &premises)
                 };
-                chain.push(emitter.emit(pool, &top.from, &top.to, top.rule, &premises));
+                chain.push(id);
                 at = top.to.clone();
             }
             if let Some(tail) = &derivation.tail {
@@ -598,6 +702,67 @@ impl Emitter {
             "(step {id} (cl (= {lhs:#} {rhs:#})) :rule {rule}{premises})"
         ));
         id
+    }
+
+    fn emit_clause(
+        &mut self,
+        literals: &str,
+        rule: &str,
+        premises: &[String],
+        args: &str,
+    ) -> String {
+        let id = format!("{}.{}", self.prefix, self.steps.len() + 1);
+        let premises = if premises.is_empty() {
+            String::new()
+        } else {
+            format!(" :premises ({})", premises.join(" "))
+        };
+        let args = if args.is_empty() {
+            String::new()
+        } else {
+            format!(" :args ({args})")
+        };
+        self.steps.push(format!(
+            "(step {id} (cl {literals}) :rule {rule}{premises}{args})"
+        ));
+        id
+    }
+
+    /// `(= a b)` for a bound `a` and its mirror image `b` (`(>= x y)` and
+    /// `(<= y x)`, or the reverse): each implies the other by `la_generic`,
+    /// and the two implications make the equivalence through the
+    /// `equiv_neg` tautologies and resolution.  Returns the last step's id.
+    fn emit_bound_flip(&mut self, pool: &mut dyn TermPool, a: &Rc<Term>, b: &Rc<Term>) -> String {
+        let a_implies_b =
+            self.emit_clause(&format!("(not {a:#}) {b:#}"), "la_generic", &[], "1.0 1.0");
+        let b_implies_a =
+            self.emit_clause(&format!("(not {b:#}) {a:#}"), "la_generic", &[], "1.0 1.0");
+        let neg2 = self.emit_clause(
+            &format!("(= {a:#} {b:#}) {a:#} {b:#}"),
+            "equiv_neg2",
+            &[],
+            "",
+        );
+        let with_b = self.emit_clause(
+            &format!("(= {a:#} {b:#}) {b:#}"),
+            "resolution",
+            &[neg2, a_implies_b],
+            "",
+        );
+        let neg1 = self.emit_clause(
+            &format!("(= {a:#} {b:#}) (not {a:#}) (not {b:#})"),
+            "equiv_neg1",
+            &[],
+            "",
+        );
+        let with_not_b = self.emit_clause(
+            &format!("(= {a:#} {b:#}) (not {b:#})"),
+            "resolution",
+            &[neg1, b_implies_a],
+            "",
+        );
+        let _ = pool;
+        self.emit(pool, a, b, "resolution", &[with_b, with_not_b])
     }
 }
 
@@ -715,6 +880,28 @@ mod tests {
             (REALS, "(< (* 2.0 a) b)", "(< (+ a (* (- 0.5) b)) 0.0)"),
             (REALS, "(= (- 1.0) (- 1))", "true"),
             (REALS, "(<= 1 a)", "(<= (- a) (- 1.0))"),
+            // veriT's `la_rw_eq` shapes
+            (INTS, "(and (<= x y) (<= y x))", "(= x y)"),
+            (INTS, "(and (<= y x) (<= x y))", "(= x y)"),
+            (INTS, "(and p (= 0 x))", "(and p (and (<= 0 x) (<= x 0)))"),
+            (INTS, "(not (= x y))", "(not (and (<= x y) (<= y x)))"),
+            (
+                INTS,
+                "(ite p (= 1 x) (= 0 x))",
+                "(ite p (and (<= 1 x) (<= x 1)) (and (<= 0 x) (<= x 0)))",
+            ),
+            (
+                INTS,
+                "(and p q (= 0 (+ x (* (- 2) y))))",
+                "(and p q (and (<= 0 (+ x (* (- 2) y))) (<= (+ x (* (- 2) y)) 0)))",
+            ),
+            (REALS, "(and (<= a b) (<= b a))", "(= (- a b) 0.0)"),
+            // cvc5's `arith-eq-elim` shape, and the other ways round
+            (INTS, "(and (>= x y) (<= x y))", "(= x y)"),
+            (INTS, "(and (<= x y) (>= x y))", "(= x y)"),
+            (INTS, "(and (>= y x) (>= x y))", "(= x y)"),
+            (INTS, "(and p (= 0 x))", "(and p (and (>= x 0) (<= x 0)))"),
+            (REALS, "(and (>= a b) (<= a b))", "(= (- a b) 0.0)"),
         ] {
             let (equal, nl, nr) = same(problem, lhs, rhs);
             assert!(equal, "{lhs} and {rhs} normalize to {nl} and {nr}");
@@ -733,7 +920,11 @@ mod tests {
             (INTS, "(not (not p))", "p"),
             (INTS, "(= p true)", "p"),
             (INTS, "(not (<= x 3))", "(>= x 4)"),
-            (INTS, "(and (<= x y) (<= y x))", "(= x y)"),
+            (INTS, "(and (<= x y) (<= y z))", "(= x y)"),
+            (INTS, "(and (<= x y) (< y x))", "(= x y)"),
+            (INTS, "(and (>= x y) (>= x y))", "(= x y)"),
+            (INTS, "(and (>= x y) (<= y x))", "(= x y)"),
+            (INTS, "(and p (<= x y) (<= y x))", "(and p (= x y))"),
             (REALS, "(>= a 1.0)", "(> a 1.0)"),
         ] {
             let (equal, nl, nr) = same(problem, lhs, rhs);
@@ -775,6 +966,30 @@ mod tests {
             ),
             (REALS, "(< (* 2.0 a) b)", "(< (+ a (* (- 0.5) b)) 0.0)"),
             (REALS, "(<= 1 a)", "(<= (- a) (- 1.0))"),
+            (INTS, "(and (<= x y) (<= y x))", "(= x y)"),
+            (INTS, "(and p (= 0 x))", "(and p (and (<= 0 x) (<= x 0)))"),
+            (INTS, "(not (= x y))", "(not (and (<= x y) (<= y x)))"),
+            (
+                INTS,
+                "(ite p (= 1 x) (= 0 x))",
+                "(ite p (and (<= 1 x) (<= x 1)) (and (<= 0 x) (<= x 0)))",
+            ),
+            (
+                INTS,
+                "(and p q (= 0 (+ x (* (- 2) y))))",
+                "(and p q (and (<= 0 (+ x (* (- 2) y))) (<= (+ x (* (- 2) y)) 0)))",
+            ),
+            (REALS, "(and (<= a b) (<= b a))", "(= (- a b) 0.0)"),
+            (INTS, "(and (>= x y) (<= x y))", "(= x y)"),
+            (INTS, "(and (<= x y) (>= x y))", "(= x y)"),
+            (INTS, "(and (>= y x) (>= x y))", "(= x y)"),
+            (INTS, "(and p (= 0 x))", "(and p (and (>= x 0) (<= x 0)))"),
+            (
+                INTS,
+                "(not (= 0 (+ x (* (- 2) y))))",
+                "(not (and (>= (+ x (* (- 2) y)) 0) (<= (+ x (* (- 2) y)) 0)))",
+            ),
+            (REALS, "(and (>= a b) (<= a b))", "(= (- a b) 0.0)"),
         ] {
             match certified(problem, lhs, rhs) {
                 Ok(_) => {}

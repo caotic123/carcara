@@ -3588,3 +3588,50 @@ the earlier sampling of the post-summary phase miss the process.
 The normalized goal of every rewritten hole is now logged at debug level
 (`hole tN: goal normalized to ...`) so a comparison like this one needs no
 patched binary.
+
+### Done: `la_rw_eq` is the normalizer's first step (2026-09-22)
+
+Haniel's call on the options above: the prenormalizer justifies the
+trichotomy shape itself, through the Alethe rule, before anything else.
+`prenorm.rs` now reads every conjunction *as written*, before its
+arguments are normalized, and turns `(and (<= t u) (<= u t))` into
+`(= t u)`; the derivation is one `la_rw_eq` step, stated the way the rule
+states it and reversed by `symm`, and the equality then goes through the
+relation procedure like any other.  Reading the term before its arguments
+is the point: after `poly_simp_rel` the two bounds are `(<= P c)` and
+`(<= -P -c)` and no longer mirror each other.
+
+The same conjunction with either bound written as a `>=` -- cvc5's
+`arith-eq-elim` shape, `(= (= t s) (and (>= t s) (<= t s)))` -- closes the
+same way.  Its certificate first turns the `>=` bound round under `cong`,
+and that equivalence, `(= (>= x y) (<= y x))`, is proved within Alethe and
+without a `*_simplify` rule: each direction is an `la_generic` clause
+(`(cl (not (>= x y)) (<= y x))` with coefficients 1, 1, and the converse),
+and the two implications become the equivalence through `equiv_neg2`,
+`equiv_neg1` and three resolutions.  Seven steps per turned bound.
+
+Unit tests: the shapes `(and (<= x y) (<= y x))`, `(and (>= x y) (<= x
+y))`, `(and (<= x y) (>= x y))`, `(and (>= y x) (>= x y))`, under `and`,
+`not` and `ite`, on atoms and on polynomials, Int and Real, coincide with
+the equality and their certificates check; `(and (<= x y) (<= y z))`,
+`(and (<= x y) (< y x))` and `(and (>= x y) (>= x y))` stay apart.
+
+On the two proofs of this section, `nset` with the new step (same
+settings as before):
+
+| proof | holes | closed by normalization | left to egglog | pass |
+|---|---|---|---|---|
+| Dartagnan `count_up_down-1` | 9,850 | **9,848** in 0.28 s | 2 (the `ite` shapes: one growth cap, one 60 s) | 60 s, was 300 s for 2,120 proved |
+| Averest `blmc004` | 1,183 | **1,181** in 0.24 s | 2 (one 60 s, one memory) | 60 s, was 300 s for 308 proved |
+
+The elaboration pass on the Dartagnan proof emits the certificates (9,855
+`la_rw_eq`, 19,703 `symm`, 28,667 `poly_simp_rel`, 39,630 `cong` steps;
+30 MB, 197,978 steps) and `carcara check` accepts the result as `holey`
+in 0.9 s, the two egglog-kept holes being all that is left.  The pass
+time is now the per-hole limit of the one hole that runs to it.
+
+So for veriT's QF_LIA corpus the normalizer goes from closing 3.5% of the
+holes to closing everything but the `ite` shapes, and the 1.6--4.5x
+slowdown of §43 disappears with the goals it was paid on.  The cluster
+binaries (`vb50-2`, `vnob-2`) predate this; a rerun of the two `nset`
+arms is the measurement to make.
