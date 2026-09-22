@@ -3305,7 +3305,52 @@ what blew the unshared print up: goals over very large shared DAGs, a size
 problem rather than a shape one, and the family that dominates the
 per-hole-time class of `enc4` (`sal/gasburner` 835).  Open.
 
-## 36. veriT's own holes at scale: `vb50-2` complete (2026-09-22)
+## 41. The `(= false x)` reconstruction miss: dead congruence edges at the class signature (2026-09-22)
+
+The eight holes `sc-14` still kept after §39 -- `(= (= false x) (not x))`
+and `(= (xor false x) x)` -- are proved by egglog in two named rules
+(`eq-symm` then `bool-eq-false`; `bool-xor-comm` then `bool-xor-false`:
+the rules carry the constant on the right, the holes on the left) and
+still came back "no certificate found".  Each rule alone reconstructed;
+the pair did not.
+
+The search matches rule sides at a vertex's *signature*, and for a wrapped
+term that is the wrapper's: `(Mk, [class of the unwrapped application])`.
+The engine keeps the unwrapped terms of a class together, so at the
+signature of `(= false x)` the e-matcher also finds `(= x false)` and every
+other member of the class; a side matched to such a member is not the
+vertex, and the search offered it as a *congruence* edge ("same signature,
+so congruent").  It is no congruence: the heads or the argument lists
+differ, its child proof fails, the edge is banned and the search retried,
+and the bounded four rejustifications were spent on the class's other
+members before the two-rule path was reached.  (First suspect, wrongly:
+the toy's own `assume` steps polluting the e-graph -- `get_assumptions`
+walks the node's premises only, and a clean toy failed the same way.)
+
+Fix (`search.rs`): a matched member is offered as a congruence only when
+`inner_congruence_compatible` holds -- for two wrapped applications, the
+same head and argument lists of one class, one level below the wrapper;
+otherwise no edge, and the member is reached by the rule that relates it.
+Making `congruence_compatible` itself look through the wrapper was tried
+and broke three tests: the wrapper-level congruence with unequal inner
+heads is exactly what literal renormalization (`Real` to `RatConst`, a
+`refl`) and the constant-substitution candidates rely on.  Also: a side
+that is a bare variable is grounded to the vertex rather than the class
+representative (`grounded_match` pins it), so its instance is a rule edge
+out of the vertex.  The search now logs, at debug, every path edge that
+fails to justify.
+
+Result: all four shapes reconstruct and re-check `valid`; `sc-14` goes to
+**5,281 of 5,281 holes justified**, the elaborated proof re-checks in 4.6 s
+(`holey` only by `THEORY_INFERENCE_ARITH` / `ARITH_STATIC_LEARN`).  One
+test changed its expectation: the mirrored-bounds conjunction now comes
+out entirely in database rules (`eq-symm`, `arith-eq-elim-int`,
+`arith-elim-leq` under `cong`) instead of `aci_simp` + `poly_simp_rel`;
+the test accepts either.  Regression test
+`reconstructs_flipped_eq_false_from_production_egraph` on the new fixture
+`tests/rare/computational_mix/eq_false.*`.  Full suite green (273).
+
+## 42. veriT's own holes at scale: `vb50-2` complete (2026-09-22)
 
 The bounded arm is in: 9,812 benchmarks, veriT solving and printing a proof
 whose preprocessing rewrites are holes at `--proof-hole-size=50`, then four
@@ -3378,47 +3423,157 @@ the comparison shows is that **the caps, not the granularity, decide the
 QF_UF outcome**.  Isolating the bound needs the bounded arm rerun at
 120M/20M.
 
-## 41. The `(= false x)` reconstruction miss: dead congruence edges at the class signature (2026-09-22)
+## 43. Why the normalizer loses on QF_LIA: `la_rw_eq` holes, flattened and reoriented (2026-09-22)
 
-The eight holes `sc-14` still kept after §39 -- `(= (= false x) (not x))`
-and `(= (xor false x) x)` -- are proved by egglog in two named rules
-(`eq-symm` then `bool-eq-false`; `bool-xor-comm` then `bool-xor-false`:
-the rules carry the constant on the right, the holes on the left) and
-still came back "no certificate found".  Each rule alone reconstructed;
-the pair did not.
+§42 recorded that `--hole-prenormalize` closes 3.5% of veriT's QF_LIA holes
+and proves *fewer* of them than plain `set-form` (62.2% against 69.2%).
+Two proofs from the losing families, reproduced locally (4 workers, 300 s
+per pass, the `vb50-2` caps; `scratchpad/lia/passes2.sh`, `cmp.py`), and a
+set of single-hole timings say what the mechanism is.
 
-The search matches rule sides at a vertex's *signature*, and for a wrapped
-term that is the wrapper's: `(Mk, [class of the unwrapped application])`.
-The engine keeps the unwrapped terms of a class together, so at the
-signature of `(= false x)` the e-matcher also finds `(= x false)` and every
-other member of the class; a side matched to such a member is not the
-vertex, and the search offered it as a *congruence* edge ("same signature,
-so congruent").  It is no congruence: the heads or the argument lists
-differ, its child proof fails, the edge is banned and the search retried,
-and the bounded four rejustifications were spent on the class's other
-members before the two-rule path was reached.  (First suspect, wrongly:
-the toy's own `assume` steps polluting the e-graph -- `get_assumptions`
-walks the node's premises only, and a clean toy failed the same way.)
+**What the holes are.**  Almost every QF_LIA hole is veriT's `eq_rewrite`
+stage, i.e. `la_rw_eq`, `(= a b)` to `(and (<= a b) (<= b a))`, under a
+small context: 9,844 of the 9,850 holes of `count_up_down-1-O0` (Dartagnan)
+and 1,180 of the 1,183 of `ParallelPrefixSum_safe_blmc004` (Averest).
+Typical goals, sides expanded:
 
-Fix (`search.rs`): a matched member is offered as a congruence only when
-`inner_congruence_compatible` holds -- for two wrapped applications, the
-same head and argument lists of one class, one level below the wrapper;
-otherwise no edge, and the member is reached by the rule that relates it.
-Making `congruence_compatible` itself look through the wrapper was tried
-and broke three tests: the wrapper-level congruence with unequal inner
-heads is exactly what literal renormalization (`Real` to `RatConst`, a
-`refl`) and the constant-substitution candidates rely on.  Also: a side
-that is a bare variable is grounded to the vertex rather than the class
-representative (`grounded_match` pins it), so its instance is a rule edge
-out of the vertex.  The search now logs, at debug, every path edge that
-fails to justify.
+```
+(= (and exec (= r 0))            (and exec (and (<= 0 r) (<= r 0))))
+(= (not (= m79 m84))             (not (and (<= m79 m84) (<= m84 m79))))
+(= (and A1 .. A7 (= 0 X))        (and A1 .. A7 (and (<= 0 X) (<= X 0))))     X = (+ F28 (* (- 1) F515) (* (- 1) F516))
+(= (ite c (= 1 Y) (= 0 Y))       (ite c (and (<= 1 Y) (<= Y 1)) (and (<= 0 Y) (<= Y 0))))   Y = (ite c 1 0)
+```
 
-Result: all four shapes reconstruct and re-check `valid`; `sc-14` goes to
-**5,281 of 5,281 holes justified**, the elaborated proof re-checks in 4.6 s
-(`holey` only by `THEORY_INFERENCE_ARITH` / `ARITH_STATIC_LEARN`).  One
-test changed its expectation: the mirrored-bounds conjunction now comes
-out entirely in database rules (`eq-symm`, `arith-eq-elim-int`,
-`arith-elim-leq` under `cong`) instead of `aci_simp` + `poly_simp_rel`;
-the test accepts either.  Regression test
-`reconstructs_flipped_eq_false_from_production_egraph` on the new fixture
-`tests/rare/computational_mix/eq_false.*`.  Full suite green (273).
+**What the normalizer does to them.**  The four procedures (§26) do not
+eliminate an equality -- §39 left both the elimination and the orientation
+of relations to the RARE rules -- so the two sides never normalize to the
+same term: 4 of 9,850 close (the cluster's 36,208 of 1,041,503).  The
+normalization itself is free, 0.52 s for the 9,850 holes.  What the other
+9,846 get is a *rewritten* goal: `poly_simp_rel`'s relation form puts the
+constant on the right and, since the rule scales an inequality only by a
+positive factor, keeps the sign, so `(= 0 r)` becomes `(= r 0)` but
+`(<= 0 r)` becomes `(<= (* -1 r) 0)`; and `aci_simp` flattens the nested
+`(and .. (and B1 B2))` into one `and`:
+
+```
+(= (and exec (= r 0))  (and exec (<= (* -1 r) 0) (<= r 0)))
+(= (not (= (+ m79 (* -1 m84)) 0))  (not (and (<= (+ m79 (* -1 m84)) 0) (<= (+ (* -1 m79) m84) 0))))
+```
+
+**What that costs egglog.**  On the 2,116 Dartagnan holes both passes
+proved, the same verdicts, the normalized goal takes 1.62 times longer per
+hole (p10 1.46, p90 1.78): 0.30 s median becomes 0.49 s, in a distribution
+so tight (p99 0.34 s and 0.61 s) that every hole pays it.  Under the pass
+budget that is directly fewer holes: 3,611 against 2,120 locally, 9,840
+against 7,446 on the cluster (throughput 13.4 against 8.3 holes/s over the
+23 QF_LIA proofs that exhaust the budget in both passes).  The residue is
+otherwise the same: 6 and 12 memory kills on the `ite` shape, the rest in
+flight when the budget ended.  On the Averest proof, whose holes carry
+seven or eight Boolean conjuncts beside the equality, the factor is
+**4.5** (p10 2.7, p90 6.2): `set` proves 1,181 of 1,183 at 0.96 s median,
+`nset` 308 at 3.8 s, the same verdicts on the 308 both proved.
+
+Hole `t1209` of that proof, with its real context, one worker, the
+normalizer's pieces applied one at a time:
+
+| goal | s |
+|---|---|
+| veriT's: `(and C1 .. C7 (= 0 P))` vs `(and C1 .. C7 (and (<= 0 P) (<= P 0)))` | 0.54 |
+| the bounds in the normalizer's form, kept nested: `.. (= P' 0)` vs `.. (and (<= -P' 0) (<= P' 0))` | 0.61 |
+| the bounds in the normalizer's form, flattened into the outer `and` | **3.15** |
+| everything normalized (what `nset` hands egglog: context, bounds, flattening) | 3.14 |
+
+So the normalization of the seven context conjuncts costs nothing, the
+orientation of the bounds costs 10%, and the flattening of the two bounds
+into the outer `and` costs six times.
+
+Single-hole timings (one worker, `set-form`, `holes.rare`, `vb50-2` caps;
+an identity hole costs 0.10 s, the child's floor):
+
+| goal, lhs against rhs | s |
+|---|---|
+| veriT's, nested: `(and e (= 0 r))` vs `(and e (and (<= 0 r) (<= r 0)))` | 0.36 |
+| nested, `arith-eq-elim-int`'s own shape: `(and e (= r 0))` vs `(and e (and (>= r 0) (<= r 0)))` | 0.18 |
+| nested, the normalizer's bounds: `(and e (= r 0))` vs `(and e (and (<= (* -1 r) 0) (<= r 0)))` | 0.45 |
+| flat, eq-elim's shape: `(and e (= r 0))` vs `(and e (>= r 0) (<= r 0))` | 0.55 |
+| flat, the normalizer's (what `nset` hands egglog): `(and e (= r 0))` vs `(and e (<= (* -1 r) 0) (<= r 0))` | 0.63 |
+| Averest's `P = F28 - F515 - F516`: nested veriT / nested normalizer bounds / flat eq-elim / flat normalizer | 0.54 / 0.59 / 0.91 / 1.10 |
+| the same with 1, 4 and 8 Boolean conjuncts | unchanged |
+
+Two ingredients, both in the normalizer's definition, of very unequal
+weight:
+
+- *Flattening* is the cost: 1.4--1.9 times with a trivial context, six
+  times with Averest's.  `arith-eq-elim-int` rewrites the equality to
+  `(and (>= ..) (<= ..))`; against veriT's nested right side that is the
+  inner `and` exactly and the outer `and` is a congruence, so the ordinary
+  rounds prove the goal.  Against the flattened side the ordinary rounds
+  do not, and the goal walks the fallback ladder (§30: the arithmetic
+  plans first, the relation keys for every relation atom, the set form
+  last), until the set-form conversion absorbs the inner `and` into the
+  outer set and matches the two sets member by member; every plan on the
+  way is paid on the whole context, which is why the factor grows with
+  what the context holds.
+- *Orientation* is minor: 10% on Averest's polynomial bounds, up to 2.5
+  times only on atom bounds, where `(<= (* -1 r) 0)` reaches `(>= r 0)`
+  through the polynomial relation canonicalization (`arith-elim-leq` gives
+  `(>= 0 (* -1 r))`) while `(<= r 0)` against `(>= 0 r)` is one
+  `arith-elim-leq`.
+
+**An anomaly found on the way.**  Flat *and* in veriT's orientation is not
+proved at all: `(and e (= 0 r))` against `(and e (<= 0 r) (<= r 0))` runs to
+the 60 s kill, in `set-form` and in `chain`, with `(<= 5 s)` or `(<= (+ s
+1) 5)` in place of `e`, and so does `(and e (= 0 r))` against `(and e (>= r
+0) (<= r 0))`; the nested forms take 0.36 s, and the flat set with `(>= 0
+r)` in place of `(<= r 0)` -- eq-elim's members verbatim -- 0.67 s.  So a
+goal that needs one `and`-flattening *and* one relation rewrite inside the
+same set is lost by the engine, while one that needs the flattening plus a
+polynomial identification (the normalizer's `(* -1 r)` form) is found.
+Neither pass walks into it (veriT's holes are nested, the normalized ones
+are in the `-1` orientation), but it is the mechanism behind the slowdown
+in its extreme form and a defect of the set-form encoding to chase.  The
+files are in `~/exp/egglog-holes/local/lia-shape/`.
+
+**The proof-level reading.**  The hole percentages are the Dartagnan
+family: 22 proofs holding 503,542 holes, 48% of QF_LIA's, 9k--58k each,
+21 of them exhausting the 600 s budget in both passes, so each pass proves
+what its throughput allows (36.7% against 22.5% of that family).  Outside
+it both passes sit at 98--100% on every family with more than 300 holes
+except `rings` (49%, both), `calypto` (16.5 / 10.4), `cut_lemmas` (8.5 /
+41.5) and Averest (99.8 / 82.8, the 3x shape).  Proofs with every hole
+proved: `set` 1,979, `nset` 2,109; per proof `nset` is better on 192 and
+worse on 62.  At the proof level the normalizer still wins QF_LIA; at the
+hole level it loses because one family of very large proofs pays 1.6--3
+times per hole for a rewrite that closes nothing.
+
+**What follows.**  Two options, not exclusive:
+
+1. Close `la_rw_eq` in the prenormalizer: an `=`-elimination case whose
+   certificate is one `rare_rewrite` step citing `arith-eq-elim-int`, then
+   the existing `poly_simp_rel` chain for the bounds.  §25's earlier
+   normalizer closed 8,169 of 8,169 local QF_LIA holes with exactly this
+   reasoning; it reopens §39 for `=` only, not for orientation.
+2. Do not hand egglog a goal the normalizer made *larger*.  The elaboration
+   pass already keeps the original goal (the comment at the rewrite site in
+   `elaborate_holes` says why); the checking pass could keep it whenever
+   the normal forms are not smaller than the originals, which separates
+   cvc5's arithmetic rewrites (normal forms shrink, egglog proves more --
+   §23's measurement) from veriT's `la_rw_eq` (normal forms grow by the
+   `(* -1 ..)` and the flattening).  Cheaper still, given the numbers
+   above: normalize the sides but do not flatten an `and`/`or` whose
+   arguments the goal's other side keeps nested, i.e. run `aci_simp` only
+   where it closes something.
+
+Two side observations from the same run.  The Averest proof is 725 MB
+with sharing (95,787 steps; the hole sides are wide conjunctions of
+deep formulas), and on it every pass ends its holes at 297 s and is then
+killed at the 700 s external limit, locally as on the cluster
+(`set_rc=124` there): whatever the checker does after the hole summary of
+such a proof takes over 400 s, and it inflates `<p>_time` without touching
+the verdicts.  And the pipe through `cut` in `passes2.sh` block-buffers,
+so a pass's per-hole lines appear only when it exits; that is what made
+the earlier sampling of the post-summary phase miss the process.
+
+The normalized goal of every rewritten hole is now logged at debug level
+(`hole tN: goal normalized to ...`) so a comparison like this one needs no
+patched binary.

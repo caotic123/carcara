@@ -503,6 +503,12 @@ impl<'e> Elaborator<'e> {
                     // outright.  (Trying the normalized goal first and the
                     // original on a reconstruction failure would get both, at
                     // one extra child run per lost hole.)
+                    log::debug!(
+                        "hole {}: goal normalized to (= {:#} {:#})",
+                        step.id,
+                        left,
+                        right
+                    );
                     step.clause = vec![
                         self.pool
                             .add(Term::Op(crate::ast::Operator::Equals, vec![left, right])),
