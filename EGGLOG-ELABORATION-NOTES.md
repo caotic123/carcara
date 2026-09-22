@@ -3377,3 +3377,48 @@ bound.  Splitting does what it promised (17% more holes, each smaller); what
 the comparison shows is that **the caps, not the granularity, decide the
 QF_UF outcome**.  Isolating the bound needs the bounded arm rerun at
 120M/20M.
+
+## 41. The `(= false x)` reconstruction miss: dead congruence edges at the class signature (2026-09-22)
+
+The eight holes `sc-14` still kept after §39 -- `(= (= false x) (not x))`
+and `(= (xor false x) x)` -- are proved by egglog in two named rules
+(`eq-symm` then `bool-eq-false`; `bool-xor-comm` then `bool-xor-false`:
+the rules carry the constant on the right, the holes on the left) and
+still came back "no certificate found".  Each rule alone reconstructed;
+the pair did not.
+
+The search matches rule sides at a vertex's *signature*, and for a wrapped
+term that is the wrapper's: `(Mk, [class of the unwrapped application])`.
+The engine keeps the unwrapped terms of a class together, so at the
+signature of `(= false x)` the e-matcher also finds `(= x false)` and every
+other member of the class; a side matched to such a member is not the
+vertex, and the search offered it as a *congruence* edge ("same signature,
+so congruent").  It is no congruence: the heads or the argument lists
+differ, its child proof fails, the edge is banned and the search retried,
+and the bounded four rejustifications were spent on the class's other
+members before the two-rule path was reached.  (First suspect, wrongly:
+the toy's own `assume` steps polluting the e-graph -- `get_assumptions`
+walks the node's premises only, and a clean toy failed the same way.)
+
+Fix (`search.rs`): a matched member is offered as a congruence only when
+`inner_congruence_compatible` holds -- for two wrapped applications, the
+same head and argument lists of one class, one level below the wrapper;
+otherwise no edge, and the member is reached by the rule that relates it.
+Making `congruence_compatible` itself look through the wrapper was tried
+and broke three tests: the wrapper-level congruence with unequal inner
+heads is exactly what literal renormalization (`Real` to `RatConst`, a
+`refl`) and the constant-substitution candidates rely on.  Also: a side
+that is a bare variable is grounded to the vertex rather than the class
+representative (`grounded_match` pins it), so its instance is a rule edge
+out of the vertex.  The search now logs, at debug, every path edge that
+fails to justify.
+
+Result: all four shapes reconstruct and re-check `valid`; `sc-14` goes to
+**5,281 of 5,281 holes justified**, the elaborated proof re-checks in 4.6 s
+(`holey` only by `THEORY_INFERENCE_ARITH` / `ARITH_STATIC_LEARN`).  One
+test changed its expectation: the mirrored-bounds conjunction now comes
+out entirely in database rules (`eq-symm`, `arith-eq-elim-int`,
+`arith-elim-leq` under `cong`) instead of `aci_simp` + `poly_simp_rel`;
+the test accepts either.  Regression test
+`reconstructs_flipped_eq_false_from_production_egraph` on the new fixture
+`tests/rare/computational_mix/eq_false.*`.  Full suite green (273).

@@ -801,6 +801,47 @@ fn reconstructs_or_evaluation_mix_from_production_egraph() {
     );
 }
 
+/// A rule stated with the constant on the right, applied to a term with the
+/// constant on the left: `eq-symm` then `bool-eq-false`.  The engine merges
+/// the unwrapped terms of a class, so at the wrapper's signature both
+/// orientations of the equality are found at the vertex; the other
+/// orientation is no congruence of the vertex, and offering it as one used
+/// to exhaust the bounded rejustifications before the two-rule path was
+/// tried, leaving the hole trusted.
+#[test]
+fn reconstructs_flipped_eq_false_from_production_egraph() {
+    let run = run_qf_uf_case(
+        "tests/rare/computational_mix/eq_false.smt2",
+        "tests/rare/computational_mix/eq_false.alethe",
+        "tests/rare/computational_mix/eq_false.rare",
+        "t1",
+        Some("bool-eq-false"),
+    );
+    let snapshot = EGraphSnapshot::capture_production(&run.egraph);
+    let rules = rules_from_generated_program(&run.generated_program);
+    let reconstruction = reconstruct_detailed(
+        &snapshot,
+        &run.lhs,
+        &run.rhs,
+        &rules,
+        SearchStrategy::default(),
+    );
+    let certificate = reconstruction
+        .certificate
+        .expect("eq-symm and bool-eq-false should chain");
+    assert!(certificate.verify(&rules));
+    let mut names = Vec::new();
+    certificate.rule_names(&mut names);
+    assert_eq!(names, ["eq-symm", "bool-eq-false"]);
+    elaborate_and_check(
+        &run,
+        &certificate,
+        "t1",
+        "tests/rare/computational_mix/eq_false.smt2",
+        "tests/rare/computational_mix/eq_false.rare",
+    );
+}
+
 /// Round-trip emitted steps through the real Carcara checker against the
 /// original problem and RARE database.
 fn check_with_carcara(problem: &Path, steps: &[String], rare: &Path) -> Result<(), String> {
@@ -2181,8 +2222,12 @@ fn elaborates_holes_under_variable_binding_anchors() {
 
 /// An equality against the conjunction of its two bounds, one of them
 /// mirrored (`(<= 1 p)`): the bounds meet through the all-relations
-/// fallback inside the `and`, and the certificate combines `aci_simp` with
-/// a `poly_simp_rel` step for the mirrored bound.
+/// fallback inside the `and`.  The certificate either combines `aci_simp`
+/// with a `poly_simp_rel` step for the mirrored bound, or -- once the
+/// search stopped losing its rejustifications on dead congruence edges --
+/// spells the whole thing with the database's rules (`eq-symm`,
+/// `arith-eq-elim-int`, `arith-elim-leq` under a congruence); either way
+/// no hole is left.
 #[test]
 fn elaborates_mirrored_bounds_in_a_conjunction() {
     use crate::elaborator::{self, ElaborationPass};
@@ -2223,7 +2268,10 @@ fn elaborates_mirrored_bounds_in_a_conjunction() {
     .expect("the elaborated proof should print");
     let printed = String::from_utf8(printed).expect("printed proof should be UTF-8");
     assert!(!printed.contains(":rule hole"), "{printed}");
-    assert!(printed.contains("poly_simp_rel"), "{printed}");
+    assert!(
+        printed.contains("poly_simp_rel") || printed.contains("\"arith-elim-leq\""),
+        "{printed}"
+    );
 }
 
 /// An `and`/`or` holding a literal and its negation is the connective's

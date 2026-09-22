@@ -356,7 +356,8 @@ pub struct Reconstructor<'a> {
     pub matches_by_signature: HashMap<(u32, Signature), Rc<Vec<SignatureMatch>>>,
     /// Grounded matches, memoized by their class-level bindings; `None`
     /// records a match that failed to ground.
-    pub grounded_matches: HashMap<(u32, usize, ClassSubstitution), Option<Rc<RuleInstance>>>,
+    pub grounded_matches:
+        HashMap<(u32, usize, ClassSubstitution, Option<Term>), Option<Rc<RuleInstance>>>,
     pub memo: HashMap<(Term, Term), Option<Certificate>>,
     pub in_progress: HashSet<(Term, Term)>,
     pub prune_events: usize,
@@ -627,18 +628,35 @@ impl Reconstructor<'_> {
         &mut self,
         eclass: u32,
         class_match: &SignatureMatch,
+        vertex: &Term,
     ) -> Option<Rc<RuleInstance>> {
+        // A side that is a bare variable matches the class as a whole; it
+        // is grounded to the vertex the search stands on, so the instance
+        // is a rule edge out of that vertex.  Grounded to the class
+        // representative instead, it read as a "congruence" between the
+        // vertex and the representative, an edge no child proof justifies
+        // when the two have different heads: `(= (= false x) (not x))` was
+        // lost that way, though `eq-symm` and `bool-eq-false` prove it.
+        let rule = &self.rules[class_match.rule_index];
+        let anchored_side = match class_match.anchored {
+            InstanceSide::Lhs => &rule.lhs,
+            InstanceSide::Rhs => &rule.rhs,
+        };
+        let pinned = match anchored_side {
+            Pattern::Var(variable) => Some((*variable, vertex.clone())),
+            Pattern::App(..) => None,
+        };
         let key = (
             eclass,
             class_match.rule_index,
             class_match.substitution.clone(),
+            pinned.as_ref().map(|(_, term)| term.clone()),
         );
         if let Some(instance) = self.grounded_matches.get(&key) {
             return instance.clone();
         }
-        let rule = &self.rules[class_match.rule_index];
         let instance = self
-            .ground(rule, &class_match.substitution, eclass)
+            .ground(rule, &class_match.substitution, eclass, pinned)
             .map(Rc::new);
         if instance.is_some() {
             self.stats.rule_instances += 1;
@@ -652,10 +670,14 @@ impl Reconstructor<'_> {
         rule: &Rewrite,
         class_substitution: &ClassSubstitution,
         eclass: u32,
+        pinned: Option<(&str, Term)>,
     ) -> Option<RuleInstance> {
         let mut substitution = Substitution::new();
         for (variable, &class) in class_substitution {
             substitution.insert((*variable).to_owned(), self.representative(class)?);
+        }
+        if let Some((variable, term)) = pinned {
+            substitution.insert(variable.to_owned(), term);
         }
         // A guarded variable bound to a term of another known sort is not an
         // instance: `arith-eq-elim-real` does not apply to integers.
@@ -693,11 +715,28 @@ impl Reconstructor<'_> {
     }
 
     pub fn congruence_compatible(&mut self, lhs: &Term, rhs: &Term) -> bool {
-        lhs.op == rhs.op
-            && lhs.children.len() == rhs.children.len()
-            && lhs.children.iter().zip(&rhs.children).all(|(lhs, rhs)| {
-                matches!((self.class_of(lhs), self.class_of(rhs)), (Some(lhs), Some(rhs)) if lhs == rhs)
-            })
+        if lhs.op != rhs.op || lhs.children.len() != rhs.children.len() {
+            return false;
+        }
+        lhs.children.iter().zip(&rhs.children).all(|(lhs, rhs)| {
+            matches!((self.class_of(lhs), self.class_of(rhs)), (Some(lhs), Some(rhs)) if lhs == rhs)
+        })
+    }
+
+    /// Congruence compatibility one level below the wrapper: for two wrapped
+    /// applications, the applications themselves must have one head and
+    /// their argument lists one class.  The wrapper level alone is not
+    /// enough for a term met through the class signature: the engine keeps
+    /// the unwrapped terms of a class together, so every two wrapped members
+    /// pass the wrapper's test, whatever their heads.
+    pub fn inner_congruence_compatible(&mut self, lhs: &Term, rhs: &Term) -> bool {
+        if lhs.op == "Mk" && rhs.op == "Mk" {
+            if let ([inner_lhs], [inner_rhs]) = (lhs.children.as_slice(), rhs.children.as_slice())
+            {
+                return self.congruence_compatible(inner_lhs, inner_rhs);
+            }
+        }
+        self.congruence_compatible(lhs, rhs)
     }
 
     pub fn congruence_certificate(&mut self, lhs: &Term, rhs: &Term) -> Option<Certificate> {
@@ -1174,11 +1213,17 @@ impl Reconstructor<'_> {
         forward_edges.reverse();
         for (parent, child, edge) in &forward_edges {
             let step = self.justify(parent, child, edge, false);
-            steps.push(step.ok_or_else(|| (parent.clone(), child.clone()))?);
+            steps.push(step.ok_or_else(|| {
+                log::debug!("path: {} edge {} = {} failed to justify", edge_kind(edge), parent.to_egglog(), child.to_egglog());
+                (parent.clone(), child.clone())
+            })?);
         }
         for (parent, child, edge) in &walk_edges(&backward.parents, meet) {
             let step = self.justify(parent, child, edge, true);
-            steps.push(step.ok_or_else(|| (parent.clone(), child.clone()))?);
+            steps.push(step.ok_or_else(|| {
+                log::debug!("path: {} edge {} = {} failed to justify", edge_kind(edge), child.to_egglog(), parent.to_egglog());
+                (parent.clone(), child.clone())
+            })?);
         }
         Ok(chain(source.clone(), steps))
     }
@@ -1303,7 +1348,7 @@ impl Reconstructor<'_> {
         if let Some(signature) = self.term_signature(vertex) {
             let matches = self.matches_at_signature(graph.eclass, &signature);
             for class_match in matches.iter() {
-                let Some(instance) = self.grounded_match(graph.eclass, class_match) else {
+                let Some(instance) = self.grounded_match(graph.eclass, class_match, vertex) else {
                     continue;
                 };
                 for term in [&instance.lhs, &instance.rhs] {
@@ -1321,9 +1366,19 @@ impl Reconstructor<'_> {
                         reversed,
                     };
                     edges.push((other.clone(), rule));
-                } else {
-                    // Same signature as the vertex, so the e-graph holds
-                    // them congruent.
+                } else if self.inner_congruence_compatible(matched, vertex) {
+                    // Same head as the vertex with the children pairwise in
+                    // one class: a congruence the child proofs replay.  The
+                    // signature the match was found at is the wrapper's,
+                    // and the engine keeps the unwrapped terms of a class
+                    // together, so a match there can also ground to another
+                    // member of the class that is no congruence of the
+                    // vertex at all (`(= x false)` at `(= false x)`); such a
+                    // member is reached by the rule that relates them, not
+                    // by a congruence edge that cannot be justified and
+                    // costs one of the bounded rejustifications.  That is
+                    // how `(= (= false x) (not x))` went unreconstructed
+                    // though `eq-symm` and `bool-eq-false` prove it.
                     edges.push((matched.clone(), CandidateEdge::Congruence));
                 }
             }
@@ -1419,6 +1474,16 @@ impl Reconstructor<'_> {
         }
         edges.retain(|(neighbour, _)| !graph.banned.contains(&(vertex.clone(), neighbour.clone())));
         edges
+    }
+}
+
+/// The kind of a candidate edge, for the search's debug log.
+fn edge_kind(edge: &CandidateEdge) -> &'static str {
+    match edge {
+        CandidateEdge::Rule { .. } => "rule",
+        CandidateEdge::Congruence => "congruence",
+        CandidateEdge::Computational { .. } => "computational",
+        CandidateEdge::AciModulo => "aci-modulo",
     }
 }
 
