@@ -350,10 +350,14 @@ impl VecToVecTranslator<'_> for EunoiaTranslator {
             Term::Const(constant) => EunoiaTranslator::translate_constant(constant),
 
             Term::Op(operator, operands) => {
-                let operands_eunoia = operands
+                let operands_eunoia: Vec<EunoiaTerm> = operands
                     .iter()
                     .map(|operand| self.translate_term(operand))
                     .collect();
+
+                if operands_eunoia.is_empty() && operator == &Operator::RareList {
+                    return EunoiaTerm::List(Vec::new());
+                }
 
                 match operator {
                     Operator::True => EunoiaTerm::True,
@@ -364,6 +368,7 @@ impl VecToVecTranslator<'_> for EunoiaTranslator {
                     // Here, we are translating an application of an Alethe operator, which
                     // are not expressed in terms of Eunoia's. We translate this as a regular
                     // application of some constant defined in the signature used.
+                    
                     _ => EunoiaTerm::App(self.translate_operator(*operator), operands_eunoia),
                 }
             }
