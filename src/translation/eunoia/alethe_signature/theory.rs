@@ -9,6 +9,7 @@ use crate::translation::eunoia::ast::*;
 pub struct AletheTheory {
     // Path to each file of the current AletheInEunoia mechanization.
     pub mechanization_files: Vec<String>,
+    pub list_programs: String,
 
     // Built-in operators.
     pub cl: &'static str,
@@ -82,11 +83,11 @@ impl AletheTheory {
                 // Rules
                 format!("{}/rules/alethe.eo", eunoia_mech),
                 format!("{}/rules/tautologies.eo", eunoia_mech),
-                format!("{}/rules/rare_rules.eo", eunoia_mech),
                 // Programs
                 format!("{}/programs/programs.eo", eunoia_mech),
                 format!("{}/programs/arith.eo", eunoia_mech),
             ],
+            list_programs: format!("{}/programs/lists.eo", eunoia_mech),
 
             // Clauses.
             cl: "@cl",

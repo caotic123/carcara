@@ -70,6 +70,39 @@ impl<'a> ProofPrinter for EunoiaPrinter<'a> {
         // TODO: some generic way of doing this? maybe with macros?
         for command in proof {
             match command {
+                EunoiaCommand::DeclareRule {
+                    name,
+                    typed_params,
+                    arguments,
+                    premises,
+                    requirements,
+                    conclusion,
+                } => {
+                    tag = "declare-rule".to_owned();
+                    args = vec![name.clone()];
+                    args.append(&mut Self::eunoia_list_to_concrete_syntax(
+                        typed_params,
+                        &Self::typed_param_to_concrete_syntax,
+                    ));
+                    args.push(":premises".to_owned());
+                    args.push(Self::term_to_concrete_syntax(&EunoiaTerm::List(
+                        premises.clone(),
+                    )));
+                    args.push(":args".to_owned());
+                    args.push(Self::term_to_concrete_syntax(&EunoiaTerm::List(
+                        arguments.clone(),
+                    )));
+                    if !requirements.is_empty() {
+                        args.push(":requires".to_owned());
+                        let pairs = requirements
+                            .iter()
+                            .map(|(a, b)| EunoiaTerm::List(vec![a.clone(), b.clone()]))
+                            .collect();
+                        args.push(Self::term_to_concrete_syntax(&EunoiaTerm::List(pairs)));
+                    }
+                    args.push(":conclusion".to_owned());
+                    args.push(Self::term_to_concrete_syntax(conclusion));
+                }
                 EunoiaCommand::Include { path } => {
                     tag = "include".to_owned();
                     args = vec![format!(r#""{}""#, path)];
@@ -261,6 +294,7 @@ impl<'a> EunoiaPrinter<'a> {
 
     fn cons_attr_to_concrete_syntax(attr: &EunoiaConsAttr) -> String {
         match attr {
+            EunoiaConsAttr::List => ":list".to_owned(),
             EunoiaConsAttr::RightAssoc => ":right-assoc".to_owned(),
 
             _ => ":right-assoc".to_owned(),

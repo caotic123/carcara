@@ -340,7 +340,7 @@ fn generate_lia_problems_command(options: ParseCommandOptions, use_sharing: bool
 fn translate_command(options: TranslateCommandOptions) -> CliResult<()> {
     let instance = get_instance(&options.input)?;
 
-    let (alethe_problem, mut alethe_proof, _, _) = parser::parse_instance(
+    let (alethe_problem, mut alethe_proof, rare_rules, _) = parser::parse_instance(
         instance.problem(),
         instance.proof(),
         instance.rules(),
@@ -349,19 +349,27 @@ fn translate_command(options: TranslateCommandOptions) -> CliResult<()> {
 
     // NOTE: currently supporting only translation into Eunoia.
     match &options.target {
-        TranslationTarget::Eunoia => {
-            translate_2_eunoia_command(&alethe_problem, &mut alethe_proof, &options.eunoia_mech)
-        }
+        TranslationTarget::Eunoia => translate_2_eunoia_command(
+            &alethe_problem,
+            &mut alethe_proof,
+            &rare_rules,
+            &options.eunoia_mech,
+        ),
     }
 }
 
 fn translate_2_eunoia_command(
     alethe_problem: &ast::Problem,
     proof: &mut Proof,
+    rare_rules: &Rules,
     eunoia_mech: &str,
 ) -> CliResult<()> {
     let mut translator = translation::eunoia::alethe_2_eunoia::EunoiaTranslator::new(eunoia_mech);
-    let eunoia_prelude = translator.translate_problem(alethe_problem);
+    let generated_rules = translator
+        .translate_rare_rules(rare_rules, proof)
+        .map_err(CliError::RareTranslation)?;
+    let mut eunoia_prelude = translator.translate_problem(alethe_problem);
+    eunoia_prelude.extend(generated_rules);
     let eunoia_proof = translator.translate(proof);
 
     // Sink where to write the "prelude" of the problem and the path to the Eunoia mechanization.

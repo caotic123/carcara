@@ -338,3 +338,55 @@ fn encoded_rare_examples() {
         Status::Valid,
     );
 }
+
+#[test]
+fn rare_rewrite_empty_boolean_lists() {
+    let rules = r#"
+        (declare-rare-rule or-list-id ((xs Bool :list))
+            :args (xs)
+            :conclusion (= (or xs false) (or xs)))
+        (declare-rare-rule and-list-id ((xs Bool :list))
+            :args (xs)
+            :conclusion (= (and xs true) (and xs)))
+    "#;
+
+    for (rule, conclusion, valid) in [
+        ("or-list-id", "(= false false)", true),
+        ("or-list-id", "(= false true)", false),
+        ("and-list-id", "(= true true)", true),
+        ("and-list-id", "(= true false)", false),
+    ] {
+        // The invalid cases assert a tautology. Accepting their refutation would
+        // incorrectly certify a satisfiable problem as unsatisfiable.
+        let problem = format!("(assert (not {conclusion}))");
+        let proof = format!(
+            r#"
+                (assume h0 (not {conclusion}))
+                (step t0 (cl {conclusion})
+                    :rule rare_rewrite :args ("{rule}" rare-list))
+                (step end (cl) :rule resolution :premises (h0 t0))
+            "#
+        );
+        let (problem, proof, rare_rules, mut pool) = parser::parse_instance(
+            problem.as_str().into(),
+            proof.as_str().into(),
+            Some(rules.into()),
+            parser::Config::new(),
+        )
+        .unwrap();
+        let result = checker::ProofChecker::new(&mut pool, &rare_rules, checker::Config::new())
+            .check(&problem, &proof);
+
+        if valid {
+            assert_eq!(result.unwrap(), Status::Valid);
+        } else {
+            assert!(
+                matches!(
+                    &result,
+                    Err(carcara::Error::Checker { rule, .. }) if rule.as_ref() == "rare_rewrite"
+                ),
+                "expected the invalid RARE step to be rejected: {result:?}"
+            );
+        }
+    }
+}

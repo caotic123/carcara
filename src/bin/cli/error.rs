@@ -7,6 +7,7 @@ use std::{
 
 #[derive(Debug)]
 pub enum CliError {
+    RareTranslation(carcara::translation::eunoia::rare::RareTranslationError),
     CarcaraError(carcara::Error),
     CantInferProblemFile(PathBuf),
     InvalidSliceId(String),
@@ -51,6 +52,7 @@ impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use carcara::Error;
         match self {
+            CliError::RareTranslation(e) => write!(f, "{e}"),
             CliError::CarcaraError(Error::Io { inner, file }) => {
                 pretty_error(f, "IO error", file, None, Some(inner))
             }

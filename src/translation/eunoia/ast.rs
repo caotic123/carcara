@@ -64,6 +64,8 @@ pub enum EunoiaType {
 /// Annotated attributes in declarations of constants.
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum EunoiaConsAttr {
+    // A parameter containing an associative list fragment.
+    List,
     // :right-assoc
     RightAssoc,
     // :left-assoc
@@ -195,6 +197,15 @@ pub enum EunoiaOperator {
 /// Eunoia commands
 #[derive(Debug, PartialEq)]
 pub enum EunoiaCommand {
+    /// A generated RARE rule. Its conclusion is computed after argument matching.
+    DeclareRule {
+        name: Symbol,
+        typed_params: EunoiaList<EunoiaTypedParam>,
+        arguments: Vec<EunoiaTerm>,
+        premises: Vec<EunoiaTerm>,
+        requirements: Vec<(EunoiaTerm, EunoiaTerm)>,
+        conclusion: EunoiaTerm,
+    },
     // To include signature files.
     Include {
         path: String,
