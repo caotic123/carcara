@@ -318,7 +318,7 @@ impl<'a> EunoiaPrinter<'a> {
                 if r.is_integer() {
                     ret += &(r.clone().abs().to_string() + ".0");
                 } else {
-                    ret += &format!("/ {}.0 {}.0)", r.numer().clone().abs(), &r.denom());
+                    ret += &format!("(/ {}.0 {}.0)", r.numer().clone().abs(), &r.denom());
                 }
                 if r.is_negative() {
                     ret += ")";

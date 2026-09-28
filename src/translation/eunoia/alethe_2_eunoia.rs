@@ -921,6 +921,21 @@ impl VecToVecTranslator<'_> for EunoiaTranslator {
                         );
                     }
 
+                    "and_neg" => {
+                        // The Eunoia rule computes its clause from the conjunction.
+                        // Reuse the translated first literal, including its nesting.
+                        if let EunoiaTerm::App(_, literals) = &conclusion {
+                            eunoia_arguments.extend(literals.first().cloned());
+                        }
+                        self.translate_generic_step(
+                            id,
+                            conclusion,
+                            rule,
+                            eunoia_premises,
+                            eunoia_arguments,
+                        );
+                    }
+
                     "rare_rewrite" => {
                         let rule_name = match &eunoia_arguments[0] {
                             EunoiaTerm::String(rare_rewrite_name) => rare_rewrite_name,

@@ -223,20 +223,14 @@ impl RuleCompiler<'_> {
                 if operands.iter().any(|x| x.raw_sort() != sort) {
                     return Err(self.error("mixed operand sorts in distinct"));
                 }
+                // The signature's :arg-list attribute assembles the operands,
+                // splicing :list parameters without expanding pairwise comparisons.
                 app(
-                    "eo::list_singleton_elim",
-                    vec![
-                        id("and"),
-                        app(
-                            "$normalize_eo_pairwise",
-                            vec![
-                                self.sort_term(&sort)?,
-                                id("distinct"),
-                                self.sequence(operands)?,
-                                id("eo::List::nil"),
-                            ],
-                        ),
-                    ],
+                    "distinct",
+                    operands
+                        .iter()
+                        .map(|x| self.term(x, true))
+                        .collect::<Result<_, _>>()?,
                 )
             }
             Term::Op(

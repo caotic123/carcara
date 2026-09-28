@@ -59,9 +59,9 @@ carcara translate eunoia \
 ethos proof.eo
 ```
 
-The signature must provide `$normalize_eo_list` and `$normalize_eo_pairwise`
-in `programs/lists.eo` (tested with Ethos 0.2.4). There is no separate RARE
-support file.
+The signature must provide `$normalize_eo_list` in `programs/lists.eo` and
+an argument-list declaration of `distinct` using `:arg-list eo::List::cons`
+(tested with Ethos 0.2.4). There is no separate RARE support file.
 
 Every definition in the supplied database is emitted, in declaration order,
 under generated `@rare.rule.N` names. Rule compilation is independent of the
@@ -82,13 +82,14 @@ happens only after the complete application is assembled.
 Ordinary nested formulas remain individual operands.
 
 The compiler currently handles list occurrences in `and`, `or`, homogeneous
-`+` and `*`, and pairwise `distinct`. Pairwise comparisons are generated after
-all sequence fragments are concatenated. Carcara's `Distinct` case dispatches
-to `($normalize_eo_pairwise ElementType distinct sequence eo::List::nil)` and
-applies `eo::list_singleton_elim and` to its result. The pairwise program accepts
-the comparison operator as a parameter; it does not match on `distinct`.
-Its last argument starts empty and internally holds the left operand of a
-comparison row.
+`+` and `*`, and `distinct`. A RARE application such as `(distinct xs t ys t zs)`
+is emitted in that form. The signature's `:arg-list eo::List::cons` attribute
+packages the operands and splices `:list` fragments using native list
+concatenation. Empty fragments contribute no operands; duplicates and nested
+formulas remain operands. No pairwise normalizer is used by the RARE compiler.
+Ordinary proof formulas still use surface syntax such as `(distinct true true)`.
+The signature checks that all operands have the same type. Rules such as
+`distinct_elim` handle the logical expansion when it is explicitly requested.
 
 List element types are checked by generated requirements using
 `$normalize_eo_list` with `eo::List::cons`, which preserves the carrier and
