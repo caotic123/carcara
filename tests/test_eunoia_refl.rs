@@ -47,7 +47,7 @@ fn translated_refl_checks_in_ethos() {
              (step s (cl (= (forall ((x Bool)) x) (forall ((y Bool)) y))) :rule bind)
              (step after (cl (= p p)) :rule refl)",
             true,
-            "(declare-const String Type)\n(declare-consts <string> String)\n",
+            "",
         ),
         (
             "reject-wrong-substitution",
@@ -55,7 +55,7 @@ fn translated_refl_checks_in_ethos() {
              (step s.refl (cl (= x (not y))) :rule refl)
              (step s (cl (= (forall ((x Bool)) x) (forall ((y Bool)) (not y)))) :rule bind)",
             false,
-            "(declare-const String Type)\n(declare-consts <string> String)\n",
+            "",
         ),
     ];
     for (name, proof, accepted, prelude) in cases {

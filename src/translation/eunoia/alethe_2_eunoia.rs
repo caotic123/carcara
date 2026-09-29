@@ -906,27 +906,10 @@ impl VecToVecTranslator<'_> for EunoiaTranslator {
                     }
 
                     "refl" => {
-                        // The Eunoia rule takes a proof of the active context.
-                        // This assumption is shadowed when entering a subproof.
-                        eunoia_premises.push(EunoiaTerm::Id(
-                            self.alethe_signature.ctx_assumption.to_owned(),
-                        ));
+                        // The updated Eunoia rule takes the active context term
+                        // as an argument, rather than its proof assumption.
+                        eunoia_arguments.push(EunoiaTerm::Id(self.get_current_context_id()));
 
-                        self.translate_generic_step(
-                            id,
-                            conclusion,
-                            rule,
-                            eunoia_premises,
-                            eunoia_arguments,
-                        );
-                    }
-
-                    "and_neg" => {
-                        // The Eunoia rule computes its clause from the conjunction.
-                        // Reuse the translated first literal, including its nesting.
-                        if let EunoiaTerm::App(_, literals) = &conclusion {
-                            eunoia_arguments.extend(literals.first().cloned());
-                        }
                         self.translate_generic_step(
                             id,
                             conclusion,
