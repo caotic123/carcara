@@ -919,6 +919,23 @@ impl VecToVecTranslator<'_> for EunoiaTranslator {
                         );
                     }
 
+                    "evaluate" => {
+                        // The Eunoia rule computes the right-hand side of the
+                        // conclusion equality; the certificate only supplies
+                        // the left-hand term as the argument.
+                        let (lhs, _) =
+                            self.alethe_signature.extract_eq_lhs_rhs(&conclusion);
+                        eunoia_arguments.push(lhs);
+
+                        self.translate_generic_step(
+                            id,
+                            conclusion,
+                            rule,
+                            eunoia_premises,
+                            eunoia_arguments,
+                        );
+                    }
+
                     "rare_rewrite" => {
                         let rule_name = match &eunoia_arguments[0] {
                             EunoiaTerm::String(rare_rewrite_name) => rare_rewrite_name,
