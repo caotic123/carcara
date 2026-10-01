@@ -2509,3 +2509,105 @@ fn elaborates_holes_with_the_untranslated_rewrite_tag() {
     let printed = String::from_utf8(printed).expect("printed proof should be UTF-8");
     assert!(!printed.contains(":rule hole"), "{printed}");
 }
+
+#[test]
+fn bare_variable_rule_side_fires_away_from_the_representative() {
+    // Class c0 = {a, b, g(c0)}, with `b = g(b)` by `x -> g(x)`.  The goal
+    // mentions `a`, which becomes c0's representative, so the rule must
+    // match at the vertex `b` itself, not only at the representative.
+    let snapshot = EGraphSnapshot::from_raw_nodes(vec![
+        ("a".into(), vec![], "c0".into()),
+        ("b".into(), vec![], "c0".into()),
+        ("g".into(), vec!["c0".into()], "c0".into()),
+        ("f".into(), vec!["c0".into(), "c0".into()], "c1".into()),
+    ]);
+    let rules = [Rewrite {
+        name: "wrap",
+        lhs: Pattern::Var("x"),
+        rhs: Pattern::App("g", vec![Pattern::Var("x")]),
+        guards: Vec::new(),
+        lists: Vec::new(),
+    }];
+    let (a, b) = (Term::leaf("a"), Term::leaf("b"));
+    let source = Term::new("f", vec![a.clone(), b.clone()]);
+    let target = Term::new("f", vec![a, Term::new("g", vec![b])]);
+    let certificate = reconstruct(
+        &snapshot,
+        &source,
+        &target,
+        &rules,
+        SearchStrategy::default(),
+    )
+    .expect("`wrap` at `b` should justify the goal");
+    let mut names = Vec::new();
+    certificate.rule_names(&mut names);
+    assert_eq!(names, ["wrap"]);
+}
+
+#[test]
+fn elaborates_a_symm_on_the_congruence_spine() {
+    // (f x z) = (f y w), where the search's memo handed back the argument
+    // list's proof the other way round: (symm (cong_Args ...)).
+    let [x, y, z, w] = ["x", "y", "z", "w"].map(encoded_const);
+    let rule = |name: &str, lhs: &Term, rhs: &Term| Certificate::Rule {
+        name: name.to_owned(),
+        lhs: lhs.clone(),
+        rhs: rhs.clone(),
+        substitution: Substitution::new(),
+    };
+    let list = |first: &Term, second: &Term| encoded_args(vec![first.clone(), second.clone()]);
+    let tail = |element: &Term| encoded_args(vec![element.clone()]);
+    // (Args y (Args w)) = (Args x (Args z)), changing both elements.
+    let first = Certificate::Congruence {
+        lhs: list(&y, &w),
+        rhs: list(&x, &w),
+        child_index: 0,
+        child: Box::new(rule("y-x", &y, &x)),
+    };
+    let second = Certificate::Congruence {
+        lhs: list(&x, &w),
+        rhs: list(&x, &z),
+        child_index: 1,
+        child: Box::new(Certificate::Congruence {
+            lhs: tail(&w),
+            rhs: tail(&z),
+            child_index: 0,
+            child: Box::new(rule("w-z", &w, &z)),
+        }),
+    };
+    let backwards = chain(list(&y, &w), vec![first, second]);
+    let application = |arguments: Term| Term::new("@f", vec![arguments]);
+    let certificate = Certificate::Congruence {
+        lhs: Term::new("Mk", vec![application(list(&x, &z))]),
+        rhs: Term::new("Mk", vec![application(list(&y, &w))]),
+        child_index: 0,
+        child: Box::new(Certificate::Congruence {
+            lhs: application(list(&x, &z)),
+            rhs: application(list(&y, &w)),
+            child_index: 0,
+            child: Box::new(reverse(backwards)),
+        }),
+    };
+    let steps = AletheElaborator::elaborate(&certificate, "t")
+        .expect("a symm on the spine should elaborate");
+    let last = steps.last().unwrap();
+    assert!(
+        last.contains("(= (f x z) (f y w))") && last.contains(":rule cong"),
+        "{last}"
+    );
+    // One premise per argument, in argument order: x = y, then z = w.
+    for claim in ["(= x y)", "(= z w)"] {
+        assert!(
+            steps
+                .iter()
+                .any(|step| step.contains(claim) && step.contains(":rule symm")),
+            "{claim}"
+        );
+    }
+    let premise = |claim: &str| {
+        let step = steps.iter().find(|step| step.contains(claim)).unwrap();
+        step.split_whitespace().nth(1).unwrap().to_owned()
+    };
+    let expected = format!(":premises ({} {})", premise("(= x y)"), premise("(= z w)"));
+    assert!(last.contains(&expected), "{last}");
+}

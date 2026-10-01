@@ -557,9 +557,11 @@ impl Reconstructor<'_> {
 
     /// Matches of one side pattern whose grounded root will carry
     /// `signature`.  An applied pattern anchors on the signature's child
-    /// classes directly; a bare-variable side grounds to the class
-    /// representative, so it anchors exactly when the representative carries
-    /// the signature — one extraction for the class being searched.
+    /// classes directly; a bare-variable side matches every vertex of the
+    /// class, since [`Self::grounded_match`] pins the variable to the vertex
+    /// itself.  Requiring the class representative to carry the signature
+    /// instead lost `b = g(b)` by `x -> g(x)` whenever `b` was not the
+    /// representative.
     pub fn side_matches_at_signature(
         &mut self,
         pattern: &Pattern,
@@ -567,13 +569,7 @@ impl Reconstructor<'_> {
         eclass: u32,
     ) -> Vec<ClassSubstitution> {
         match pattern {
-            Pattern::Var(variable) => {
-                if self.representative_signature(eclass).as_ref() == Some(signature) {
-                    vec![ClassSubstitution::from([(*variable, eclass)])]
-                } else {
-                    Vec::new()
-                }
-            }
+            Pattern::Var(variable) => vec![ClassSubstitution::from([(*variable, eclass)])],
             Pattern::App(..) => self.snapshot.ematch_at_signature(
                 pattern,
                 signature,
@@ -581,11 +577,6 @@ impl Reconstructor<'_> {
                 &mut self.stats,
             ),
         }
-    }
-
-    pub fn representative_signature(&mut self, eclass: u32) -> Option<Signature> {
-        let representative = self.representative(eclass)?;
-        self.term_signature(&representative)
     }
 
     /// E-class a fully substituted pattern grounds into, resolved bottom-up

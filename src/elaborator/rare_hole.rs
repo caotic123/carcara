@@ -510,9 +510,7 @@ impl AletheElaborator {
                 if lhs.op == "Mk" && !matches!(child.as_ref(), Certificate::Congruence { .. }) {
                     return self.step_for(child);
                 }
-                let mut arguments = Vec::new();
-                spine_arguments(certificate, &mut arguments)?;
-                let premises = arguments
+                let premises = spine_arguments(certificate)?
                     .iter()
                     .map(|argument| self.step_for(argument))
                     .collect::<Option<Vec<_>>>()?;
@@ -526,31 +524,68 @@ impl AletheElaborator {
 /// Descend an encoded congruence spine (`Mk` wrapper, application node,
 /// `Args` cells, and the transitivity chains congruence builds when several
 /// arguments differ), collecting the certificates of the differing
-/// arguments in argument order — one `cong` premise each.
-pub fn spine_arguments<'c>(
-    certificate: &'c Certificate,
-    out: &mut Vec<&'c Certificate>,
+/// arguments in argument order — one `cong` premise each.  A `symm` on the
+/// spine, which the search's memo returns for an obligation proved the other
+/// way round, is pushed down onto the arguments; an argument the spine
+/// changes more than once gets its steps chained into one premise.
+pub fn spine_arguments(certificate: &Certificate) -> Option<Vec<Certificate>> {
+    let mut steps = Vec::new();
+    spine_walk(certificate, 0, false, &mut steps)?;
+    // Stable, so each argument's steps stay in chain order.
+    steps.sort_by_key(|(position, _)| *position);
+    let mut arguments: Vec<(usize, Vec<Certificate>)> = Vec::new();
+    for (position, step) in steps {
+        match arguments.last_mut() {
+            Some((last, chained)) if *last == position => chained.push(step),
+            _ => arguments.push((position, vec![step])),
+        }
+    }
+    Some(
+        arguments
+            .into_iter()
+            .map(|(_, chained)| chain(chained[0].lhs().clone(), chained))
+            .collect(),
+    )
+}
+
+/// One spine node: `position` is the argument index the `Args` cells below
+/// it start at, and `flipped` whether an odd number of `symm`s lie above it.
+fn spine_walk(
+    certificate: &Certificate,
+    position: usize,
+    flipped: bool,
+    out: &mut Vec<(usize, Certificate)>,
 ) -> Option<()> {
     match certificate {
         Certificate::Refl { .. } => Some(()),
+        Certificate::Symm { proof, .. } => spine_walk(proof, position, !flipped, out),
         Certificate::Congruence { lhs, child_index, child, .. } => {
             match (lhs.op.as_str(), child_index) {
                 // Wrapper and application layers pass straight through.
-                ("Mk", 0) => spine_arguments(child, out),
-                (operator, 0) if operator.starts_with('@') => spine_arguments(child, out),
+                ("Mk", 0) => spine_walk(child, position, flipped, out),
+                (operator, 0) if operator.starts_with('@') => {
+                    spine_walk(child, position, flipped, out)
+                }
                 // An Args cell: index 0 is a differing element itself, index 1
                 // continues along the list spine.
                 ("Args", 0) => {
-                    out.push(child);
+                    let child = child.as_ref().clone();
+                    out.push((position, if flipped { reverse(child) } else { child }));
                     Some(())
                 }
-                ("Args", 1) => spine_arguments(child, out),
+                ("Args", 1) => spine_walk(child, position + 1, flipped, out),
                 _ => None,
             }
         }
+        // (symm (trans a b)) is (trans (symm b) (symm a)).
         Certificate::Trans { first, second, .. } => {
-            spine_arguments(first, out)?;
-            spine_arguments(second, out)
+            let (first, second) = if flipped {
+                (second, first)
+            } else {
+                (first, second)
+            };
+            spine_walk(first, position, flipped, out)?;
+            spine_walk(second, position, flipped, out)
         }
         _ => None,
     }
