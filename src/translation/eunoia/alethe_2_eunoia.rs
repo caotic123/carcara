@@ -2,7 +2,10 @@
 use crate::ast::*;
 use crate::translation::{
     Symbol, Translator, TranslatorData, VecToVecTranslator,
-    eunoia::{alethe_signature::theory::*, ast::*},
+    eunoia::{
+        alethe_signature::{encoding::Encoding, theory::*},
+        ast::*,
+    },
 };
 
 pub struct EunoiaTranslator {
@@ -11,14 +14,16 @@ pub struct EunoiaTranslator {
 
     translation: TranslatorData<EunoiaType, EunoiaProof>,
     rare_rule_names: indexmap::IndexMap<String, String>,
+    rare_rules: indexmap::IndexMap<String, rare_rules::RuleDefinition>,
 }
 
 impl EunoiaTranslator {
-    pub fn new(eunoia_mech: &str) -> EunoiaTranslator {
+    pub fn new(eunoia_mech: &str, encoding: Encoding) -> EunoiaTranslator {
         Self {
-            alethe_signature: AletheTheory::new(eunoia_mech),
+            alethe_signature: AletheTheory::new(eunoia_mech, encoding),
             translation: TranslatorData::new(),
             rare_rule_names: indexmap::IndexMap::new(),
+            rare_rules: indexmap::IndexMap::new(),
         }
     }
 
@@ -30,8 +35,9 @@ impl EunoiaTranslator {
         proof: &Proof,
     ) -> Result<EunoiaProof, super::rare::RareTranslationError> {
         super::rare::validate_proof(rules, proof)?;
-        let compiled = super::rare::compile(rules)?;
+        let compiled = super::rare::compile(rules, &self.alethe_signature)?;
         self.rare_rule_names = compiled.names;
+        self.rare_rules = rules.rules.clone();
         if compiled.declarations.is_empty() {
             return Ok(Vec::new());
         }
@@ -379,11 +385,12 @@ impl VecToVecTranslator<'_> for EunoiaTranslator {
 
                 if operator == &Operator::RareList {
                     // Keep every RARE sequence independent of its consuming operator.
-                    return if operands_eunoia.is_empty() {
-                        EunoiaTerm::Id("eo::List::nil".to_owned())
-                    } else {
-                        EunoiaTerm::App("eo::List::cons".to_owned(), operands_eunoia)
-                    };
+                    // An empty rare-list needs its element sort, which the
+                    // rare_rewrite step supplies.
+                    return self
+                        .alethe_signature
+                        .encoding
+                        .sequence(operands_eunoia, None);
                 }
 
                 match operator {
@@ -613,55 +620,9 @@ impl VecToVecTranslator<'_> for EunoiaTranslator {
     }
 
     fn translate_operator(&self, operator: Operator) -> Symbol {
-        match operator {
-            // Logic
-            Operator::And => self.alethe_signature.and.to_owned(),
-
-            Operator::Or => self.alethe_signature.or.to_owned(),
-
-            Operator::Xor => self.alethe_signature.xor.to_owned(),
-
-            Operator::Not => self.alethe_signature.not.to_owned(),
-
-            Operator::Implies => self.alethe_signature.implies.to_owned(),
-
-            Operator::Ite => self.alethe_signature.ite.to_owned(),
-
-            // Order / Comparison.
-            Operator::Equals => self.alethe_signature.eq.to_owned(),
-
-            Operator::GreaterThan => self.alethe_signature.gt.to_owned(),
-
-            Operator::GreaterEq => self.alethe_signature.ge.to_owned(),
-
-            Operator::LessThan => self.alethe_signature.lt.to_owned(),
-
-            Operator::LessEq => self.alethe_signature.le.to_owned(),
-
-            Operator::Distinct => String::from("distinct"),
-
-            // Arithmetic
-            Operator::Add => self.alethe_signature.add.to_owned(),
-
-            Operator::Sub => self.alethe_signature.sub.to_owned(),
-
-            Operator::Mult => self.alethe_signature.mult.to_owned(),
-
-            Operator::IntDiv => self.alethe_signature.int_div.to_owned(),
-
-            Operator::RealDiv => self.alethe_signature.real_div.to_owned(),
-
-            Operator::Mod
-            | Operator::Abs
-            | Operator::ToInt
-            | Operator::ToReal
-            | Operator::IsInt => operator.to_string(),
-
-            _ => {
-                println!("No defined translation for operator {:?}", operator);
-                panic!()
-            }
-        }
+        self.alethe_signature
+            .operator(operator)
+            .unwrap_or_else(|| panic!("No defined translation for operator {operator:?}"))
     }
 
     fn translate_constant(constant: &Constant) -> EunoiaTerm {
@@ -923,8 +884,7 @@ impl VecToVecTranslator<'_> for EunoiaTranslator {
                         // The Eunoia rule computes the right-hand side of the
                         // conclusion equality; the certificate only supplies
                         // the left-hand term as the argument.
-                        let (lhs, _) =
-                            self.alethe_signature.extract_eq_lhs_rhs(&conclusion);
+                        let (lhs, _) = self.alethe_signature.extract_eq_lhs_rhs(&conclusion);
                         eunoia_arguments.push(lhs);
 
                         self.translate_generic_step(
@@ -955,22 +915,42 @@ impl VecToVecTranslator<'_> for EunoiaTranslator {
                             .expect("RARE definitions must be compiled before translating steps")
                             .clone();
 
+                        // Dropping rule name. The rare-list nil carries the
+                        // element sort, which only the rule determines.
+                        let definition = &self.rare_rules[rule_name];
+                        let rule_arguments = args[1..]
+                            .iter()
+                            .zip(&eunoia_arguments[1..])
+                            .enumerate()
+                            .map(|(i, (arg, translated))| match arg.as_ref() {
+                                Term::Op(Operator::RareList, xs) if xs.is_empty() => {
+                                    self.alethe_signature.encoding.sequence(
+                                        Vec::new(),
+                                        super::rare::empty_list_sort(definition, i, &args[1..])
+                                            .map(|s| EunoiaTerm::Type(Self::translate_sort(&s))),
+                                    )
+                                }
+                                _ => translated.clone(),
+                            })
+                            .collect();
+
                         self.translate_generic_step(
                             id,
                             conclusion,
                             &generated_name,
                             eunoia_premises,
-                            // Dropping rule name.
-                            eunoia_arguments[1..].to_vec(),
+                            rule_arguments,
                         );
                     }
 
                     _ => {
-                        // Generic step.
+                        // Generic step, under the Eunoia rule checking it in
+                        // this encoding.
+                        let rule = self.alethe_signature.rule(rule);
                         self.translate_generic_step(
                             id,
                             conclusion,
-                            rule,
+                            &rule,
                             eunoia_premises,
                             eunoia_arguments,
                         );

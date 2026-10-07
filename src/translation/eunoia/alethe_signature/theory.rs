@@ -1,4 +1,5 @@
-use crate::translation::eunoia::ast::*;
+use super::encoding::Encoding;
+use crate::{ast::Operator, translation::eunoia::ast::*};
 
 // NOTE: THIS IS ONLY DONE TO AVOID THE COMPLEXITIES OF DECLARING
 // AND DEALING WITH GLOBALS IN RUST.
@@ -7,6 +8,9 @@ use crate::translation::eunoia::ast::*;
 /// Serves as an additional layer of abstraction for the current compiler to
 /// interact with the internals of our current main mechanization in Eunoia.
 pub struct AletheTheory {
+    /// The encoding of the operators and rules declared twice.
+    pub encoding: Encoding,
+
     // Path to each file of the current AletheInEunoia mechanization.
     pub mechanization_files: Vec<String>,
     pub list_programs: String,
@@ -74,8 +78,10 @@ pub struct AletheTheory {
 }
 
 impl AletheTheory {
-    pub fn new(eunoia_mech: &str) -> Self {
+    pub fn new(eunoia_mech: &str, encoding: Encoding) -> Self {
         AletheTheory {
+            encoding,
+
             // Build paths to current mechanization files.
             mechanization_files: vec![
                 // Theories
@@ -146,6 +152,48 @@ impl AletheTheory {
             varlist_cons: "@varlist",
             varlist_nil: "@varlist.nil",
         }
+    }
+
+    /// The Eunoia symbol of an Alethe operator, in this encoding.
+    pub fn operator(&self, op: Operator) -> Option<String> {
+        if let Some(symbol) = self.encoding.symbol(op) {
+            return Some(symbol.to_owned());
+        }
+        Some(match op {
+            // Logic
+            Operator::And => self.and.to_owned(),
+            Operator::Or => self.or.to_owned(),
+            Operator::Xor => self.xor.to_owned(),
+            Operator::Not => self.not.to_owned(),
+            Operator::Implies => self.implies.to_owned(),
+            Operator::Ite => self.ite.to_owned(),
+
+            // Order / Comparison.
+            Operator::Equals => self.eq.to_owned(),
+            Operator::GreaterThan => self.gt.to_owned(),
+            Operator::GreaterEq => self.ge.to_owned(),
+            Operator::LessThan => self.lt.to_owned(),
+            Operator::LessEq => self.le.to_owned(),
+
+            // Arithmetic
+            Operator::Add => self.add.to_owned(),
+            Operator::Sub => self.sub.to_owned(),
+            Operator::Mult => self.mult.to_owned(),
+            Operator::IntDiv => self.int_div.to_owned(),
+            Operator::RealDiv => self.real_div.to_owned(),
+            Operator::Mod
+            | Operator::Abs
+            | Operator::ToInt
+            | Operator::ToReal
+            | Operator::IsInt => op.to_string(),
+
+            _ => return None,
+        })
+    }
+
+    /// The Eunoia rule checking an Alethe rule, in this encoding.
+    pub fn rule(&self, rule: &str) -> String {
+        self.encoding.rule(rule).to_owned()
     }
 
     // Utilities to help in the translation of steps that use specific rules.

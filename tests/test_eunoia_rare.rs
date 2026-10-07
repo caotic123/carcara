@@ -3,6 +3,7 @@ use carcara::{
     translation::{
         ProofPrinter,
         eunoia::{
+            alethe_signature::{encoding::Encoding, theory::AletheTheory},
             printer::{EunoiaPrinter, SExpFormatter},
             rare,
         },
@@ -16,6 +17,15 @@ const SHARED: &str = r#"
 "#;
 
 fn compile(problem: &str, rules: &str, proof: &str) -> Result<String, rare::RareTranslationError> {
+    compile_with(problem, rules, proof, true)
+}
+
+fn compile_with(
+    problem: &str,
+    rules: &str,
+    proof: &str,
+    native: bool,
+) -> Result<String, rare::RareTranslationError> {
     let (_, proof, rules, _) = parser::parse_instance(
         problem.into(),
         proof.into(),
@@ -24,7 +34,7 @@ fn compile(problem: &str, rules: &str, proof: &str) -> Result<String, rare::Rare
     )
     .unwrap();
     rare::validate_proof(&rules, &proof)?;
-    let compiled = rare::compile(&rules)?;
+    let compiled = rare::compile(&rules, &AletheTheory::new("", Encoding::new(native)))?;
     let mut output = Vec::new();
     EunoiaPrinter::new(SExpFormatter::new(&mut output))
         .write_proof(&compiled.declarations)
@@ -41,12 +51,37 @@ fn generated_rules_preserve_shared_sequence_and_operator_contexts() {
     )
     .unwrap();
     assert!(output.contains("(xs eo::List :list)"));
-    assert!(output.contains("$normalize_eo_list Bool eo::List eo::List::cons xs"));
-    assert!(output.contains("$normalize_eo_list Bool Bool and"));
-    assert!(output.contains("$normalize_eo_list Bool Bool or"));
+    assert!(output.contains("$normalize_eo_list_native Bool eo::List eo::List::cons xs"));
+    assert!(output.contains("$normalize_eo_list_native Bool Bool and"));
+    assert!(output.contains("$normalize_eo_list_native Bool Bool or"));
     assert!(output.contains(":conclusion "));
     assert!(!output.contains(":conclusion-explicit"));
     assert!(!output.contains("rare_rules.eo"));
+}
+
+#[test]
+fn semantic_rules_use_rare_lists_and_library_programs() {
+    let database = format!(
+        r#"{SHARED}
+      (declare-rare-rule distinct-false
+        ((T Type) (t T) (xs T :list) (ys T :list) (zs T :list)) :args (t xs ys zs)
+        :conclusion (= (distinct xs t ys t zs) false))
+      (declare-rare-rule plain ((x Int) (y Int)) :args (x y)
+        :conclusion (= (+ x y) (+ y x)))"#
+    );
+    let output = compile_with("", &database, "", false).unwrap();
+    assert!(output.contains("(xs Bool :list)"));
+    assert!(output.contains("($rare_list_of_sort Bool xs)"));
+    assert!(output.contains("$f_list_singleton_elim and true ($normalize_rare_list Bool and true"));
+    assert!(output.contains("$f_list_singleton_elim or false ($normalize_rare_list Bool or false"));
+    assert!(output.contains("(xs T :list)"));
+    assert!(output.contains("($rare_list_of_sort (eo::typeof t) xs)"));
+    assert!(output.contains("(distinct xs t ys t zs)"));
+    // Without list fragments, the surface application is kept.
+    assert!(output.contains("(= (+ x y) (+ y x))"));
+    assert!(!output.contains("eo::List"));
+    assert!(!output.contains("_native"));
+    assert!(!output.contains("eo::list_singleton_elim"));
 }
 
 #[test]
@@ -449,7 +484,14 @@ fn generated_rules_check_in_ethos() {
             false,
         ),
     ];
-    for (name, declarations, rules, assumptions, rule, args, conclusion, accepted) in cases {
+    // Each case checks in the native encoding and in the semantic one.
+    let modes = ["true", "false"];
+    for (native, (name, declarations, rules, assumptions, rule, args, conclusion, accepted)) in
+        modes
+            .iter()
+            .flat_map(|m| cases.iter().map(move |c| (*m, *c)))
+    {
+        let name = format!("{name}-native-{native}");
         let problem_path = dir.join(format!("{name}.smt2"));
         let proof_path = dir.join(format!("{name}.alethe"));
         let rules_path = dir.join(format!("{name}.rare"));
@@ -467,7 +509,7 @@ fn generated_rules_check_in_ethos() {
         fs::write(&proof_path, format!("{assumptions}\n(step s (cl {conclusion}) :rule rare_rewrite {premises} :args (\"{rule}\" {args}))\n")).unwrap();
         fs::write(&rules_path, rules).unwrap();
         let translated = Command::new(env!("CARGO_BIN_EXE_carcara"))
-            .args(["translate", "eunoia", "--eunoia-mech"])
+            .args(["translate", "eunoia", "--native", native, "--eunoia-mech"])
             .arg(&signature)
             .arg("--rare-file")
             .arg(&rules_path)

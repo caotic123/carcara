@@ -394,6 +394,11 @@ pub struct TranslateCommandOptions {
     #[clap(long)]
     pub eunoia_mech: String,
 
+    /// Emit the native encoding; usually native is faster.
+    #[clap(long, default_value_t = true, action = clap::ArgAction::Set,
+           value_parser = clap::builder::BoolishValueParser::new())]
+    pub native: bool,
+
     #[clap(flatten)]
     pub input: Input,
 

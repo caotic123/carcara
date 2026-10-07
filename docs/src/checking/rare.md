@@ -59,9 +59,16 @@ carcara translate eunoia \
 ethos proof.eo
 ```
 
-The signature must provide `$normalize_eo_list` in `programs/lists.eo` and
-an argument-list declaration of `distinct` using `:arg-list eo::List::cons`
-(tested with Ethos 0.2.4). There is no separate RARE support file.
+The signature must provide `$normalize_eo_list_native` in `programs/lists.eo`
+and an argument-list declaration of `distinct_native` using
+`:arg-list eo::List::cons` (tested with Ethos 0.2.4). There is no separate
+RARE support file.
+
+`--native` selects the encoding. The default, `--native true`, emits the
+native encoding described below, built on Eunoia list builtins: `eo::List`
+sequences, `distinct_native`, and the `aci_simp_native` and
+`distinct_elim_native` rules. `--native false` emits the semantic encoding,
+whose checks are library programs (see [the semantic encoding](#the-semantic-encoding)).
 
 Every definition in the supplied database is emitted, in declaration order,
 under generated `@rare.rule.N` names. Rule compilation is independent of the
@@ -73,7 +80,7 @@ List arguments remain sequences: bare `rare-list` becomes `eo::List::nil`,
 and `(rare-list a b)` becomes `(eo::List::cons a b)`. A parameter declared
 `(xs Bool :list)` becomes `(xs eo::List :list)` in the generated rule. Each
 associative application assembles its operands and invokes:
-`($normalize_eo_list ElementType ResultType operator sequence)`.
+`($normalize_eo_list_native ElementType ResultType operator sequence)`.
 Consequently, the same `xs` may occur under both `and`
 and `or`: an empty sequence is interpreted as `true` and `false`, respectively.
 The normalizer uses the two nil/cons cases to build a full operator spine.
@@ -92,7 +99,7 @@ The signature checks that all operands have the same type. Rules such as
 `distinct_elim` handle the logical expansion when it is explicitly requested.
 
 List element types are checked by generated requirements using
-`$normalize_eo_list` with `eo::List::cons`, which preserves the carrier and
+`$normalize_eo_list_native` with `eo::List::cons`, which preserves the carrier and
 validates its elements, including unused list parameters. Polymorphic element
 types are recovered using `eo::typeof` on a scalar argument of that type.
 
@@ -107,11 +114,25 @@ binders, bitvector/string sorts, and value parameters that must be inferred
 only from premises. A polymorphic type must be an explicit argument or have
 a scalar argument from which it can be recovered.
 
+### The semantic encoding
+
+With `--native false`, a sequence is a rare-list, whose nil carries the element
+sort: bare `rare-list` becomes `(@rare-list-nil S)` and `(rare-list a b)`
+becomes `(@rare-list-cons a b)`. The sort `S` of an empty list comes from the
+rule parameter, or, for a polymorphic one, from the sort of its scalar anchor
+in the step. A parameter declared `(xs Bool :list)` keeps its sort in the
+generated rule and is checked by `($rare_list_of_sort Bool xs)`. An
+associative application with list fragments becomes
+`($f_list_singleton_elim op nil ($normalize_rare_list S op nil sequence))`,
+and one without list fragments keeps its surface form, such as `(+ x y)`.
+`distinct` is the rare-list declaration (`:arg-list @rare-list-cons`), and
+`aci_simp` and `distinct_elim` steps keep their names.
+
 ### Regression checks
 
 The ordinary Rust suite checks declaration generation and error handling.
 The integration test invokes both the Carcara CLI and Ethos on generated
-proofs, including empty/singleton/nonempty sequences, shared `and`/`or`
+proofs in both encodings, including empty/singleton/nonempty sequences, shared `and`/`or`
 parameters, nested operands, computed premises, arithmetic, and polymorphic
 pairwise rules. It also checks rejection of incorrect conclusions and types:
 
