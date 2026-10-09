@@ -7,6 +7,7 @@ use crate::translation::{
         ast::*,
     },
 };
+use std::collections::HashSet;
 
 pub struct EunoiaTranslator {
     /// "Alethe in Eunoia" signature considered during translation.
@@ -15,6 +16,10 @@ pub struct EunoiaTranslator {
     translation: TranslatorData<EunoiaType, EunoiaProof>,
     rare_rule_names: indexmap::IndexMap<String, String>,
     rare_rules: indexmap::IndexMap<String, rare_rules::RuleDefinition>,
+
+    /// Symbols the problem declares. Eunoia has one namespace for terms and
+    /// proofs, so a command named like one of them would shadow it.
+    symbols: HashSet<String>,
 }
 
 impl EunoiaTranslator {
@@ -24,6 +29,7 @@ impl EunoiaTranslator {
             translation: TranslatorData::new(),
             rare_rule_names: indexmap::IndexMap::new(),
             rare_rules: indexmap::IndexMap::new(),
+            symbols: HashSet::new(),
         }
     }
 
@@ -978,6 +984,11 @@ impl VecToVecTranslator<'_> for EunoiaTranslator {
             ..
         } = prelude;
 
+        self.symbols
+            .extend(sort_declarations.iter().map(|(name, _)| name.clone()));
+        self.symbols
+            .extend(function_declarations.iter().map(|(name, _)| name.clone()));
+
         let mut eunoia_prelude = Vec::new();
 
         // Include files for the Alethe mechanization in Eunoia.
@@ -1014,10 +1025,47 @@ impl Translator<'_> for EunoiaTranslator {
     type Output = EunoiaProof;
 
     fn translate(&mut self, proof: &mut Proof) -> &Self::Output {
+        let mut symbols = self.symbols.clone();
+        symbols.extend(
+            proof
+                .constant_definitions
+                .iter()
+                .map(|(name, _)| name.clone()),
+        );
+        rename_shadowing_ids(&mut proof.commands, &symbols);
         self.translate_2_vect(proof)
     }
 
     fn translate_problem(&mut self, problem: &Problem) -> Self::Output {
         self.translate_problem_2_vect(problem)
+    }
+}
+
+/// Renames the commands whose ids are among `symbols` to fresh ids. Premises
+/// and discharges refer to commands by position, so only the ids change.
+fn rename_shadowing_ids(commands: &mut [ProofCommand], symbols: &HashSet<String>) {
+    let mut taken = symbols.clone();
+    for_each_id(commands, &mut |id| {
+        taken.insert(id.clone());
+    });
+    for_each_id(commands, &mut |id| {
+        if symbols.contains(id) {
+            let fresh = (1..)
+                .map(|k| format!("{id}_{k}"))
+                .find(|name| !taken.contains(name))
+                .unwrap();
+            taken.insert(fresh.clone());
+            *id = fresh;
+        }
+    });
+}
+
+fn for_each_id(commands: &mut [ProofCommand], f: &mut impl FnMut(&mut String)) {
+    for command in commands {
+        match command {
+            ProofCommand::Assume { id, .. } => f(id),
+            ProofCommand::Step(step) => f(&mut step.id),
+            ProofCommand::Subproof(subproof) => for_each_id(&mut subproof.commands, f),
+        }
     }
 }
